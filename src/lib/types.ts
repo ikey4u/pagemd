@@ -30,11 +30,11 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  debugMode: false,
+  debugMode: true,
   includeTitle: true,
   includeSourceUrl: true,
   defaultDelay: [2000, 4000],
-  defaultMaxPages: 100,
+  defaultMaxPages: 1000,
 };
 
 export interface PageContext {

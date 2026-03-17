@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>pagemd - Settings</title>
+  <title>PageMD - Settings</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="p-6 max-w-xl mx-auto">
-  <h1 class="text-xl font-semibold tracking-tight mb-5">pagemd Settings</h1>
+  <h1 class="text-xl font-semibold tracking-tight mb-5">PageMD Settings</h1>
 
   <div class="bg-background rounded-lg border border-border p-5 mb-4">
     <h2 class="text-sm font-semibold mb-3 pb-2 border-b border-border">General</h2>
     <form id="settings-form" class="space-y-3">
       <label class="flex items-center gap-2 text-sm cursor-pointer">
-        <input type="checkbox" id="opt-debug-mode" class="accent-primary">
+        <input type="checkbox" id="opt-debug-mode" checked class="accent-primary">
         Debug Mode
       </label>
       <p class="text-xs text-muted-foreground ml-6 -mt-1">Enable chrome.debugger fallback for pages with strict CSP.</p>
@@ -37,7 +37,7 @@
 
       <div class="flex items-center gap-2 text-sm">
         <span>Default max pages:</span>
-        <input type="number" id="opt-max-pages" value="100" min="1" max="10000" class="w-20 px-2 py-1 border border-input rounded-md text-sm bg-background">
+        <input type="number" id="opt-max-pages" value="1000" min="1" max="10000" class="w-20 px-2 py-1 border border-input rounded-md text-sm bg-background">
       </div>
 
       <div class="flex items-center gap-3 pt-1">

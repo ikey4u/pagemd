@@ -3,158 +3,190 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>pagemd</title>
+  <title>PageMD</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body class="min-w-[300px]">
-  <div class="p-2.5">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-2.5 pb-2 border-b border-border">
-      <h1 class="text-sm font-semibold tracking-tight">pagemd</h1>
+  <div class="flex flex-col h-screen">
+
+    <!-- Toolbar: URL + actions -->
+    <div class="flex items-center gap-1.5 px-2.5 py-2 bg-muted shrink-0">
+      <div id="current-url" class="flex-1 min-w-0 text-[11px] text-muted-foreground truncate">No page loaded</div>
+      <button id="btn-quick-convert" title="Quick convert (Readability)"
+        class="shrink-0 h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-medium border border-border text-foreground hover:bg-accent cursor-pointer transition-colors">⚡ Quick</button>
       <button id="btn-settings" title="Settings"
-        class="h-7 w-7 inline-flex items-center justify-center rounded-md text-base text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition-colors">⚙</button>
+        class="shrink-0 h-6 w-6 inline-flex items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition-colors">⚙</button>
     </div>
 
-    <!-- Page Info -->
-    <div class="mb-2.5">
-      <div id="current-url" class="text-[11px] text-muted-foreground break-all mb-1.5 px-2 py-1.5 bg-background rounded-md border border-border">No page loaded</div>
-      <button id="btn-quick-convert"
-        class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">⚡ Quick Convert</button>
-    </div>
-
-    <!-- Unified Hook Editor -->
-    <div class="mb-2.5 bg-background rounded-lg border border-border overflow-hidden">
-      <!-- Toolbar -->
-      <div class="flex items-center justify-between h-9 px-1 bg-muted border-b border-border">
-        <div class="flex h-full">
-          <button class="hook-tab px-3 h-full flex items-center text-xs font-medium text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-accent/50 cursor-pointer transition-all" data-hook="clean">Clean</button>
-          <button class="hook-tab active px-3 h-full flex items-center text-xs font-semibold text-primary border-b-2 border-primary cursor-pointer transition-all" data-hook="extract">Extract</button>
-          <button class="hook-tab px-3 h-full flex items-center text-xs font-medium text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-accent/50 cursor-pointer transition-all" data-hook="navigate">Navigate</button>
-          <button class="hook-tab px-3 h-full flex items-center text-xs font-medium text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-accent/50 cursor-pointer transition-all" data-hook="stop">Stop</button>
+    <!-- Hook Editor (main area, grows to fill) -->
+    <div class="flex-1 flex flex-col min-h-0">
+      <!-- Hook tab bar -->
+      <div class="flex items-center justify-between h-8 px-1.5 border-b border-border bg-background shrink-0">
+        <div class="flex h-full gap-0.5">
+          <button class="hook-tab" data-hook="clean">Clean</button>
+          <button class="hook-tab active" data-hook="extract">Extract</button>
+          <button class="hook-tab" data-hook="navigate">Navigate</button>
+          <button class="hook-tab" data-hook="stop">Stop</button>
         </div>
         <div class="flex items-center gap-0.5">
-          <button id="btn-docs" title="Examples &amp; Docs"
-            class="hook-action-btn h-7 w-7 inline-flex items-center justify-center rounded-md text-sm hover:bg-accent cursor-pointer transition-colors relative">📖</button>
-          <button id="btn-copy-prompt" title="Copy AI Prompt"
-            class="hook-action-btn h-7 w-7 inline-flex items-center justify-center rounded-md text-sm hover:bg-accent cursor-pointer transition-colors relative">📋</button>
-          <button id="btn-run-test" title="Run / Test"
-            class="hook-action-btn h-7 w-7 inline-flex items-center justify-center rounded-md text-sm hover:bg-accent cursor-pointer transition-colors relative">▶️</button>
+          <button id="btn-docs" title="Docs" class="action-icon">📖</button>
+          <button id="btn-run-test" title="Run" class="action-icon">▶️</button>
         </div>
       </div>
 
-      <!-- Editor view -->
-      <div id="hook-view-editor" class="hook-view active">
-        <textarea id="hook-clean" class="code-area" data-hook="clean" style="display:none;"
-          placeholder="(optional) Remove unwanted elements before extraction...&#10;Returns { removed: number }"></textarea>
-        <textarea id="hook-extract" class="code-area" data-hook="extract"
-          placeholder="Extract page content...&#10;Returns { title: string, html: string } or null"></textarea>
-        <textarea id="hook-navigate" class="code-area" data-hook="navigate" style="display:none;"
-          placeholder="(optional) Navigate to next page...&#10;Returns { success: boolean }"></textarea>
-        <textarea id="hook-stop" class="code-area" data-hook="stop" style="display:none;"
-          placeholder="(optional) Decide when to stop...&#10;Receives context. Returns { shouldStop, reason? }"></textarea>
-      </div>
+      <!-- Editor / Docs -->
+      <div class="flex-1 min-h-0 relative">
+        <div id="hook-view-editor" class="hook-view active absolute inset-0">
+          <textarea id="hook-clean" class="code-area" data-hook="clean" style="display:none;"
+            placeholder="(optional) Remove unwanted elements...&#10;Returns { removed: number }"></textarea>
+          <textarea id="hook-extract" class="code-area" data-hook="extract"
+            placeholder="Extract page content...&#10;Returns { title, html } or null"></textarea>
+          <textarea id="hook-navigate" class="code-area" data-hook="navigate" style="display:none;"
+            placeholder="(optional) Navigate to next page...&#10;Returns { success: boolean }"></textarea>
+          <textarea id="hook-stop" class="code-area" data-hook="stop" style="display:none;"
+            placeholder="(optional) Decide when to stop...&#10;Receives context. Returns { shouldStop, reason? }"></textarea>
+        </div>
 
-      <!-- Docs view -->
-      <div id="hook-view-docs" class="hook-view">
-        <div class="docs-pane p-3" data-hook="clean">
-          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Removes unwanted elements <strong class="text-foreground">before</strong> extraction. Modifies the live DOM. Returns <code class="bg-muted px-1 rounded text-[11px]">{ removed }</code>.</p>
-          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Remove header, footer, sidebar, ads
-(function() {
-  const sels = ['header', 'footer', 'nav', '.sidebar',
-    '.ads', '[role="banner"]', '.cookie-notice'];
+        <div id="hook-view-docs" class="hook-view absolute inset-0 overflow-y-auto">
+          <div class="docs-pane">
+            <!-- Workflow diagram -->
+            <div class="docs-workflow">
+              <span class="wf-step">Clean</span>
+              <span class="wf-arrow">→</span>
+              <span class="wf-loop">
+                <span class="wf-loop-label">loop</span>
+                <span class="wf-step">Extract</span>
+                <span class="wf-arrow">→</span>
+                <span class="wf-step">Navigate</span>
+              </span>
+              <span class="wf-arrow">→</span>
+              <span class="wf-step">Stop</span>
+            </div>
+
+            <!-- Clean -->
+            <div class="docs-section">
+              <h4 class="docs-title">Clean <span class="docs-optional">optional</span></h4>
+              <p class="docs-hint">Removes unwanted elements <b>before</b> extraction. Modifies the live DOM.<br>Returns <code>{ removed: number }</code></p>
+              <pre class="docs-code">(function() {
+  const sels = ['header', 'footer', 'nav',
+    '.sidebar', '.ads', '.cookie-notice'];
   let removed = 0;
   sels.forEach(s =&gt;
-    document.querySelectorAll(s).forEach(el =&gt; { el.remove(); removed++; })
+    document.querySelectorAll(s).forEach(el =&gt; {
+      el.remove(); removed++;
+    })
   );
   return { removed };
 })()</pre>
-        </div>
-        <div class="docs-pane p-3" data-hook="extract" style="display:none;">
-          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Extracts content. Returns <code class="bg-muted px-1 rounded text-[11px]">{ title, html }</code> or <code class="bg-muted px-1 rounded text-[11px]">null</code>. Use <code class="bg-muted px-1 rounded text-[11px]">cloneNode</code> to avoid changing the page.</p>
-          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Extract &lt;article&gt;, remove sidebar
-(function() {
+            </div>
+
+            <!-- Extract -->
+            <div class="docs-section">
+              <h4 class="docs-title">Extract</h4>
+              <p class="docs-hint">Extracts page content. Use <code>cloneNode</code> to avoid modifying the page.<br>Returns <code>{ title: string, html: string }</code> or <code>null</code></p>
+              <pre class="docs-code">(function() {
   const el = document.querySelector('article');
   if (!el) return null;
   const clone = el.cloneNode(true);
-  clone.querySelectorAll('.sidebar').forEach(e =&gt; e.remove());
-  return { title: document.title, html: clone.innerHTML };
+  clone.querySelectorAll('.sidebar').forEach(
+    e =&gt; e.remove()
+  );
+  return {
+    title: document.title,
+    html: clone.innerHTML
+  };
 })()</pre>
-        </div>
-        <div class="docs-pane p-3" data-hook="navigate" style="display:none;">
-          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Navigates to next page. Returns <code class="bg-muted px-1 rounded text-[11px]">{ success }</code>.</p>
-          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Click link containing "下一页"
-(function() {
+            </div>
+
+            <!-- Navigate -->
+            <div class="docs-section">
+              <h4 class="docs-title">Navigate <span class="docs-optional">optional</span></h4>
+              <p class="docs-hint">Clicks next page or performs navigation.<br>Returns <code>{ success: boolean }</code></p>
+              <pre class="docs-code">(function() {
   const btns = [...document.querySelectorAll('a, button')];
-  const next = btns.find(b =&gt; b.textContent.includes('下一页'));
+  const next = btns.find(
+    b =&gt; b.textContent.includes('下一页')
+  );
   if (!next) return { success: false };
   next.click();
   return { success: true };
 })()</pre>
-        </div>
-        <div class="docs-pane p-3" data-hook="stop" style="display:none;">
-          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Stops batch crawling. Receives <code class="bg-muted px-1 rounded text-[11px]">context</code> (<code class="bg-muted px-1 rounded text-[11px]">currentUrl</code>, <code class="bg-muted px-1 rounded text-[11px]">pageIndex</code>, <code class="bg-muted px-1 rounded text-[11px]">collectedUrls[]</code>, <code class="bg-muted px-1 rounded text-[11px]">collectedTitles[]</code>). Returns <code class="bg-muted px-1 rounded text-[11px]">{ shouldStop, reason? }</code>.</p>
-          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Stop when URL contains "example.com"
-(function(context) {
-  if (context.currentUrl.includes('example.com'))
-    return { shouldStop: true, reason: 'Reached target' };
-  return { shouldStop: false };
-})()
+            </div>
 
-// Stop on repeated URL (loop detection)
-(function(context) {
-  if (context.collectedUrls.includes(context.currentUrl))
-    return { shouldStop: true, reason: 'Loop detected' };
+            <!-- Stop -->
+            <div class="docs-section">
+              <h4 class="docs-title">Stop <span class="docs-optional">optional</span></h4>
+              <p class="docs-hint">Decides when to stop batch crawling. Receives <code>context</code> with <code>currentUrl</code>, <code>pageIndex</code>, <code>collectedUrls[]</code>, <code>collectedTitles[]</code>.<br>Returns <code>{ shouldStop: boolean, reason?: string }</code></p>
+              <pre class="docs-code">(function(context) {
+  if (context.currentUrl.includes('example.com'))
+    return { shouldStop: true, reason: 'Done' };
+  if (context.collectedUrls.includes(
+    context.currentUrl
+  ))
+    return { shouldStop: true, reason: 'Loop' };
   return { shouldStop: false };
 })()</pre>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Test result -->
-      <div id="hook-test-result" class="px-3 py-1.5 text-xs font-mono bg-muted border-t border-border max-h-28 overflow-auto whitespace-pre-wrap break-all" style="display:none;"></div>
+      <!-- Test result (appears above bottom bar) -->
+      <div id="hook-test-result" class="shrink-0 px-3 py-1.5 text-[11px] font-mono bg-muted/70 border-t border-border max-h-24 overflow-auto whitespace-pre-wrap break-all" style="display:none;"></div>
     </div>
 
-    <!-- Save Recipe -->
-    <div class="mb-2.5">
-      <button id="btn-save-recipe"
-        class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium border border-border bg-background text-foreground hover:bg-accent cursor-pointer transition-colors">💾 Save as Recipe</button>
-    </div>
-
-    <!-- Actions -->
-    <div class="mb-2.5 p-2.5 bg-background rounded-lg border border-border">
-      <div class="flex gap-1.5 mb-1.5 flex-wrap">
+    <!-- Bottom action bar -->
+    <div class="shrink-0 border-t border-border bg-background px-3 py-2">
+      <div class="flex items-center gap-1.5 mb-1.5">
         <button id="btn-convert"
-          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">📄 Convert Current Page</button>
+          class="flex-1 h-8 inline-flex items-center justify-center gap-1 rounded-md text-[11px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">Convert Page</button>
         <button id="btn-batch"
-          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">🔄 Batch Execute</button>
+          class="flex-1 h-8 inline-flex items-center justify-center gap-1 rounded-md text-[11px] font-medium border border-border bg-background text-foreground hover:bg-accent cursor-pointer transition-colors">Batch</button>
         <button id="btn-stop-pipeline" style="display:none;"
-          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer transition-colors">⏹ Stop</button>
+          class="flex-1 h-8 inline-flex items-center justify-center gap-1 rounded-md text-[11px] font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer transition-colors">Stop</button>
+        <button id="btn-save-recipe" title="Save as Recipe"
+          class="h-8 w-8 inline-flex items-center justify-center rounded-md text-sm border border-border bg-background hover:bg-accent cursor-pointer transition-colors">💾</button>
       </div>
-      <div class="flex gap-3 text-[11px] text-muted-foreground flex-wrap">
-        <label>Max pages: <input id="opt-max-pages" type="number" value="50" min="1" max="1000" class="w-12 px-1 py-0.5 border border-input rounded text-[11px] bg-background"></label>
-        <label>Delay: <input id="opt-delay-min" type="number" value="2" min="0" max="60" class="w-10 px-1 py-0.5 border border-input rounded text-[11px] bg-background">-<input id="opt-delay-max" type="number" value="4" min="0" max="60" class="w-10 px-1 py-0.5 border border-input rounded text-[11px] bg-background">s</label>
-      </div>
-    </div>
-
-    <!-- Results -->
-    <div id="results-section" class="mb-2.5" style="display:none;">
-      <h2 class="text-[13px] font-semibold mb-1.5">Results <span id="result-count" class="font-normal text-muted-foreground"></span></h2>
-      <div id="results-list" class="max-h-44 overflow-y-auto mb-1.5"></div>
-      <div class="flex gap-1.5">
-        <button id="btn-copy-all" class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium border border-border bg-background hover:bg-accent cursor-pointer transition-colors">📋 Copy All</button>
-        <button id="btn-download-zip" class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium border border-border bg-background hover:bg-accent cursor-pointer transition-colors">💾 Download ZIP</button>
+      <div class="flex items-center gap-3 text-[10px] text-muted-foreground">
+        <label class="flex items-center gap-1">Pages <input id="opt-max-pages" type="number" value="1000" min="1" max="10000" class="w-12 h-5 px-1 border border-input rounded text-[10px] bg-background text-foreground"></label>
+        <label class="flex items-center gap-1">Delay <input id="opt-delay-min" type="number" value="2" min="0" max="60" class="w-8 h-5 px-1 border border-input rounded text-[10px] bg-background text-foreground">–<input id="opt-delay-max" type="number" value="4" min="0" max="60" class="w-8 h-5 px-1 border border-input rounded text-[10px] bg-background text-foreground">s</label>
       </div>
     </div>
 
-    <!-- Log -->
-    <div id="log-section" class="mb-2.5" style="display:none;">
-      <h2 class="text-[13px] font-semibold mb-1.5">Log</h2>
-      <div id="log-content" class="max-h-44 overflow-y-auto font-mono text-[10px] bg-code-bg text-success p-2 rounded-md leading-relaxed"></div>
+    <!-- Results (collapsible) -->
+    <div id="results-section" class="shrink-0 border-t border-border bg-background" style="display:none;">
+      <div class="px-3 py-1.5 flex items-center justify-between">
+        <span class="text-[11px] font-semibold">Results <span id="result-count" class="font-normal text-muted-foreground"></span></span>
+        <div class="flex gap-0.5">
+          <button id="btn-copy-all" title="Copy all" class="res-action-btn">📋</button>
+          <button id="btn-download-zip" title="Download ZIP" class="res-action-btn">💾</button>
+          <button id="btn-clear-results" title="Clear all" class="res-action-btn">🗑</button>
+        </div>
+      </div>
+      <div id="results-list" class="max-h-40 overflow-y-auto border-t border-border"></div>
     </div>
 
-    <!-- Toast -->
-    <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-foreground text-background rounded-md text-xs z-50 opacity-0 transition-opacity" style="display:none;"></div>
+    <!-- Markdown Preview Overlay -->
+    <div id="md-preview-overlay" class="md-preview-overlay" style="display:none;">
+      <div class="md-preview-header">
+        <span class="text-[11px] font-semibold" id="md-preview-title">Preview</span>
+        <button id="md-preview-close" class="res-action-btn">✕</button>
+      </div>
+      <div id="md-preview-content" class="md-preview-content"></div>
+    </div>
+
+    <!-- Log (resizable) -->
+    <div id="log-section" class="shrink-0 border-t border-border" style="display:none;">
+      <div id="log-resize-handle" class="log-resize-handle" title="Drag to resize">
+        <span class="text-[11px] font-semibold">Log</span>
+      </div>
+      <div id="log-content" class="log-panel"></div>
+    </div>
+
   </div>
+
+  <div id="toast" class="toast" style="display:none;"></div>
   <script src="sidepanel.js" type="module"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 {
-  "name": "pagemd",
+  "name": "PageMD",
   "version": "0.2.0",
   "description": "Convert any web page to Markdown",
   "browsers": [

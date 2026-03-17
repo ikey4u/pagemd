@@ -4,6 +4,7 @@ import { loadSettings } from '../lib/settings';
 import { findMatchingRecipe } from '../lib/recipe';
 import { Pipeline } from '../lib/pipeline';
 import type { PageContext, StopHookContext, ExtractResult, PipelineState } from '../lib/types';
+import MarkdownIt from 'markdown-it';
 
 let currentTabId: number | null = null;
 let cachedPageContext: PageContext | null = null;
@@ -424,7 +425,8 @@ async function quickConvert() {
     }
     output += markdown;
 
-    addResult(pageData.title, output);
+    const currentUrl = (await getCurrentTab())?.url || '';
+    addResult(pageData.title, output, currentUrl);
     log(`Converted: ${pageData.title}`, 'success');
     showToast('Converted!');
   } catch (e) {
@@ -467,7 +469,8 @@ async function convertCurrentPage() {
     }
     output += markdown;
 
-    addResult(result.title, output);
+    const currentUrl = (await getCurrentTab())?.url || '';
+    addResult(result.title, output, currentUrl);
     log(`Converted: ${result.title}`, 'success');
     showToast('Converted!');
   } catch (e) {
@@ -478,11 +481,54 @@ async function convertCurrentPage() {
 
 // --- Results ---
 
-const results: Array<{ title: string; markdown: string }> = [];
+const results: Array<{ title: string; markdown: string; url: string }> = [];
 
-function addResult(title: string, markdown: string) {
-  results.push({ title, markdown });
+function addResult(title: string, markdown: string, url: string = '') {
+  results.push({ title, markdown, url });
   renderResults();
+}
+
+function removeResult(index: number) {
+  results.splice(index, 1);
+  renderResults();
+  if (results.length === 0) {
+    $('results-section').style.display = 'none';
+  }
+}
+
+function clearResults() {
+  results.length = 0;
+  $('results-section').style.display = 'none';
+}
+
+const md = new MarkdownIt({ html: true, linkify: true, breaks: true });
+
+function previewResult(index: number) {
+  const r = results[index];
+  if (!r) return;
+
+  ($('md-preview-title') as HTMLElement).textContent = r.title;
+  const rendered = md.render(r.markdown);
+  const container = $('md-preview-content') as HTMLElement;
+  container.innerHTML = rendered;
+
+  // Fix images: add error handling and resolve relative URLs
+  const sourceUrl = r.url || '';
+  let baseUrl = '';
+  try { baseUrl = new URL(sourceUrl).origin; } catch {}
+
+  container.querySelectorAll('img').forEach(img => {
+    const src = img.getAttribute('src') || '';
+    if (src && !src.startsWith('http') && !src.startsWith('data:') && baseUrl) {
+      img.src = src.startsWith('/') ? baseUrl + src : baseUrl + '/' + src;
+    }
+    img.style.maxWidth = '100%';
+    img.onerror = () => {
+      img.style.display = 'none';
+    };
+  });
+
+  $('md-preview-overlay').style.display = 'flex';
 }
 
 function renderResults() {
@@ -490,14 +536,33 @@ function renderResults() {
   const list = $('results-list');
   const count = $('result-count');
 
-  section.style.display = 'block';
+  section.style.display = results.length > 0 ? 'block' : 'none';
   count.textContent = `(${results.length})`;
   list.innerHTML = '';
 
   results.forEach((r, i) => {
     const item = document.createElement('div');
     item.className = 'result-item';
-    item.textContent = `✅ ${i + 1}. ${r.title}`;
+
+    const title = document.createElement('span');
+    title.className = 'result-title';
+    title.textContent = `${i + 1}. ${r.title}`;
+
+    const previewBtn = document.createElement('button');
+    previewBtn.className = 'result-btn';
+    previewBtn.title = 'Preview';
+    previewBtn.textContent = '👁';
+    previewBtn.addEventListener('click', () => previewResult(i));
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'result-btn';
+    deleteBtn.title = 'Delete';
+    deleteBtn.textContent = '✕';
+    deleteBtn.addEventListener('click', () => removeResult(i));
+
+    item.appendChild(title);
+    item.appendChild(previewBtn);
+    item.appendChild(deleteBtn);
     list.appendChild(item);
   });
 }
@@ -664,7 +729,7 @@ async function startBatchExecution() {
       }
       // Sync results
       results.length = 0;
-      state.results.forEach(r => results.push({ title: r.title, markdown: r.markdown }));
+      state.results.forEach(r => results.push({ title: r.title, markdown: r.markdown, url: r.url }));
       renderResults();
     },
     htmlToMarkdown,
@@ -714,19 +779,47 @@ function toggleDocs() {
   if (docsVisible) {
     $('hook-view-editor').classList.remove('active');
     $('hook-view-docs').classList.add('active');
-    // Show docs for active hook type
-    document.querySelectorAll('.docs-pane').forEach(el => {
-      (el as HTMLElement).style.display = (el as HTMLElement).dataset.hook === activeHookType ? '' : 'none';
-    });
   } else {
     $('hook-view-editor').classList.add('active');
     $('hook-view-docs').classList.remove('active');
   }
 }
 
+// --- Log Resize ---
+
+function initLogResize() {
+  const handle = document.getElementById('log-resize-handle');
+  const logContent = document.getElementById('log-content');
+  if (!handle || !logContent) return;
+
+  let startY = 0;
+  let startH = 0;
+
+  handle.addEventListener('mousedown', (e: MouseEvent) => {
+    e.preventDefault();
+    startY = e.clientY;
+    startH = logContent.offsetHeight;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = startY - ev.clientY;
+      const newH = Math.max(40, Math.min(window.innerHeight * 0.7, startH + delta));
+      logContent.style.height = newH + 'px';
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
 // --- Init ---
 
 document.addEventListener('DOMContentLoaded', async () => {
+  initLogResize();
   // Hook tab switching
   document.querySelectorAll('.hook-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -736,10 +829,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Action buttons
   $('btn-docs').addEventListener('click', toggleDocs);
-
-  $('btn-copy-prompt').addEventListener('click', () => {
-    copyPrompt(activeHookType);
-  });
 
   $('btn-run-test').addEventListener('click', () => {
     testHook(activeHookType);
@@ -757,6 +846,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('btn-convert').addEventListener('click', convertCurrentPage);
   $('btn-copy-all').addEventListener('click', copyAllResults);
   $('btn-download-zip').addEventListener('click', downloadZip);
+  $('btn-clear-results').addEventListener('click', clearResults);
+  $('md-preview-close').addEventListener('click', () => {
+    $('md-preview-overlay').style.display = 'none';
+  });
 
   $('btn-save-recipe').addEventListener('click', async () => {
     const tab = await getCurrentTab();
@@ -780,7 +873,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (stopCode) recipe.stopHook = { description: '', script: stopCode, generatedBy: 'manual' };
 
       await addRecipe(recipe);
-      showToast(`Recipe "${name}" saved!`);
+
+      // Also export as JSON file for sharing
+      const json = JSON.stringify(recipe, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pagemd-recipe-${name.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast(`Recipe "${name}" saved & exported!`);
       log(`Recipe saved: ${name} (${pattern})`, 'success');
     } catch (e) {
       showToast(`Error: ${e}`);

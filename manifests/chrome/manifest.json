@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "pagemd",
+  "name": "PageMD",
   "version": "0.2.0",
   "description": "Convert any web page to Markdown",
   "permissions": [
@@ -21,7 +21,7 @@
       "32": "assets/icons/icon-32.png",
       "48": "assets/icons/icon-48.png"
     },
-    "default_title": "pagemd"
+    "default_title": "PageMD"
   },
   "background": {
     "service_worker": "background/background.js",
