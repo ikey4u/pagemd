@@ -4,58 +4,57 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>pagemd - Settings</title>
-  <link rel="stylesheet" href="options.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-  <div id="app">
-    <h1>pagemd Settings</h1>
+<body class="p-6 max-w-xl mx-auto">
+  <h1 class="text-xl font-semibold tracking-tight mb-5">pagemd Settings</h1>
 
-    <section class="card">
-      <h2>General</h2>
-      <form id="settings-form">
-        <div class="field">
-          <label>
-            <input type="checkbox" id="opt-debug-mode">
-            Debug Mode
-          </label>
-          <p class="hint">Enable chrome.debugger fallback for pages with strict CSP. A yellow banner will appear on affected pages.</p>
-        </div>
-        <div class="field">
-          <label>
-            <input type="checkbox" id="opt-include-title" checked>
-            Include title heading in Markdown
-          </label>
-        </div>
-        <div class="field">
-          <label>
-            <input type="checkbox" id="opt-include-url" checked>
-            Include source URL in Markdown
-          </label>
-        </div>
-        <div class="field">
-          <label>Default delay (seconds): </label>
-          <input type="number" id="opt-delay-min" value="2" min="0" max="60" step="0.5" style="width:60px">
-          –
-          <input type="number" id="opt-delay-max" value="4" min="0" max="60" step="0.5" style="width:60px">
-        </div>
-        <div class="field">
-          <label>Default max pages: </label>
-          <input type="number" id="opt-max-pages" value="100" min="1" max="10000" style="width:80px">
-        </div>
-        <button type="submit" class="btn-primary">Save Settings</button>
-        <span id="status"></span>
-      </form>
-    </section>
+  <div class="bg-background rounded-lg border border-border p-5 mb-4">
+    <h2 class="text-sm font-semibold mb-3 pb-2 border-b border-border">General</h2>
+    <form id="settings-form" class="space-y-3">
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" id="opt-debug-mode" class="accent-primary">
+        Debug Mode
+      </label>
+      <p class="text-xs text-muted-foreground ml-6 -mt-1">Enable chrome.debugger fallback for pages with strict CSP.</p>
 
-    <section class="card">
-      <h2>Saved Recipes</h2>
-      <div id="recipes-list"></div>
-      <div class="recipe-actions">
-        <button id="btn-export" class="btn-small">Export All (JSON)</button>
-        <button id="btn-import" class="btn-small">Import</button>
-        <input type="file" id="file-import" accept=".json" style="display:none;">
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" id="opt-include-title" checked class="accent-primary">
+        Include title heading in Markdown
+      </label>
+
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" id="opt-include-url" checked class="accent-primary">
+        Include source URL in Markdown
+      </label>
+
+      <div class="flex items-center gap-2 text-sm">
+        <span>Default delay (seconds):</span>
+        <input type="number" id="opt-delay-min" value="2" min="0" max="60" step="0.5" class="w-14 px-2 py-1 border border-input rounded-md text-sm bg-background">
+        <span>–</span>
+        <input type="number" id="opt-delay-max" value="4" min="0" max="60" step="0.5" class="w-14 px-2 py-1 border border-input rounded-md text-sm bg-background">
       </div>
-    </section>
+
+      <div class="flex items-center gap-2 text-sm">
+        <span>Default max pages:</span>
+        <input type="number" id="opt-max-pages" value="100" min="1" max="10000" class="w-20 px-2 py-1 border border-input rounded-md text-sm bg-background">
+      </div>
+
+      <div class="flex items-center gap-3 pt-1">
+        <button type="submit" class="inline-flex items-center rounded-md px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">Save Settings</button>
+        <span id="status" class="text-sm text-success"></span>
+      </div>
+    </form>
+  </div>
+
+  <div class="bg-background rounded-lg border border-border p-5">
+    <h2 class="text-sm font-semibold mb-3 pb-2 border-b border-border">Saved Recipes</h2>
+    <div id="recipes-list"></div>
+    <div class="flex gap-2 mt-3">
+      <button id="btn-export" class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium border border-border bg-background hover:bg-accent cursor-pointer transition-colors">Export All (JSON)</button>
+      <button id="btn-import" class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium border border-border bg-background hover:bg-accent cursor-pointer transition-colors">Import</button>
+      <input type="file" id="file-import" accept=".json" class="hidden">
+    </div>
   </div>
   <script src="options.js" type="module"></script>
 </body>

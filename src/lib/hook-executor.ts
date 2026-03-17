@@ -13,13 +13,26 @@ export function cleanHookCode(raw: string): string {
 }
 
 /**
- * Validates hook code syntax without executing it.
+ * Validates hook code syntax in the target page's MAIN world.
+ * Cannot use new Function() in extension context due to CSP.
  * Returns null if valid, or the error message if invalid.
  */
-export function validateHookSyntax(code: string): string | null {
+export async function validateHookSyntax(tabId: number, code: string): Promise<string | null> {
   try {
-    new Function(code);
-    return null;
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN' as chrome.scripting.ExecutionWorld,
+      func: (c: string) => {
+        try {
+          new Function('context', `return (${c})`);
+          return null;
+        } catch (e) {
+          return (e as Error).message || String(e);
+        }
+      },
+      args: [code],
+    });
+    return results?.[0]?.result ?? null;
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
@@ -40,12 +53,15 @@ export async function executeHook(
       target: { tabId },
       world: 'MAIN' as chrome.scripting.ExecutionWorld,
       func: (code: string, ctx: unknown) => {
-        const fn = new Function('context', `return (${code})`);
-        const iife = fn(ctx);
-        if (typeof iife === 'function') {
-          return iife(ctx);
+        // Strip trailing IIFE invocation "()" so we can call with context ourselves
+        const stripped = code.replace(/\)\s*\([\s\S]*?\)\s*;?\s*$/, ')');
+        const fn = new Function('context', `return (${stripped})`);
+        const result = fn(ctx);
+        // If the expression evaluated to a function, call it with context
+        if (typeof result === 'function') {
+          return result(ctx);
         }
-        return iife;
+        return result;
       },
       args: [hookCode, contextArg ?? null],
     });
@@ -73,11 +89,13 @@ export async function executeHookViaDebugger(
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
 
+    // Strip trailing IIFE "()" so we control invocation with context
+    const stripped = hookCode.replace(/\)\s*\([\s\S]*?\)\s*;?\s*$/, ')');
     let expression: string;
     if (contextArg) {
-      expression = `(function() { const __ctx = ${JSON.stringify(contextArg)}; return (${hookCode})(__ctx); })()`;
+      expression = `(function() { var __fn = (${stripped}); return typeof __fn === 'function' ? __fn(${JSON.stringify(contextArg)}) : __fn; })()`;
     } else {
-      expression = `(${hookCode})`;
+      expression = `(function() { var __fn = (${stripped}); return typeof __fn === 'function' ? __fn() : __fn; })()`;
     }
 
     const evalResult = await chrome.debugger.sendCommand(

@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "brosion dev",
     "build": "brosion build",
+    "build:css": "npx @tailwindcss/cli -i src/styles/globals.css -o dist/debug/sidepanel/styles.css && cp dist/debug/sidepanel/styles.css dist/debug/options/styles.css && cp dist/debug/sidepanel/styles.css dist/release/chrome/sidepanel/styles.css 2>/dev/null; cp dist/debug/sidepanel/styles.css dist/release/chrome/options/styles.css 2>/dev/null; true",
+    "build:css:watch": "npx @tailwindcss/cli -i src/styles/globals.css -o dist/debug/sidepanel/styles.css --watch",
     "deploy": "brosion deploy",
     "build:wasm": "wasm-pack build --target web ./wasm"
   },
@@ -13,8 +15,13 @@
     "@mozilla/readability": "^0.5.0"
   },
   "devDependencies": {
-    "typescript": "^5.3.0",
+    "@tailwindcss/cli": "^4.2.1",
+    "@tailwindcss/postcss": "^4.2.1",
     "@types/chrome": "^0.0.254",
-    "esbuild": "^0.19.0"
+    "autoprefixer": "^10.4.27",
+    "esbuild": "^0.19.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.3.0"
   }
 }

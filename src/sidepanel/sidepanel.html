@@ -4,78 +4,156 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>pagemd</title>
+  <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="sidepanel.css">
 </head>
-<body>
-  <div id="app">
-    <header>
-      <h1>pagemd</h1>
-      <button id="btn-settings" title="Settings">⚙</button>
-    </header>
+<body class="min-w-[300px]">
+  <div class="p-2.5">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-2.5 pb-2 border-b border-border">
+      <h1 class="text-sm font-semibold tracking-tight">pagemd</h1>
+      <button id="btn-settings" title="Settings"
+        class="h-7 w-7 inline-flex items-center justify-center rounded-md text-base text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition-colors">⚙</button>
+    </div>
 
-    <section class="page-info">
-      <div id="current-url" class="url-display">No page loaded</div>
-      <button id="btn-quick-convert" class="btn-primary">⚡ Quick Convert</button>
-    </section>
+    <!-- Page Info -->
+    <div class="mb-2.5">
+      <div id="current-url" class="text-[11px] text-muted-foreground break-all mb-1.5 px-2 py-1.5 bg-background rounded-md border border-border">No page loaded</div>
+      <button id="btn-quick-convert"
+        class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">⚡ Quick Convert</button>
+    </div>
 
-    <section class="hook-section">
-      <div class="hook-group">
-        <div class="hook-header">
-          <label>Extract Hook</label>
-          <button class="btn-copy-prompt btn-small" data-hook="extract">📋 Copy Prompt</button>
+    <!-- Unified Hook Editor -->
+    <div class="mb-2.5 bg-background rounded-lg border border-border overflow-hidden">
+      <!-- Toolbar -->
+      <div class="flex items-center justify-between h-9 px-1 bg-muted border-b border-border">
+        <div class="flex h-full">
+          <button class="hook-tab px-3 h-full flex items-center text-xs font-medium text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-accent/50 cursor-pointer transition-all" data-hook="clean">Clean</button>
+          <button class="hook-tab active px-3 h-full flex items-center text-xs font-semibold text-primary border-b-2 border-primary cursor-pointer transition-all" data-hook="extract">Extract</button>
+          <button class="hook-tab px-3 h-full flex items-center text-xs font-medium text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-accent/50 cursor-pointer transition-all" data-hook="navigate">Navigate</button>
+          <button class="hook-tab px-3 h-full flex items-center text-xs font-medium text-muted-foreground border-b-2 border-transparent hover:text-foreground hover:bg-accent/50 cursor-pointer transition-all" data-hook="stop">Stop</button>
         </div>
-        <textarea id="hook-extract" class="code-editor" placeholder="Paste AI-generated extract script here..." rows="5"></textarea>
-        <button class="btn-test btn-small" data-hook="extract">▶ Test</button>
-      </div>
-
-      <div class="hook-group">
-        <div class="hook-header">
-          <label>Navigate Hook <span class="optional">(optional)</span></label>
-          <button class="btn-copy-prompt btn-small" data-hook="navigate">📋 Copy Prompt</button>
+        <div class="flex items-center gap-0.5">
+          <button id="btn-docs" title="Examples &amp; Docs"
+            class="hook-action-btn h-7 w-7 inline-flex items-center justify-center rounded-md text-sm hover:bg-accent cursor-pointer transition-colors relative">📖</button>
+          <button id="btn-copy-prompt" title="Copy AI Prompt"
+            class="hook-action-btn h-7 w-7 inline-flex items-center justify-center rounded-md text-sm hover:bg-accent cursor-pointer transition-colors relative">📋</button>
+          <button id="btn-run-test" title="Run / Test"
+            class="hook-action-btn h-7 w-7 inline-flex items-center justify-center rounded-md text-sm hover:bg-accent cursor-pointer transition-colors relative">▶️</button>
         </div>
-        <textarea id="hook-navigate" class="code-editor" placeholder="Paste AI-generated navigate script here..." rows="4"></textarea>
-        <button class="btn-test btn-small" data-hook="navigate">▶ Test</button>
       </div>
 
-      <div class="hook-group">
-        <div class="hook-header">
-          <label>Stop Hook <span class="optional">(optional)</span></label>
-          <button class="btn-copy-prompt btn-small" data-hook="stop">📋 Copy Prompt</button>
+      <!-- Editor view -->
+      <div id="hook-view-editor" class="hook-view active">
+        <textarea id="hook-clean" class="code-area" data-hook="clean" style="display:none;"
+          placeholder="(optional) Remove unwanted elements before extraction...&#10;Returns { removed: number }"></textarea>
+        <textarea id="hook-extract" class="code-area" data-hook="extract"
+          placeholder="Extract page content...&#10;Returns { title: string, html: string } or null"></textarea>
+        <textarea id="hook-navigate" class="code-area" data-hook="navigate" style="display:none;"
+          placeholder="(optional) Navigate to next page...&#10;Returns { success: boolean }"></textarea>
+        <textarea id="hook-stop" class="code-area" data-hook="stop" style="display:none;"
+          placeholder="(optional) Decide when to stop...&#10;Receives context. Returns { shouldStop, reason? }"></textarea>
+      </div>
+
+      <!-- Docs view -->
+      <div id="hook-view-docs" class="hook-view">
+        <div class="docs-pane p-3" data-hook="clean">
+          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Removes unwanted elements <strong class="text-foreground">before</strong> extraction. Modifies the live DOM. Returns <code class="bg-muted px-1 rounded text-[11px]">{ removed }</code>.</p>
+          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Remove header, footer, sidebar, ads
+(function() {
+  const sels = ['header', 'footer', 'nav', '.sidebar',
+    '.ads', '[role="banner"]', '.cookie-notice'];
+  let removed = 0;
+  sels.forEach(s =&gt;
+    document.querySelectorAll(s).forEach(el =&gt; { el.remove(); removed++; })
+  );
+  return { removed };
+})()</pre>
         </div>
-        <textarea id="hook-stop" class="code-editor" placeholder="Paste AI-generated stop condition script here..." rows="4"></textarea>
-        <button class="btn-test btn-small" data-hook="stop">▶ Test</button>
+        <div class="docs-pane p-3" data-hook="extract" style="display:none;">
+          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Extracts content. Returns <code class="bg-muted px-1 rounded text-[11px]">{ title, html }</code> or <code class="bg-muted px-1 rounded text-[11px]">null</code>. Use <code class="bg-muted px-1 rounded text-[11px]">cloneNode</code> to avoid changing the page.</p>
+          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Extract &lt;article&gt;, remove sidebar
+(function() {
+  const el = document.querySelector('article');
+  if (!el) return null;
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll('.sidebar').forEach(e =&gt; e.remove());
+  return { title: document.title, html: clone.innerHTML };
+})()</pre>
+        </div>
+        <div class="docs-pane p-3" data-hook="navigate" style="display:none;">
+          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Navigates to next page. Returns <code class="bg-muted px-1 rounded text-[11px]">{ success }</code>.</p>
+          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Click link containing "下一页"
+(function() {
+  const btns = [...document.querySelectorAll('a, button')];
+  const next = btns.find(b =&gt; b.textContent.includes('下一页'));
+  if (!next) return { success: false };
+  next.click();
+  return { success: true };
+})()</pre>
+        </div>
+        <div class="docs-pane p-3" data-hook="stop" style="display:none;">
+          <p class="text-xs text-muted-foreground leading-relaxed mb-2">Stops batch crawling. Receives <code class="bg-muted px-1 rounded text-[11px]">context</code> (<code class="bg-muted px-1 rounded text-[11px]">currentUrl</code>, <code class="bg-muted px-1 rounded text-[11px]">pageIndex</code>, <code class="bg-muted px-1 rounded text-[11px]">collectedUrls[]</code>, <code class="bg-muted px-1 rounded text-[11px]">collectedTitles[]</code>). Returns <code class="bg-muted px-1 rounded text-[11px]">{ shouldStop, reason? }</code>.</p>
+          <pre class="bg-code-bg text-code-fg text-[11px] leading-relaxed p-3 rounded-md overflow-x-auto whitespace-pre">// Stop when URL contains "example.com"
+(function(context) {
+  if (context.currentUrl.includes('example.com'))
+    return { shouldStop: true, reason: 'Reached target' };
+  return { shouldStop: false };
+})()
+
+// Stop on repeated URL (loop detection)
+(function(context) {
+  if (context.collectedUrls.includes(context.currentUrl))
+    return { shouldStop: true, reason: 'Loop detected' };
+  return { shouldStop: false };
+})()</pre>
+        </div>
       </div>
 
-      <button id="btn-save-recipe" class="btn-small">💾 Save as Recipe</button>
-    </section>
+      <!-- Test result -->
+      <div id="hook-test-result" class="px-3 py-1.5 text-xs font-mono bg-muted border-t border-border max-h-28 overflow-auto whitespace-pre-wrap break-all" style="display:none;"></div>
+    </div>
 
-    <section class="action-section">
-      <div class="action-buttons">
-        <button id="btn-convert" class="btn-primary">📄 Convert Current Page</button>
-        <button id="btn-batch" class="btn-primary">🔄 Batch Execute</button>
-        <button id="btn-stop-pipeline" class="btn-danger" style="display:none;">⏹ Stop</button>
+    <!-- Save Recipe -->
+    <div class="mb-2.5">
+      <button id="btn-save-recipe"
+        class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium border border-border bg-background text-foreground hover:bg-accent cursor-pointer transition-colors">💾 Save as Recipe</button>
+    </div>
+
+    <!-- Actions -->
+    <div class="mb-2.5 p-2.5 bg-background rounded-lg border border-border">
+      <div class="flex gap-1.5 mb-1.5 flex-wrap">
+        <button id="btn-convert"
+          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">📄 Convert Current Page</button>
+        <button id="btn-batch"
+          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">🔄 Batch Execute</button>
+        <button id="btn-stop-pipeline" style="display:none;"
+          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer transition-colors">⏹ Stop</button>
       </div>
-      <div class="batch-options">
-        <label>Max pages: <input id="opt-max-pages" type="number" value="50" min="1" max="1000"></label>
-        <label>Delay: <input id="opt-delay-min" type="number" value="2" min="0" max="60" style="width:40px">-<input id="opt-delay-max" type="number" value="4" min="0" max="60" style="width:40px">s</label>
+      <div class="flex gap-3 text-[11px] text-muted-foreground flex-wrap">
+        <label>Max pages: <input id="opt-max-pages" type="number" value="50" min="1" max="1000" class="w-12 px-1 py-0.5 border border-input rounded text-[11px] bg-background"></label>
+        <label>Delay: <input id="opt-delay-min" type="number" value="2" min="0" max="60" class="w-10 px-1 py-0.5 border border-input rounded text-[11px] bg-background">-<input id="opt-delay-max" type="number" value="4" min="0" max="60" class="w-10 px-1 py-0.5 border border-input rounded text-[11px] bg-background">s</label>
       </div>
-    </section>
+    </div>
 
-    <section class="results-section" id="results-section" style="display:none;">
-      <h2>Results <span id="result-count"></span></h2>
-      <div id="results-list" class="results-list"></div>
-      <div class="result-actions">
-        <button id="btn-copy-all">📋 Copy All</button>
-        <button id="btn-download-zip">💾 Download ZIP</button>
+    <!-- Results -->
+    <div id="results-section" class="mb-2.5" style="display:none;">
+      <h2 class="text-[13px] font-semibold mb-1.5">Results <span id="result-count" class="font-normal text-muted-foreground"></span></h2>
+      <div id="results-list" class="max-h-44 overflow-y-auto mb-1.5"></div>
+      <div class="flex gap-1.5">
+        <button id="btn-copy-all" class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium border border-border bg-background hover:bg-accent cursor-pointer transition-colors">📋 Copy All</button>
+        <button id="btn-download-zip" class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium border border-border bg-background hover:bg-accent cursor-pointer transition-colors">💾 Download ZIP</button>
       </div>
-    </section>
+    </div>
 
-    <section class="log-section" id="log-section" style="display:none;">
-      <h2>Log</h2>
-      <div id="log-content" class="log-content"></div>
-    </section>
+    <!-- Log -->
+    <div id="log-section" class="mb-2.5" style="display:none;">
+      <h2 class="text-[13px] font-semibold mb-1.5">Log</h2>
+      <div id="log-content" class="max-h-44 overflow-y-auto font-mono text-[10px] bg-code-bg text-success p-2 rounded-md leading-relaxed"></div>
+    </div>
 
-    <div id="toast" class="toast" style="display:none;"></div>
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-foreground text-background rounded-md text-xs z-50 opacity-0 transition-opacity" style="display:none;"></div>
   </div>
   <script src="sidepanel.js" type="module"></script>
 </body>

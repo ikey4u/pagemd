@@ -4,6 +4,7 @@ import { loadSettings } from './settings';
 
 export interface PipelineConfig {
   tabId: number;
+  cleanHookCode: string | null;
   extractHookCode: string;
   navigateHookCode: string | null;
   stopHookCode: string | null;
@@ -52,7 +53,13 @@ export class Pipeline {
         this.state.currentUrl = await this.config.getPageUrl();
         this.updateState({ currentUrl: this.state.currentUrl });
 
-        // 2. Execute Extract Hook
+        // 2. Execute Clean Hook (if present)
+        if (this.config.cleanHookCode) {
+          this.config.onLog('Cleaning page...', 'info');
+          await this.executeWithFallback(this.config.cleanHookCode);
+        }
+
+        // 3. Execute Extract Hook
         this.config.onLog(`Extracting page ${this.state.pageIndex + 1}...`, 'info');
         const extractResult = await this.executeWithFallback(
           this.config.extractHookCode,

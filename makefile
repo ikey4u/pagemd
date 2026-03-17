@@ -1,2 +1,2 @@
 build:
-	@brosion build
+	@brosion build && npm run build:css

@@ -8,6 +8,7 @@ export interface Recipe {
   id: string;
   name: string;
   urlPattern: string;
+  cleanHook: Hook | null;
   extractHook: Hook;
   navigateHook: Hook | null;
   stopHook: Hook | null;

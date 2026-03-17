@@ -75,6 +75,7 @@ export function createEmptyRecipe(name: string, urlPattern: string): Recipe {
     id: crypto.randomUUID(),
     name,
     urlPattern,
+    cleanHook: null,
     extractHook: {
       description: '',
       script: '',

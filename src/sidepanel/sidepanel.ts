@@ -52,6 +52,9 @@ async function updateCurrentPage() {
 
     const recipe = await findMatchingRecipe(tab.url);
     if (recipe) {
+      if (recipe.cleanHook?.script) {
+        (document.getElementById('hook-clean') as HTMLTextAreaElement).value = recipe.cleanHook.script;
+      }
       if (recipe.extractHook.script) {
         (document.getElementById('hook-extract') as HTMLTextAreaElement).value = recipe.extractHook.script;
       }
@@ -300,7 +303,7 @@ async function runHook(hookType: HookType): Promise<unknown> {
   let code = cleanHookCode(textarea.value);
   if (!code) throw new Error('No hook code');
 
-  const syntaxError = validateHookSyntax(`(${code})`);
+  const syntaxError = await validateHookSyntax(currentTabId, code);
   if (syntaxError) throw new Error(`Syntax error: ${syntaxError}`);
 
   let contextArg: StopHookContext | undefined;
@@ -332,24 +335,50 @@ async function runHook(hookType: HookType): Promise<unknown> {
 // --- Test Hook ---
 
 async function testHook(hookType: HookType) {
+  const resultBar = $('hook-test-result');
+
+  function setOutput(text: string, isError = false) {
+    resultBar.style.display = 'block';
+    resultBar.textContent = text;
+    resultBar.style.color = isError ? '#e63946' : '#333';
+  }
+
+  setOutput('Running...');
+
   try {
     log(`Testing ${hookType} hook...`, 'info');
     const result = await runHook(hookType);
-    log(`${hookType} result: ${JSON.stringify(result, null, 2)}`, 'success');
 
-    if (hookType === 'extract' && result) {
+    if (hookType === 'clean') {
+      const clean = result as { removed: number } | null;
+      setOutput(clean
+        ? `✅ Removed ${clean.removed} element(s) from the page`
+        : '⚠️ Clean hook returned null');
+    } else if (hookType === 'extract' && result) {
       const extract = result as ExtractResult;
-      showToast(`Extracted: "${extract.title}" (${extract.html.length} chars)`);
+      setOutput(
+        `✅ Title: ${extract.title}\n` +
+        `   HTML length: ${extract.html.length} chars\n` +
+        `   Preview: ${extract.html.substring(0, 200)}...`
+      );
     } else if (hookType === 'navigate') {
       const nav = result as { success: boolean };
-      showToast(nav.success ? 'Navigation succeeded' : 'Navigation failed (no target found)');
+      setOutput(nav.success
+        ? '✅ Navigation executed successfully'
+        : '⚠️ Navigation failed: target not found');
     } else if (hookType === 'stop') {
       const stop = result as { shouldStop: boolean; reason?: string };
-      showToast(stop.shouldStop ? `Should stop: ${stop.reason || 'yes'}` : 'Should not stop');
+      setOutput(stop.shouldStop
+        ? `🛑 Should stop: ${stop.reason || 'yes'}`
+        : '✅ Should NOT stop (continue crawling)');
+    } else {
+      setOutput(`Result: ${JSON.stringify(result, null, 2)}`);
     }
+
+    log(`${hookType} test passed`, 'success');
   } catch (e) {
+    setOutput(`❌ Error: ${e}`, true);
     log(`Test failed: ${e}`, 'error');
-    showToast(`Error: ${e}`);
   }
 }
 
@@ -415,8 +444,15 @@ async function convertCurrentPage() {
     return;
   }
 
-  log('Converting with Extract Hook...', 'info');
+  log('Converting with hooks...', 'info');
   try {
+    // Run Clean Hook first (if present)
+    const cleanCode = (document.getElementById('hook-clean') as HTMLTextAreaElement).value.trim();
+    if (cleanCode) {
+      log('Running Clean Hook...', 'info');
+      await runHook('clean');
+    }
+
     const result = await runHook('extract') as ExtractResult | null;
     if (!result) { log('Extract hook returned null', 'error'); return; }
 
@@ -591,6 +627,7 @@ async function startBatchExecution() {
     return;
   }
 
+  const cleanCode = (document.getElementById('hook-clean') as HTMLTextAreaElement).value.trim() || null;
   const stopCode = (document.getElementById('hook-stop') as HTMLTextAreaElement).value.trim() || null;
   const maxPages = parseInt(($('opt-max-pages') as HTMLInputElement).value) || 50;
   const delayMin = (parseFloat(($('opt-delay-min') as HTMLInputElement).value) || 2) * 1000;
@@ -603,6 +640,7 @@ async function startBatchExecution() {
   const tabId = currentTabId;
   activePipeline = new Pipeline({
     tabId,
+    cleanHookCode: cleanCode,
     extractHookCode: extractCode,
     navigateHookCode: navigateCode,
     stopHookCode: stopCode,
@@ -643,9 +681,70 @@ async function startBatchExecution() {
   activePipeline.start();
 }
 
+// --- Unified Hook Tab Switching ---
+
+let activeHookType: HookType = 'extract';
+let docsVisible = false;
+
+function switchHookTab(hookType: HookType) {
+  activeHookType = hookType;
+  docsVisible = false;
+
+  // Update tab highlights
+  document.querySelectorAll('.hook-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.hook-tab[data-hook="${hookType}"]`)?.classList.add('active');
+
+  // Show the right textarea, hide others
+  $('hook-view-editor').classList.add('active');
+  $('hook-view-docs').classList.remove('active');
+  $('btn-docs').classList.remove('active');
+
+  document.querySelectorAll('.code-area').forEach(el => {
+    (el as HTMLElement).style.display = (el as HTMLElement).dataset.hook === hookType ? '' : 'none';
+  });
+
+  // Hide test result when switching
+  $('hook-test-result').style.display = 'none';
+}
+
+function toggleDocs() {
+  docsVisible = !docsVisible;
+  $('btn-docs').classList.toggle('active', docsVisible);
+
+  if (docsVisible) {
+    $('hook-view-editor').classList.remove('active');
+    $('hook-view-docs').classList.add('active');
+    // Show docs for active hook type
+    document.querySelectorAll('.docs-pane').forEach(el => {
+      (el as HTMLElement).style.display = (el as HTMLElement).dataset.hook === activeHookType ? '' : 'none';
+    });
+  } else {
+    $('hook-view-editor').classList.add('active');
+    $('hook-view-docs').classList.remove('active');
+  }
+}
+
 // --- Init ---
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Hook tab switching
+  document.querySelectorAll('.hook-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      switchHookTab((tab as HTMLElement).dataset.hook as HookType);
+    });
+  });
+
+  // Action buttons
+  $('btn-docs').addEventListener('click', toggleDocs);
+
+  $('btn-copy-prompt').addEventListener('click', () => {
+    copyPrompt(activeHookType);
+  });
+
+  $('btn-run-test').addEventListener('click', () => {
+    testHook(activeHookType);
+  });
+
   await updateCurrentPage();
 
   chrome.tabs.onActivated.addListener(() => updateCurrentPage());
@@ -659,20 +758,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('btn-copy-all').addEventListener('click', copyAllResults);
   $('btn-download-zip').addEventListener('click', downloadZip);
 
-  document.querySelectorAll('.btn-copy-prompt').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const hookType = (btn as HTMLElement).dataset.hook as HookType;
-      copyPrompt(hookType);
-    });
-  });
-
-  document.querySelectorAll('.btn-test').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const hookType = (btn as HTMLElement).dataset.hook as HookType;
-      testHook(hookType);
-    });
-  });
-
   $('btn-save-recipe').addEventListener('click', async () => {
     const tab = await getCurrentTab();
     if (!tab?.url) return;
@@ -684,10 +769,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const pattern = prompt('URL pattern:', `${host}/*`) || `${host}/*`;
 
       const recipe = createEmptyRecipe(name, pattern);
+      const cleanCode = (document.getElementById('hook-clean') as HTMLTextAreaElement).value.trim();
       const extractCode = (document.getElementById('hook-extract') as HTMLTextAreaElement).value.trim();
       const navigateCode = (document.getElementById('hook-navigate') as HTMLTextAreaElement).value.trim();
       const stopCode = (document.getElementById('hook-stop') as HTMLTextAreaElement).value.trim();
 
+      if (cleanCode) recipe.cleanHook = { description: '', script: cleanCode, generatedBy: 'manual' };
       if (extractCode) recipe.extractHook = { description: '', script: extractCode, generatedBy: 'manual' };
       if (navigateCode) recipe.navigateHook = { description: '', script: navigateCode, generatedBy: 'manual' };
       if (stopCode) recipe.stopHook = { description: '', script: stopCode, generatedBy: 'manual' };
