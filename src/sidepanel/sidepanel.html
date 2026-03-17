@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pagemd</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>pagemd</h1>
+      <button id="btn-settings" title="Settings">⚙</button>
+    </header>
+
+    <section class="page-info">
+      <div id="current-url" class="url-display">No page loaded</div>
+      <button id="btn-quick-convert" class="btn-primary">⚡ Quick Convert</button>
+    </section>
+
+    <section class="hook-section">
+      <div class="hook-group">
+        <div class="hook-header">
+          <label>Extract Hook</label>
+          <button class="btn-copy-prompt btn-small" data-hook="extract">📋 Copy Prompt</button>
+        </div>
+        <textarea id="hook-extract" class="code-editor" placeholder="Paste AI-generated extract script here..." rows="5"></textarea>
+        <button class="btn-test btn-small" data-hook="extract">▶ Test</button>
+      </div>
+
+      <div class="hook-group">
+        <div class="hook-header">
+          <label>Navigate Hook <span class="optional">(optional)</span></label>
+          <button class="btn-copy-prompt btn-small" data-hook="navigate">📋 Copy Prompt</button>
+        </div>
+        <textarea id="hook-navigate" class="code-editor" placeholder="Paste AI-generated navigate script here..." rows="4"></textarea>
+        <button class="btn-test btn-small" data-hook="navigate">▶ Test</button>
+      </div>
+
+      <div class="hook-group">
+        <div class="hook-header">
+          <label>Stop Hook <span class="optional">(optional)</span></label>
+          <button class="btn-copy-prompt btn-small" data-hook="stop">📋 Copy Prompt</button>
+        </div>
+        <textarea id="hook-stop" class="code-editor" placeholder="Paste AI-generated stop condition script here..." rows="4"></textarea>
+        <button class="btn-test btn-small" data-hook="stop">▶ Test</button>
+      </div>
+
+      <button id="btn-save-recipe" class="btn-small">💾 Save as Recipe</button>
+    </section>
+
+    <section class="action-section">
+      <div class="action-buttons">
+        <button id="btn-convert" class="btn-primary">📄 Convert Current Page</button>
+        <button id="btn-batch" class="btn-primary">🔄 Batch Execute</button>
+        <button id="btn-stop-pipeline" class="btn-danger" style="display:none;">⏹ Stop</button>
+      </div>
+      <div class="batch-options">
+        <label>Max pages: <input id="opt-max-pages" type="number" value="50" min="1" max="1000"></label>
+        <label>Delay: <input id="opt-delay-min" type="number" value="2" min="0" max="60" style="width:40px">-<input id="opt-delay-max" type="number" value="4" min="0" max="60" style="width:40px">s</label>
+      </div>
+    </section>
+
+    <section class="results-section" id="results-section" style="display:none;">
+      <h2>Results <span id="result-count"></span></h2>
+      <div id="results-list" class="results-list"></div>
+      <div class="result-actions">
+        <button id="btn-copy-all">📋 Copy All</button>
+        <button id="btn-download-zip">💾 Download ZIP</button>
+      </div>
+    </section>
+
+    <section class="log-section" id="log-section" style="display:none;">
+      <h2>Log</h2>
+      <div id="log-content" class="log-content"></div>
+    </section>
+
+    <div id="toast" class="toast" style="display:none;"></div>
+  </div>
+  <script src="sidepanel.js" type="module"></script>
+</body>
+</html>

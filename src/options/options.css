@@ -1,0 +1,124 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  color: #1a1a2e;
+  background: #f4f5f7;
+  padding: 24px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 22px;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.card h2 {
+  font-size: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+.field label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.hint {
+  margin-top: 4px;
+  margin-left: 22px;
+  font-size: 12px;
+  color: #888;
+}
+
+.btn-primary {
+  padding: 8px 18px;
+  background: #4361ee;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn-primary:hover { background: #3a56d4; }
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid #d0d0d0;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-small:hover { background: #f0f0f0; }
+
+.btn-danger-small {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #e63946;
+  color: #e63946;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-danger-small:hover { background: #fef0f0; }
+
+#status {
+  margin-left: 12px;
+  font-size: 13px;
+  color: #4ecdc4;
+}
+
+.recipe-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.recipe-info {
+  flex: 1;
+}
+
+.recipe-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.recipe-pattern {
+  font-size: 12px;
+  color: #888;
+  margin-top: 2px;
+}
+
+.recipe-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.empty-state {
+  color: #999;
+  font-size: 13px;
+  padding: 12px 0;
+}
