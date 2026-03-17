@@ -1,4 +1,3 @@
-import { collectPageContext } from '../lib/dom-summary';
 import { buildPrompt, type HookType } from '../lib/prompt';
 import { cleanHookCode, validateHookSyntax, executeHook, executeHookViaDebugger } from '../lib/hook-executor';
 import { loadSettings } from '../lib/settings';
@@ -77,19 +76,205 @@ async function getPageContext(): Promise<PageContext | null> {
   if (!currentTabId) return null;
 
   try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: currentTabId },
-      func: collectPageContext,
-    });
-    const ctx = results?.[0]?.result;
-    if (ctx) {
-      cachedPageContext = ctx as PageContext;
-      return cachedPageContext;
-    }
+    const tabInfo = await chrome.tabs.get(currentTabId);
+    const url = tabInfo.url || '';
+    const title = tabInfo.title || '';
+
+    const domSummary = await fetchAccessibilityTree(currentTabId);
+
+    cachedPageContext = { url, title, domSummary };
+    return cachedPageContext;
   } catch (e) {
     log(`Failed to get page context: ${e}`, 'error');
   }
   return null;
+}
+
+// Roles that are structural wrappers with no semantic meaning — promote their children up
+const TRANSPARENT_ROLES = new Set([
+  'none', 'presentation', 'generic',
+]);
+const MAX_NAME_LEN = 100;
+const MAX_JSON_LEN = 30000;
+
+interface AXNode {
+  role: string;
+  name?: string;
+  value?: string;
+  description?: string;
+  properties?: Record<string, unknown>;
+  children?: AXNode[];
+}
+
+interface CDPAXNode {
+  nodeId: string;
+  parentId?: string;
+  role?: { value: string };
+  name?: { value: string; sources?: unknown[] };
+  value?: { value: string };
+  description?: { value: string };
+  ignored?: boolean;
+  ignoredReasons?: Array<{ name: string }>;
+  properties?: Array<{ name: string; value: { value: unknown } }>;
+  childIds?: string[];
+  backendDOMNodeId?: number;
+}
+
+async function fetchAccessibilityTree(tabId: number): Promise<string> {
+  await chrome.debugger.attach({ tabId }, '1.3');
+  try {
+    // Enable accessibility domain first
+    await chrome.debugger.sendCommand({ tabId }, 'Accessibility.enable', {});
+
+    // Fetch full tree — depth: -1 means all levels
+    const result = await chrome.debugger.sendCommand(
+      { tabId },
+      'Accessibility.getFullAXTree',
+      { depth: -1 },
+    ) as { nodes: CDPAXNode[] };
+
+    await chrome.debugger.sendCommand({ tabId }, 'Accessibility.disable', {});
+
+    const tree = buildAXTree(result.nodes || []);
+    let json = JSON.stringify(tree, null, 2);
+    if (json.length > MAX_JSON_LEN) {
+      json = json.substring(0, MAX_JSON_LEN) + '\n... (truncated)';
+    }
+    return json;
+  } finally {
+    await chrome.debugger.detach({ tabId }).catch(() => {});
+  }
+}
+
+function buildAXTree(nodes: CDPAXNode[]): AXNode | null {
+  if (nodes.length === 0) return null;
+
+  // Build lookup maps
+  const nodeMap = new Map<string, CDPAXNode>();
+  for (const n of nodes) nodeMap.set(n.nodeId, n);
+
+  // Build parent→children map from parentId (more reliable than childIds)
+  const childrenMap = new Map<string, string[]>();
+  let rootId: string | null = null;
+
+  for (const n of nodes) {
+    if (!n.parentId) {
+      rootId = n.nodeId;
+    } else {
+      let siblings = childrenMap.get(n.parentId);
+      if (!siblings) {
+        siblings = [];
+        childrenMap.set(n.parentId, siblings);
+      }
+      siblings.push(n.nodeId);
+    }
+  }
+
+  // If no root found via parentId, fall back to first node
+  if (!rootId) rootId = nodes[0].nodeId;
+
+  function getChildIds(nodeId: string): string[] {
+    // Prefer the parentId-built map; fall back to childIds from CDP
+    const fromParent = childrenMap.get(nodeId);
+    if (fromParent && fromParent.length > 0) return fromParent;
+    const cdpNode = nodeMap.get(nodeId);
+    return cdpNode?.childIds || [];
+  }
+
+  function convertChildren(parentId: string): AXNode[] {
+    const result: AXNode[] = [];
+    const cids = getChildIds(parentId);
+    for (const cid of cids) {
+      const child = nodeMap.get(cid);
+      if (!child) continue;
+      const converted = convert(child);
+      if (Array.isArray(converted)) {
+        result.push(...converted);
+      } else if (converted) {
+        result.push(converted);
+      }
+    }
+    return result;
+  }
+
+  // Returns a single AXNode, an array (promoted children), or null
+  function convert(cdpNode: CDPAXNode): AXNode | AXNode[] | null {
+    const role = cdpNode.role?.value || '';
+
+    // For ignored nodes and transparent roles, promote children up
+    if (cdpNode.ignored || TRANSPARENT_ROLES.has(role)) {
+      const children = convertChildren(cdpNode.nodeId);
+      if (children.length === 0) return null;
+      if (children.length === 1) return children[0];
+      return children; // Return array — parent will spread them
+    }
+
+    // Skip pure text leaf nodes (StaticText/InlineTextBox) — their text
+    // is already captured in the parent's name
+    if (role === 'StaticText' || role === 'InlineTextBox') {
+      return null;
+    }
+
+    const node: AXNode = { role };
+
+    // Name
+    const name = cdpNode.name?.value?.trim();
+    if (name) {
+      node.name = name.length > MAX_NAME_LEN
+        ? name.substring(0, MAX_NAME_LEN) + '…'
+        : name;
+    }
+
+    // Value
+    if (cdpNode.value?.value) {
+      const v = String(cdpNode.value.value).trim();
+      if (v) node.value = v.length > MAX_NAME_LEN ? v.substring(0, MAX_NAME_LEN) + '…' : v;
+    }
+
+    // Description
+    if (cdpNode.description?.value) {
+      const d = cdpNode.description.value.trim();
+      if (d) node.description = d.length > MAX_NAME_LEN ? d.substring(0, MAX_NAME_LEN) + '…' : d;
+    }
+
+    // Extract useful properties
+    if (cdpNode.properties) {
+      const props: Record<string, unknown> = {};
+      for (const p of cdpNode.properties) {
+        const pName = p.name;
+        const pVal = p.value?.value;
+        if (pName === 'url') { props.url = pVal; continue; }
+        if (pName === 'level') { props.level = pVal; continue; }
+        if (pName === 'checked' && pVal !== 'false') { props.checked = pVal; continue; }
+        if (pName === 'disabled' && pVal === true) { props.disabled = true; continue; }
+        if (pName === 'expanded') { props.expanded = pVal; continue; }
+        if (pName === 'selected' && pVal === true) { props.selected = true; continue; }
+        if (pName === 'required' && pVal === true) { props.required = true; continue; }
+        if (pName === 'focusable' && pVal === true) { props.focusable = true; continue; }
+      }
+      if (Object.keys(props).length > 0) node.properties = props;
+    }
+
+    // Children
+    const children = convertChildren(cdpNode.nodeId);
+    if (children.length > 0) node.children = children;
+
+    // Prune empty structural nodes (no name, no value, no children)
+    if (!node.children && !node.name && !node.value) {
+      return null;
+    }
+
+    return node;
+  }
+
+  const rootNode = nodeMap.get(rootId);
+  if (!rootNode) return null;
+
+  const result = convert(rootNode);
+  if (Array.isArray(result)) {
+    return result.length === 1 ? result[0] : { role: 'RootWebArea', children: result };
+  }
+  return result;
 }
 
 // --- Copy Prompt ---
@@ -356,13 +541,14 @@ function createZipFile(docs: Array<{ title: string; markdown: string }>): Blob {
   ev.setUint32(12, centralSize, true);
   ev.setUint32(16, offset, true);
 
-  const parts: BlobPart[] = [];
+  const toBlob = (u: Uint8Array) => new Blob([new Uint8Array(u) as unknown as BlobPart]);
+  const parts: Blob[] = [];
   for (let i = 0; i < localHeaders.length; i++) {
-    parts.push(localHeaders[i]);
-    parts.push(contents[i]);
+    parts.push(toBlob(localHeaders[i]));
+    parts.push(toBlob(contents[i]));
   }
-  centralHeaders.forEach(h => parts.push(h));
-  parts.push(new Uint8Array(end));
+  centralHeaders.forEach(h => parts.push(toBlob(h)));
+  parts.push(new Blob([end]));
 
   return new Blob(parts, { type: 'application/zip' });
 }
