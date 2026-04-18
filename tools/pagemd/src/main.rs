@@ -123,6 +123,144 @@ struct RenderedSection {
     html: String,
 }
 
+struct PendingImage {
+    src: String,
+    title_attr: String,
+    alt_buf: String,
+}
+
+fn push_plain_text(buf: &mut String, event: &Event<'_>) {
+    match event {
+        Event::Text(text) => buf.push_str(text),
+        Event::Code(code) => buf.push_str(code),
+        Event::InlineMath(math) => buf.push_str(math),
+        Event::DisplayMath(math) => buf.push_str(math),
+        Event::FootnoteReference(label) => buf.push_str(label),
+        Event::SoftBreak | Event::HardBreak => buf.push(' '),
+        _ => {}
+    }
+}
+
+fn current_target<'a>(html: &'a mut String, paragraph_html: &'a mut Option<String>) -> &'a mut String {
+    match paragraph_html {
+        Some(buf) => buf,
+        None => html,
+    }
+}
+
+fn is_escaped_byte(text: &str, index: usize) -> bool {
+    let bytes = text.as_bytes();
+    let mut count = 0usize;
+    let mut cursor = index;
+    while cursor > 0 {
+        cursor -= 1;
+        if bytes[cursor] == b'\\' {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count % 2 == 1
+}
+
+fn contains_cjk_text_or_punctuation(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{2E80}'..='\u{2EFF}'
+                | '\u{2F00}'..='\u{2FDF}'
+                | '\u{3000}'..='\u{303F}'
+                | '\u{3040}'..='\u{30FF}'
+                | '\u{3100}'..='\u{312F}'
+                | '\u{31A0}'..='\u{31BF}'
+                | '\u{31F0}'..='\u{31FF}'
+                | '\u{3400}'..='\u{4DBF}'
+                | '\u{4E00}'..='\u{9FFF}'
+                | '\u{AC00}'..='\u{D7AF}'
+                | '\u{F900}'..='\u{FAFF}'
+                | '\u{FF00}'..='\u{FFEF}'
+        )
+    })
+}
+
+fn is_invalid_inline_math_candidate(expr: &str) -> bool {
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if contains_cjk_text_or_punctuation(trimmed) {
+        return true;
+    }
+    matches!(
+        trimmed.chars().last(),
+        Some('+' | '-' | '–' | '—' | '−' | '=' | '/' | '*' | ':' | ';' | ',' | '→' | '←' | '↔' | '⇒' | '⇐' | '⇔')
+    )
+}
+
+fn append_inline_math_html(buf: &mut String, text: &str, math_font_size: f64, font_dir: &str) {
+    let bytes = text.as_bytes();
+    let mut plain_start = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'$' && !is_escaped_byte(text, i) {
+            let prev_is_dollar = i > 0 && bytes[i - 1] == b'$';
+            let next_is_dollar = i + 1 < bytes.len() && bytes[i + 1] == b'$';
+            if prev_is_dollar || next_is_dollar {
+                i += 1;
+                continue;
+            }
+
+            let mut matched: Option<(usize, String)> = None;
+            let mut j = i + 1;
+            while j < bytes.len() {
+                if bytes[j] == b'$' && !is_escaped_byte(text, j) {
+                    let prev_close_is_dollar = j > 0 && bytes[j - 1] == b'$';
+                    let next_close_is_dollar = j + 1 < bytes.len() && bytes[j + 1] == b'$';
+                    if !prev_close_is_dollar && !next_close_is_dollar {
+                        let expr = text[i + 1..j].trim();
+                        if !expr.is_empty() && !expr.contains('\n') && !is_invalid_inline_math_candidate(expr) {
+                            if let Ok(svg) = latex_to_svg(expr, false, math_font_size, font_dir) {
+                                matched = Some((j, svg));
+                                break;
+                            }
+                        }
+                    }
+                }
+                j += 1;
+            }
+
+            if let Some((end, svg)) = matched {
+                buf.push_str(&html_escape(&text[plain_start..i]));
+                buf.push_str("<span class=\"math-inline\">");
+                buf.push_str(&svg);
+                buf.push_str("</span>");
+                plain_start = end + 1;
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    buf.push_str(&html_escape(&text[plain_start..]));
+}
+
+fn render_display_math_paragraph(plain: &str, math_font_size: f64, font_dir: &str) -> Option<String> {
+    let trimmed = plain.trim();
+    if trimmed.len() < 4 || !trimmed.starts_with("$$") || !trimmed.ends_with("$$") {
+        return None;
+    }
+
+    let inner = trimmed[2..trimmed.len() - 2].trim();
+    if inner.is_empty() || inner.contains("$$") {
+        return None;
+    }
+
+    let svg = latex_to_svg(inner, true, math_font_size, font_dir).ok()?;
+    Some(format!("<div class=\"math-display\">{svg}</div>"))
+}
+
 fn render_markdown(
     source: &str,
     base_dir: &Path,
@@ -136,7 +274,6 @@ fn render_markdown(
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_FOOTNOTES);
-    opts.insert(Options::ENABLE_MATH);
 
     let parser = MdParser::new_ext(source, opts);
     let events: Vec<Event> = parser.collect();
@@ -151,18 +288,20 @@ fn render_markdown(
         .or_else(|| ts.themes.values().next())
         .context("No theme found")?;
 
-    #[derive(PartialEq)]
     enum Context {
         Normal,
         CodeBlock { lang: String, buf: String },
-        Heading { level: u32, buf: String },
-        Image { src: String, title_attr: String, alt_buf: String },
+        Heading { level: u32, buf: String, image: Option<PendingImage> },
+        Image(PendingImage),
     }
 
     let mut ctx = Context::Normal;
     let mut in_table_head = false;
     let mut table_alignments: Vec<pulldown_cmark::Alignment> = Vec::new();
     let mut table_col_index: usize = 0;
+    let mut paragraph_html: Option<String> = None;
+    let mut paragraph_plain: Option<String> = None;
+    let mut paragraph_is_plain = true;
 
     for event in &events {
         match &mut ctx {
@@ -200,68 +339,87 @@ fn render_markdown(
                 _ => {}
             },
 
-            Context::Heading { level, buf } => match event {
-                Event::Text(text) => buf.push_str(text),
-                Event::Code(code) => {
-                    buf.push_str("<code>");
-                    buf.push_str(&html_escape(code));
-                    buf.push_str("</code>");
-                }
-                Event::Start(Tag::Emphasis) => buf.push_str("<em>"),
-                Event::End(TagEnd::Emphasis) => buf.push_str("</em>"),
-                Event::Start(Tag::Strong) => buf.push_str("<strong>"),
-                Event::End(TagEnd::Strong) => buf.push_str("</strong>"),
-                Event::Start(Tag::Strikethrough) => buf.push_str("<del>"),
-                Event::End(TagEnd::Strikethrough) => buf.push_str("</del>"),
-                Event::Start(Tag::Link { dest_url, title: link_title, .. }) => {
-                    let title_attr = if link_title.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" title=\"{}\"", html_escape(link_title))
-                    };
-                    buf.push_str(&format!("<a href=\"{dest_url}\"{title_attr}>"));
-                }
-                Event::End(TagEnd::Link) => buf.push_str("</a>"),
-                Event::Start(Tag::Image { dest_url, title: img_title, .. }) => {
-                    let src = image_to_data_uri(dest_url, base_dir);
-                    let title_attr = if img_title.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" title=\"{}\"", html_escape(img_title))
-                    };
-                    buf.push_str(&format!("<img src=\"{src}\"{title_attr} alt=\""));
-                }
-                Event::End(TagEnd::Image) => buf.push_str("\">"),
-                Event::InlineMath(math) => {
-                    if let Ok(svg) = latex_to_svg(math, false, math_font_size, font_dir) {
-                        buf.push_str("<span class=\"math-inline\">");
-                        buf.push_str(&svg);
-                        buf.push_str("</span>");
+            Context::Heading { level, buf, image } => {
+                if let Some(pending) = image {
+                    match event {
+                        Event::End(TagEnd::Image) => {
+                            let alt = html_escape(&pending.alt_buf);
+                            buf.push_str(&format!("<img src=\"{}\" alt=\"{}\"{}>", pending.src.as_str(), alt, pending.title_attr.as_str()));
+                            *image = None;
+                        }
+                        _ => push_plain_text(&mut pending.alt_buf, event),
+                    }
+                } else {
+                    match event {
+                        Event::Text(text) => append_inline_math_html(buf, text, math_font_size, font_dir),
+                        Event::Code(code) => {
+                            buf.push_str("<code>");
+                            buf.push_str(&html_escape(code));
+                            buf.push_str("</code>");
+                        }
+                        Event::Start(Tag::Emphasis) => buf.push_str("<em>"),
+                        Event::End(TagEnd::Emphasis) => buf.push_str("</em>"),
+                        Event::Start(Tag::Strong) => buf.push_str("<strong>"),
+                        Event::End(TagEnd::Strong) => buf.push_str("</strong>"),
+                        Event::Start(Tag::Strikethrough) => buf.push_str("<del>"),
+                        Event::End(TagEnd::Strikethrough) => buf.push_str("</del>"),
+                        Event::Start(Tag::Link { dest_url, title: link_title, .. }) => {
+                            let title_attr = if link_title.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" title=\"{}\"", html_escape(link_title))
+                            };
+                            buf.push_str(&format!("<a href=\"{}\"{title_attr}>", html_escape(dest_url)));
+                        }
+                        Event::End(TagEnd::Link) => buf.push_str("</a>"),
+                        Event::Start(Tag::Image { dest_url, title: img_title, .. }) => {
+                            let src = image_to_data_uri(dest_url, base_dir);
+                            let title_attr = if img_title.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" title=\"{}\"", html_escape(img_title))
+                            };
+                            *image = Some(PendingImage {
+                                src: html_escape(&src),
+                                title_attr,
+                                alt_buf: String::new(),
+                            });
+                        }
+                        Event::InlineMath(math) => {
+                            if let Ok(svg) = latex_to_svg(math, false, math_font_size, font_dir) {
+                                buf.push_str("<span class=\"math-inline\">");
+                                buf.push_str(&svg);
+                                buf.push_str("</span>");
+                            }
+                        }
+                        Event::Html(raw) => buf.push_str(raw),
+                        Event::InlineHtml(raw) => buf.push_str(raw),
+                        Event::SoftBreak => buf.push(' '),
+                        Event::HardBreak => buf.push(' '),
+                        Event::End(TagEnd::Heading(_)) => {
+                            let lvl = *level;
+                            let plain = strip_html_tags(buf);
+                            let id = slugify(&plain);
+                            if first_heading && lvl == 1 {
+                                title = plain.clone();
+                                first_heading = false;
+                            }
+                            html.push_str(&format!("<h{lvl} id=\"{id}\">{buf}</h{lvl}>\n"));
+                            ctx = Context::Normal;
+                        }
+                        _ => {}
                     }
                 }
-                Event::SoftBreak => buf.push(' '),
-                Event::HardBreak => buf.push(' '),
-                Event::End(TagEnd::Heading(_)) => {
-                    let lvl = *level;
-                    let id = slugify(&strip_html_tags(buf));
-                    if first_heading && lvl == 1 {
-                        title = strip_html_tags(buf);
-                        first_heading = false;
-                    }
-                    html.push_str(&format!("<h{lvl} id=\"{id}\">{buf}</h{lvl}>\n"));
-                    ctx = Context::Normal;
-                }
-                _ => {}
-            },
+            }
 
-            Context::Image { src, title_attr, alt_buf } => match event {
-                Event::Text(text) => alt_buf.push_str(text),
+            Context::Image(pending) => match event {
                 Event::End(TagEnd::Image) => {
-                    let alt = html_escape(alt_buf);
-                    html.push_str(&format!("<img src=\"{src}\" alt=\"{alt}\"{title_attr}>"));
+                    let alt = html_escape(&pending.alt_buf);
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str(&format!("<img src=\"{}\" alt=\"{}\"{}>", pending.src.as_str(), alt, pending.title_attr.as_str()));
                     ctx = Context::Normal;
                 }
-                _ => {}
+                _ => push_plain_text(&mut pending.alt_buf, event),
             },
 
             Context::Normal => match event {
@@ -274,63 +432,119 @@ fn render_markdown(
                 }
 
                 Event::Start(Tag::Heading { level, .. }) => {
-                    ctx = Context::Heading { level: *level as u32, buf: String::new() };
+                    ctx = Context::Heading { level: *level as u32, buf: String::new(), image: None };
                 }
 
                 Event::Start(Tag::Image { dest_url, title: img_title, .. }) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
                     let src = image_to_data_uri(dest_url, base_dir);
                     let title_attr = if img_title.is_empty() {
                         String::new()
                     } else {
                         format!(" title=\"{}\"", html_escape(img_title))
                     };
-                    ctx = Context::Image { src, title_attr, alt_buf: String::new() };
+                    ctx = Context::Image(PendingImage {
+                        src: html_escape(&src),
+                        title_attr,
+                        alt_buf: String::new(),
+                    });
                 }
 
                 Event::InlineMath(math) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    let target = current_target(&mut html, &mut paragraph_html);
                     match latex_to_svg(math, false, math_font_size, font_dir) {
                         Ok(svg) => {
-                            html.push_str("<span class=\"math-inline\">");
-                            html.push_str(&svg);
-                            html.push_str("</span>");
+                            target.push_str("<span class=\"math-inline\">");
+                            target.push_str(&svg);
+                            target.push_str("</span>");
                         }
                         Err(_) => {
-                            html.push_str("<code class=\"math-error\">");
-                            html.push_str(&html_escape(math));
-                            html.push_str("</code>");
+                            target.push_str("<code class=\"math-error\">");
+                            target.push_str(&html_escape(math));
+                            target.push_str("</code>");
                         }
                     }
                 }
                 Event::DisplayMath(math) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    let target = current_target(&mut html, &mut paragraph_html);
                     match latex_to_svg(math, true, math_font_size, font_dir) {
                         Ok(svg) => {
-                            html.push_str("<div class=\"math-display\">");
-                            html.push_str(&svg);
-                            html.push_str("</div>\n");
+                            target.push_str("<div class=\"math-display\">");
+                            target.push_str(&svg);
+                            target.push_str("</div>\n");
                         }
                         Err(_) => {
-                            html.push_str("<div class=\"math-error\"><code>");
-                            html.push_str(&html_escape(math));
-                            html.push_str("</code></div>\n");
+                            target.push_str("<div class=\"math-error\"><code>");
+                            target.push_str(&html_escape(math));
+                            target.push_str("</code></div>\n");
                         }
                     }
                 }
 
                 Event::Start(Tag::Link { dest_url, title: link_title, .. }) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
                     let title_attr = if link_title.is_empty() {
                         String::new()
                     } else {
                         format!(" title=\"{}\"", html_escape(link_title))
                     };
-                    html.push_str(&format!("<a href=\"{dest_url}\"{title_attr}>"));
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str(&format!("<a href=\"{}\"{title_attr}>", html_escape(dest_url)));
                 }
-                Event::End(TagEnd::Link) => html.push_str("</a>"),
+                Event::End(TagEnd::Link) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("</a>");
+                }
 
-                Event::Html(raw) => html.push_str(raw),
-                Event::InlineHtml(raw) => html.push_str(raw),
+                Event::Html(raw) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str(raw);
+                }
+                Event::InlineHtml(raw) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str(raw);
+                }
 
-                Event::Start(Tag::Paragraph) => html.push_str("<p>"),
-                Event::End(TagEnd::Paragraph) => html.push_str("</p>\n"),
+                Event::Start(Tag::Paragraph) => {
+                    paragraph_html = Some(String::new());
+                    paragraph_plain = Some(String::new());
+                    paragraph_is_plain = true;
+                }
+                Event::End(TagEnd::Paragraph) => {
+                    let rendered = paragraph_html.take().unwrap_or_default();
+                    let plain = paragraph_plain.take().unwrap_or_default();
+                    if paragraph_is_plain {
+                        if let Some(display_html) = render_display_math_paragraph(&plain, math_font_size, font_dir) {
+                            html.push_str(&display_html);
+                            html.push('\n');
+                        } else {
+                            html.push_str("<p>");
+                            html.push_str(&rendered);
+                            html.push_str("</p>\n");
+                        }
+                    } else {
+                        html.push_str("<p>");
+                        html.push_str(&rendered);
+                        html.push_str("</p>\n");
+                    }
+                    paragraph_is_plain = true;
+                }
 
                 Event::Start(Tag::BlockQuote(_)) => html.push_str("<blockquote>\n"),
                 Event::End(TagEnd::BlockQuote(_)) => html.push_str("</blockquote>\n"),
@@ -396,30 +610,89 @@ fn render_markdown(
                     table_col_index += 1;
                 }
 
-                Event::Start(Tag::Emphasis) => html.push_str("<em>"),
-                Event::End(TagEnd::Emphasis) => html.push_str("</em>"),
-                Event::Start(Tag::Strong) => html.push_str("<strong>"),
-                Event::End(TagEnd::Strong) => html.push_str("</strong>"),
-                Event::Start(Tag::Strikethrough) => html.push_str("<del>"),
-                Event::End(TagEnd::Strikethrough) => html.push_str("</del>"),
-
-                Event::Code(code) => {
-                    html.push_str("<code>");
-                    html.push_str(&html_escape(code));
-                    html.push_str("</code>");
+                Event::Start(Tag::Emphasis) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("<em>");
+                }
+                Event::End(TagEnd::Emphasis) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("</em>");
+                }
+                Event::Start(Tag::Strong) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("<strong>");
+                }
+                Event::End(TagEnd::Strong) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("</strong>");
+                }
+                Event::Start(Tag::Strikethrough) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("<del>");
+                }
+                Event::End(TagEnd::Strikethrough) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str("</del>");
                 }
 
-                Event::Text(text) => html.push_str(&html_escape(text)),
+                Event::Code(code) => {
+                    if let Some(plain) = paragraph_plain.as_mut() {
+                        plain.push_str(code);
+                        paragraph_is_plain = false;
+                    }
+                    let target = current_target(&mut html, &mut paragraph_html);
+                    target.push_str("<code>");
+                    target.push_str(&html_escape(code));
+                    target.push_str("</code>");
+                }
 
-                Event::SoftBreak => html.push('\n'),
-                Event::HardBreak => html.push_str("<br>\n"),
+                Event::Text(text) => {
+                    if let Some(plain) = paragraph_plain.as_mut() {
+                        plain.push_str(text);
+                    }
+                    append_inline_math_html(current_target(&mut html, &mut paragraph_html), text, math_font_size, font_dir);
+                }
+
+                Event::SoftBreak => {
+                    if let Some(plain) = paragraph_plain.as_mut() {
+                        plain.push('\n');
+                        current_target(&mut html, &mut paragraph_html).push('\n');
+                    } else {
+                        html.push('\n');
+                    }
+                }
+                Event::HardBreak => {
+                    if let Some(plain) = paragraph_plain.as_mut() {
+                        plain.push('\n');
+                        paragraph_is_plain = false;
+                        current_target(&mut html, &mut paragraph_html).push_str("<br>\n");
+                    } else {
+                        html.push_str("<br>\n");
+                    }
+                }
                 Event::Rule => html.push_str("<hr>\n"),
 
                 Event::TaskListMarker(checked) => {
+                    if paragraph_html.is_some() {
+                        paragraph_is_plain = false;
+                    }
+                    let target = current_target(&mut html, &mut paragraph_html);
                     if *checked {
-                        html.push_str("<input type=\"checkbox\" checked disabled> ");
+                        target.push_str("<input type=\"checkbox\" checked disabled> ");
                     } else {
-                        html.push_str("<input type=\"checkbox\" disabled> ");
+                        target.push_str("<input type=\"checkbox\" disabled> ");
                     }
                 }
 
@@ -432,7 +705,11 @@ fn render_markdown(
                 }
                 Event::End(TagEnd::FootnoteDefinition) => html.push_str("</div>\n"),
                 Event::FootnoteReference(label) => {
-                    html.push_str(&format!(
+                    if let Some(plain) = paragraph_plain.as_mut() {
+                        plain.push_str(label);
+                        paragraph_is_plain = false;
+                    }
+                    current_target(&mut html, &mut paragraph_html).push_str(&format!(
                         "<sup><a href=\"#fn-{}\">{}</a></sup>",
                         html_escape(label),
                         html_escape(label)
@@ -862,4 +1139,58 @@ fn main() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render_html(source: &str) -> String {
+        let ss = SyntaxSet::load_defaults_newlines();
+        let ts = ThemeSet::load_defaults();
+        render_markdown(source, Path::new("."), 16.0, "", &ss, &ts)
+            .unwrap()
+            .html
+    }
+
+    fn math_inline_count(html: &str) -> usize {
+        html.matches("class=\"math-inline\"").count()
+    }
+
+    #[test]
+    fn currency_sentence_with_cjk_text_stays_plain() {
+        let html = render_html("（$21 发行价，融资 $2.08 亿）");
+        assert!(html.contains("<p>（$21 发行价，融资 $2.08 亿）</p>"));
+        assert_eq!(math_inline_count(&html), 0);
+    }
+
+    #[test]
+    fn currency_and_bold_currency_do_not_merge_into_math() {
+        let html = render_html("但合并营业利润因 $738M 减值几乎归零；OCF **$710M**");
+        assert!(html.contains("$738M"));
+        assert!(html.contains("<strong>$710M</strong>"));
+        assert_eq!(math_inline_count(&html), 0);
+    }
+
+    #[test]
+    fn currency_range_stays_plain() {
+        let html = render_html("品牌溢价（售价 $40–$60）");
+        assert!(html.contains("<p>品牌溢价（售价 $40–$60）</p>"));
+        assert_eq!(math_inline_count(&html), 0);
+    }
+
+    #[test]
+    fn eps_sequence_with_arrows_stays_plain() {
+        let html = render_html("（EPS：$8.71→$12.79→$15.88）");
+        assert!(html.contains("<p>（EPS：$8.71→$12.79→$15.88）</p>"));
+        assert_eq!(math_inline_count(&html), 0);
+    }
+
+    #[test]
+    fn actual_inline_and_display_math_still_render() {
+        let html = render_html("真公式 $x+y$\n\n**$x+y$**\n\n$$x+y$$");
+        assert_eq!(math_inline_count(&html), 2);
+        assert_eq!(html.matches("class=\"math-display\"").count(), 1);
+        assert!(html.contains("<strong><span class=\"math-inline\">"));
+    }
 }
