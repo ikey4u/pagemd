@@ -3,8 +3,9 @@ import type { Recipe } from './types';
 const STORAGE_KEY = 'pagemd_recipes';
 
 export async function loadRecipes(): Promise<Recipe[]> {
-  const data = await chrome.storage.local.get(STORAGE_KEY);
-  return data[STORAGE_KEY] || [];
+  const data = await chrome.storage.local.get(STORAGE_KEY) as Record<string, unknown>;
+  const recipes = data[STORAGE_KEY];
+  return Array.isArray(recipes) ? recipes as Recipe[] : [];
 }
 
 export async function saveRecipes(recipes: Recipe[]): Promise<void> {

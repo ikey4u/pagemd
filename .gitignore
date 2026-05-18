@@ -1,32 +1,26 @@
-# Dependencies
 node_modules/
+**/node_modules/
 
-# Build outputs
 dist/
+**/dist/
 build/
 *.zip
 
-# WASM build
-wasm/pkg/
-wasm/target/
+target/
+**/target/
+extension/chrome/wasm/pkg/
 
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Logs
 *.log
 npm-debug.log*
+pnpm-debug.log*
 
-# Environment
 .env
 .env.local
-
-# Brosion
-.brosion/
