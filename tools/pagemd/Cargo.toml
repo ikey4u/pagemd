@@ -12,9 +12,13 @@ clap = { version = "4.6", features = ["derive"] }
 pulldown-cmark = { version = "0.13", features = [] }
 syntect = "5.3"
 base64 = "0.22"
+mermaid-rs-renderer = { version = "0.2.2", default-features = false }
 ratex-svg = { version = "0.0.15", features = ["standalone", "cli"] }
 ratex-parser = "0.0.15"
 ratex-layout = "0.0.15"
 ratex-types = "0.0.15"
 ratex-font = "0.0.15"
 anyhow = "1"
+
+[build-dependencies]
+ratex-katex-fonts = "0.1.8"
