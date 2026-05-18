@@ -1,16 +1,21 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use clap::{Args, Parser, Subcommand};
 use mermaid_rs_renderer::{render_with_options, RenderOptions};
+use plantuml_encoding::encode_plantuml_deflate;
 use pulldown_cmark::{Event, Options, Parser as MdParser, Tag, TagEnd};
 use ratex_layout::{layout, to_display_list, LayoutOptions};
 use ratex_parser::parser::parse as parse_latex;
 use ratex_svg::{render_to_svg, SvgOptions};
 use ratex_types::math_style::MathStyle;
+use regex::{Captures, Regex};
+use reqwest::blocking::Client;
+use reqwest::header::CONTENT_TYPE;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
@@ -50,7 +55,11 @@ struct CliArgs {
     #[arg(long = "font-size", default_value = "16")]
     math_font_size: f64,
 
-    #[arg(long = "katex-fonts", value_name = "DIR", help = "Directory containing KaTeX .ttf font files for glyph embedding")]
+    #[arg(
+        long = "katex-fonts",
+        value_name = "DIR",
+        help = "Directory containing KaTeX .ttf font files for glyph embedding"
+    )]
     katex_fonts: Option<PathBuf>,
 }
 
@@ -69,12 +78,19 @@ fn find_katex_fonts(hint: Option<&Path>) -> Result<String> {
         return Ok(bundled_path.to_string_lossy().into_owned());
     }
 
-    bail!("Bundled KaTeX fonts not found in {}", bundled_path.display())
+    bail!(
+        "Bundled KaTeX fonts not found in {}",
+        bundled_path.display()
+    )
 }
 
 fn latex_to_svg(expr: &str, display: bool, font_size: f64, font_dir: &str) -> Result<String> {
     let ast = parse_latex(expr).map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
-    let style = if display { MathStyle::Display } else { MathStyle::Text };
+    let style = if display {
+        MathStyle::Display
+    } else {
+        MathStyle::Text
+    };
     let opts = LayoutOptions {
         style,
         ..LayoutOptions::default()
@@ -82,9 +98,14 @@ fn latex_to_svg(expr: &str, display: bool, font_size: f64, font_dir: &str) -> Re
     let lbox = layout(&ast, &opts);
     let dl = to_display_list(&lbox);
     let embed = !font_dir.is_empty();
+    let effective_font_size = if display {
+        font_size * 2.5
+    } else {
+        font_size * 1.15
+    };
     let svg_opts = SvgOptions {
-        font_size: font_size * 2.5,
-        padding: 2.0,
+        font_size: effective_font_size,
+        padding: if display { 2.0 } else { 0.5 },
         stroke_width: 1.5,
         embed_glyphs: embed,
         font_dir: font_dir.to_owned(),
@@ -92,12 +113,27 @@ fn latex_to_svg(expr: &str, display: bool, font_size: f64, font_dir: &str) -> Re
     Ok(render_to_svg(&dl, &svg_opts))
 }
 
+const MAX_INLINE_RESOURCE_BYTES: usize = 25 * 1024 * 1024;
+
+fn http_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .timeout(Duration::from_secs(30))
+            .user_agent("pagemd/0.1")
+            .build()
+            .expect("failed to build HTTP client")
+    })
+}
+
 fn render_mermaid(code: &str) -> Result<String> {
     let opts = RenderOptions::modern()
         .with_node_spacing(60.0)
         .with_rank_spacing(80.0);
     let svg = render_with_options(code.trim(), opts).context("Failed to render Mermaid diagram")?;
-    Ok(format!("<div class=\"mermaid-display\"><div class=\"mermaid-canvas\">{svg}</div></div>\n"))
+    Ok(format!(
+        "<div class=\"mermaid-display\"><div class=\"mermaid-canvas\">{svg}</div></div>\n"
+    ))
 }
 
 fn mermaid_error_html(code: &str) -> String {
@@ -107,21 +143,388 @@ fn mermaid_error_html(code: &str) -> String {
     )
 }
 
-fn image_to_data_uri(src: &str, base_dir: &Path) -> String {
-    let path = if src.starts_with("http://") || src.starts_with("https://") {
-        return src.to_string();
-    } else if src.starts_with('/') {
+fn plantuml_skinparams() -> &'static str {
+    "skinparam backgroundColor transparent\nskinparam sequenceParticipantBackgroundColor white\nskinparam sequenceParticipantBorderColor #94a3b8\nskinparam actorBackgroundColor white\nskinparam actorBorderColor #94a3b8\nskinparam shadowing false"
+}
+
+fn normalize_plantuml_source(code: &str) -> String {
+    let trimmed = code.trim();
+    if trimmed.contains("@start") && trimmed.contains("@end") {
+        if trimmed.contains("skinparam") {
+            trimmed.to_string()
+        } else if let Some(index) = trimmed.find('\n') {
+            format!(
+                "{}\n{}{}",
+                &trimmed[..index],
+                plantuml_skinparams(),
+                &trimmed[index..]
+            )
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        format!("@startuml\n{}\n{trimmed}\n@enduml", plantuml_skinparams())
+    }
+}
+
+fn render_plantuml(code: &str) -> Result<String> {
+    let source = normalize_plantuml_source(code);
+    let encoded = encode_plantuml_deflate(&source)
+        .map_err(|err| anyhow::anyhow!("Failed to encode PlantUML diagram: {:?}", err))?;
+    let url = format!("https://www.plantuml.com/plantuml/svg/{encoded}");
+    let (bytes, mime) = fetch_remote_resource(&url)?;
+    if mime.eq_ignore_ascii_case("image/svg+xml") || bytes.starts_with(b"<svg") {
+        let svg = String::from_utf8(bytes).context("PlantUML server returned non-UTF-8 SVG")?;
+        Ok(format!(
+            "<div class=\"plantuml-display\"><div class=\"plantuml-canvas\">{svg}</div></div>\n"
+        ))
+    } else {
+        let data_uri = data_uri_from_bytes(&mime, &bytes);
+        Ok(format!(
+            "<div class=\"plantuml-display\"><img class=\"plantuml-image\" src=\"{}\" alt=\"PlantUML diagram\" loading=\"lazy\"></div>\n",
+            html_escape(&data_uri)
+        ))
+    }
+}
+
+fn plantuml_error_html(code: &str) -> String {
+    format!(
+        "<div class=\"plantuml-display plantuml-error\"><strong>PlantUML render failed</strong><pre><code>{}</code></pre></div>\n",
+        html_escape(code)
+    )
+}
+
+fn canonical_callout_kind(kind: &str) -> Option<&'static str> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "note" => Some("note"),
+        "abstract" | "summary" | "tldr" => Some("abstract"),
+        "info" | "todo" => Some("info"),
+        "tip" | "hint" => Some("tip"),
+        "success" | "check" | "done" => Some("success"),
+        "question" | "help" | "faq" => Some("question"),
+        "warning" | "warn" | "attention" => Some("warning"),
+        "failure" | "fail" | "missing" => Some("failure"),
+        "danger" | "error" => Some("danger"),
+        "bug" => Some("bug"),
+        "example" => Some("example"),
+        "quote" | "cite" => Some("quote"),
+        "important" => Some("important"),
+        "caution" => Some("caution"),
+        _ => None,
+    }
+}
+
+fn callout_label(kind: &str) -> &'static str {
+    match kind {
+        "note" => "Note",
+        "abstract" => "Abstract",
+        "info" => "Info",
+        "tip" => "Tip",
+        "success" => "Success",
+        "question" => "Question",
+        "warning" => "Warning",
+        "failure" => "Failure",
+        "danger" => "Danger",
+        "bug" => "Bug",
+        "example" => "Example",
+        "quote" => "Quote",
+        "important" => "Important",
+        "caution" => "Caution",
+        _ => "Note",
+    }
+}
+
+fn parse_callout_marker(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("[!") {
+        return None;
+    }
+    let end = trimmed.find(']')?;
+    let raw_kind = trimmed.get(2..end)?.trim_end_matches(['+', '-']);
+    let kind = canonical_callout_kind(raw_kind)?.to_string();
+    let title = trimmed[end + 1..].trim().to_string();
+    Some((kind, title))
+}
+
+fn parse_admonition_info(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let kind = canonical_callout_kind(parts.next()?)?.to_string();
+    let title = parts.next().unwrap_or("").trim();
+    let title = title
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| title.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(title)
+        .to_string();
+    Some((kind, title))
+}
+
+fn strip_blockquote_marker(line: &str) -> Option<&str> {
+    let mut spaces = 0usize;
+    for ch in line.chars() {
+        if ch == ' ' && spaces < 4 {
+            spaces += 1;
+            continue;
+        }
+        if ch == '>' && spaces <= 3 {
+            let rest = &line[spaces + 1..];
+            return Some(rest.strip_prefix(' ').unwrap_or(rest));
+        }
+        return None;
+    }
+    None
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
+}
+
+fn max_backtick_run(text: &str) -> usize {
+    let mut max_run = 0usize;
+    let mut current = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current += 1;
+            max_run = max_run.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    max_run
+}
+
+fn internal_callout_fence(kind: &str, title: &str, content: &str) -> String {
+    let fence = "`".repeat(max_backtick_run(content).max(3) + 1);
+    let title_suffix = if title.is_empty() {
+        String::new()
+    } else {
+        format!(" {title}")
+    };
+    let mut out = format!("{fence}pagemd-callout {kind}{title_suffix}\n");
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
+fn preprocess_markdown_extensions(source: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        if let Some(first) = strip_blockquote_marker(lines[i]) {
+            if let Some((kind, title)) = parse_callout_marker(first) {
+                i += 1;
+                let mut content = String::new();
+                while i < lines.len() {
+                    if let Some(line) = strip_blockquote_marker(lines[i]) {
+                        content.push_str(line);
+                        content.push('\n');
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                out.push_str(&internal_callout_fence(&kind, &title, &content));
+                continue;
+            }
+        }
+
+        let trimmed = lines[i].trim_start();
+        if let Some(rest) = trimmed.strip_prefix(":::") {
+            if let Some((kind, title)) = parse_admonition_info(rest) {
+                i += 1;
+                let mut content = String::new();
+                while i < lines.len() && lines[i].trim() != ":::" {
+                    content.push_str(lines[i]);
+                    content.push('\n');
+                    i += 1;
+                }
+                if i < lines.len() {
+                    i += 1;
+                }
+                out.push_str(&internal_callout_fence(&kind, &title, &content));
+                continue;
+            }
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("!!!") {
+            if let Some((kind, title)) = parse_admonition_info(rest) {
+                i += 1;
+                let mut content = String::new();
+                while i < lines.len() {
+                    let line = lines[i];
+                    if line.trim().is_empty() {
+                        content.push('\n');
+                        i += 1;
+                    } else if let Some(stripped) = line.strip_prefix("    ") {
+                        content.push_str(stripped);
+                        content.push('\n');
+                        i += 1;
+                    } else if let Some(stripped) = line.strip_prefix('\t') {
+                        content.push_str(stripped);
+                        content.push('\n');
+                        i += 1;
+                    } else if leading_spaces(line) > 0 {
+                        content.push_str(line.trim_start());
+                        content.push('\n');
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                out.push_str(&internal_callout_fence(&kind, &title, &content));
+                continue;
+            }
+        }
+
+        out.push_str(lines[i]);
+        out.push('\n');
+        i += 1;
+    }
+
+    out
+}
+
+fn parse_internal_callout_info(info: &str) -> Option<(String, String)> {
+    let mut parts = info.trim().splitn(3, char::is_whitespace);
+    if parts.next()? != "pagemd-callout" {
+        return None;
+    }
+    let kind = parts.next()?.to_string();
+    let title = parts.next().unwrap_or("").trim().to_string();
+    Some((kind, title))
+}
+
+fn render_callout(
+    kind: &str,
+    title: &str,
+    content: &str,
+    base_dir: &Path,
+    math_font_size: f64,
+    font_dir: &str,
+    ss: &SyntaxSet,
+    ts: &ThemeSet,
+    depth: usize,
+) -> Result<String> {
+    let body = if depth >= 8 {
+        format!("<p>{}</p>\n", html_escape(content.trim()))
+    } else {
+        render_markdown_with_depth(
+            content,
+            base_dir,
+            math_font_size,
+            font_dir,
+            ss,
+            ts,
+            depth + 1,
+        )?
+        .html
+    };
+    let title_text = if title.trim().is_empty() {
+        callout_label(kind)
+    } else {
+        title.trim()
+    };
+    Ok(format!(
+        "<div class=\"callout callout-{kind}\"><div class=\"callout-title\"><span>{}</span></div><div class=\"callout-body\">{}</div></div>\n",
+        html_escape(title_text),
+        body
+    ))
+}
+
+fn is_remote_resource(src: &str) -> bool {
+    src.starts_with("http://") || src.starts_with("https://")
+}
+
+fn is_already_embedded_or_non_fetchable(src: &str) -> bool {
+    let lower = src.trim().to_ascii_lowercase();
+    lower.is_empty()
+        || lower.starts_with("data:")
+        || lower.starts_with('#')
+        || lower.starts_with("mailto:")
+        || lower.starts_with("tel:")
+        || lower.starts_with("javascript:")
+        || lower.starts_with("about:")
+}
+
+fn extension_from_reference(src: &str) -> &str {
+    let clean = src.split(['?', '#']).next().unwrap_or(src);
+    clean.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("")
+}
+
+fn data_uri_from_bytes(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{};base64,{}", mime, B64.encode(bytes))
+}
+
+fn fetch_remote_resource(url: &str) -> Result<(Vec<u8>, String)> {
+    let response = http_client()
+        .get(url)
+        .send()
+        .with_context(|| format!("Failed to fetch {url}"))?
+        .error_for_status()
+        .with_context(|| format!("Resource returned an error status: {url}"))?;
+    let mime = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or(value).trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| mime_from_ext(extension_from_reference(url)).to_string());
+    let bytes = response
+        .bytes()
+        .with_context(|| format!("Failed to read {url}"))?;
+    if bytes.len() > MAX_INLINE_RESOURCE_BYTES {
+        bail!("Resource is too large to inline: {url}");
+    }
+    Ok((bytes.to_vec(), mime))
+}
+
+fn local_resource_path(src: &str, base_dir: &Path) -> PathBuf {
+    if src.starts_with('/') {
         PathBuf::from(src)
     } else {
         base_dir.join(src)
-    };
+    }
+}
 
-    match std::fs::read(&path) {
-        Ok(data) => {
-            let mime = mime_from_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
-            format!("data:{};base64,{}", mime, B64.encode(&data))
-        }
-        Err(_) => src.to_string(),
+fn resource_to_data_uri(src: &str, base_dir: &Path) -> Result<String> {
+    let src = src.trim();
+    if is_already_embedded_or_non_fetchable(src) {
+        return Ok(src.to_string());
+    }
+
+    if is_remote_resource(src) {
+        let (bytes, mime) = fetch_remote_resource(src)?;
+        return Ok(data_uri_from_bytes(&mime, &bytes));
+    }
+
+    let path = local_resource_path(src, base_dir);
+    let data = std::fs::read(&path).with_context(|| format!("Cannot read {}", path.display()))?;
+    if data.len() > MAX_INLINE_RESOURCE_BYTES {
+        bail!("Resource is too large to inline: {}", path.display());
+    }
+    let mime = mime_from_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
+    Ok(data_uri_from_bytes(mime, &data))
+}
+
+fn embedded_resource_error_data_uri(src: &str) -> String {
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"640\" height=\"120\" viewBox=\"0 0 640 120\"><rect width=\"640\" height=\"120\" fill=\"#fff7f7\"/><text x=\"24\" y=\"52\" font-family=\"system-ui,sans-serif\" font-size=\"16\" fill=\"#991b1b\">Resource could not be embedded</text><text x=\"24\" y=\"82\" font-family=\"monospace\" font-size=\"12\" fill=\"#7f1d1d\">{}</text></svg>",
+        html_escape(src)
+    );
+    data_uri_from_bytes("image/svg+xml", svg.as_bytes())
+}
+
+fn image_to_data_uri(src: &str, base_dir: &Path) -> String {
+    match resource_to_data_uri(src, base_dir) {
+        Ok(value) => value,
+        Err(_) => embedded_resource_error_data_uri(src),
     }
 }
 
@@ -133,8 +536,116 @@ fn mime_from_ext(ext: &str) -> &'static str {
         "webp" => "image/webp",
         "svg" => "image/svg+xml",
         "ico" => "image/x-icon",
+        "css" => "text/css",
+        "js" | "mjs" => "text/javascript",
+        "json" => "application/json",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "html" | "htm" => "text/html",
+        "txt" => "text/plain",
         _ => "application/octet-stream",
     }
+}
+
+fn regex(pattern: &'static str) -> &'static Regex {
+    static CACHE: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<&'static str, &'static Regex>>,
+    > = OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Some(value) = cache
+        .lock()
+        .expect("regex cache poisoned")
+        .get(pattern)
+        .copied()
+    {
+        return value;
+    }
+    let compiled = Box::leak(Box::new(Regex::new(pattern).expect("invalid regex")));
+    cache
+        .lock()
+        .expect("regex cache poisoned")
+        .insert(pattern, compiled);
+    compiled
+}
+
+fn inline_resource_for_attr(src: &str, base_dir: &Path) -> String {
+    match resource_to_data_uri(src, base_dir) {
+        Ok(value) => value,
+        Err(_) => data_uri_from_bytes(
+            "text/plain",
+            format!("Resource could not be embedded: {src}").as_bytes(),
+        ),
+    }
+}
+
+fn replace_attr_resources(input: &str, pattern: &'static str, base_dir: &Path) -> String {
+    regex(pattern)
+        .replace_all(input, |caps: &Captures<'_>| {
+            let value = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
+            let suffix = caps.get(3).map(|m| m.as_str()).unwrap_or_default();
+            let embedded = inline_resource_for_attr(value, base_dir);
+            format!("{}{}{}", &caps[1], html_escape(&embedded), suffix)
+        })
+        .into_owned()
+}
+
+fn inline_css_urls(input: &str, base_dir: &Path) -> String {
+    let double = regex(r#"(?is)url\(\s*\"([^\"]*)\"\s*\)"#)
+        .replace_all(input, |caps: &Captures<'_>| {
+            let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let embedded = match resource_to_data_uri(value, base_dir) {
+                Ok(value) => value,
+                Err(_) => embedded_resource_error_data_uri(value),
+            };
+            format!("url(\"{}\")", html_escape(&embedded))
+        })
+        .into_owned();
+    let single = regex(r#"(?is)url\(\s*'([^']*)'\s*\)"#)
+        .replace_all(&double, |caps: &Captures<'_>| {
+            let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let embedded = match resource_to_data_uri(value, base_dir) {
+                Ok(value) => value,
+                Err(_) => embedded_resource_error_data_uri(value),
+            };
+            format!("url(\"{}\")", html_escape(&embedded))
+        })
+        .into_owned();
+    regex(r#"(?is)url\(\s*([^\s\)'\"]+)\s*\)"#)
+        .replace_all(&single, |caps: &Captures<'_>| {
+            let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            let embedded = match resource_to_data_uri(value, base_dir) {
+                Ok(value) => value,
+                Err(_) => embedded_resource_error_data_uri(value),
+            };
+            format!("url(\"{}\")", html_escape(&embedded))
+        })
+        .into_owned()
+}
+
+fn inline_raw_html_resources(raw: &str, base_dir: &Path) -> String {
+    let rewritten = inline_css_urls(raw, base_dir);
+    let rewritten = replace_attr_resources(
+        &rewritten,
+        r#"(?is)(\s(?:src|poster)\s*=\s*\")([^\"]*)(\")"#,
+        base_dir,
+    );
+    let rewritten = replace_attr_resources(
+        &rewritten,
+        r#"(?is)(\s(?:src|poster)\s*=\s*')([^']*)(')"#,
+        base_dir,
+    );
+    let rewritten = replace_attr_resources(
+        &rewritten,
+        r#"(?is)(<link\b[^>]*?\shref\s*=\s*\")([^\"]*)(\")"#,
+        base_dir,
+    );
+    replace_attr_resources(
+        &rewritten,
+        r#"(?is)(<link\b[^>]*?\shref\s*=\s*')([^']*)(')"#,
+        base_dir,
+    )
 }
 
 struct RenderedSection {
@@ -160,7 +671,10 @@ fn push_plain_text(buf: &mut String, event: &Event<'_>) {
     }
 }
 
-fn current_target<'a>(html: &'a mut String, paragraph_html: &'a mut Option<String>) -> &'a mut String {
+fn current_target<'a>(
+    html: &'a mut String,
+    paragraph_html: &'a mut Option<String>,
+) -> &'a mut String {
     match paragraph_html {
         Some(buf) => buf,
         None => html,
@@ -212,7 +726,24 @@ fn is_invalid_inline_math_candidate(expr: &str) -> bool {
     }
     matches!(
         trimmed.chars().last(),
-        Some('+' | '-' | '–' | '—' | '−' | '=' | '/' | '*' | ':' | ';' | ',' | '→' | '←' | '↔' | '⇒' | '⇐' | '⇔')
+        Some(
+            '+' | '-'
+                | '–'
+                | '—'
+                | '−'
+                | '='
+                | '/'
+                | '*'
+                | ':'
+                | ';'
+                | ','
+                | '→'
+                | '←'
+                | '↔'
+                | '⇒'
+                | '⇐'
+                | '⇔'
+        )
     )
 }
 
@@ -238,7 +769,10 @@ fn append_inline_math_html(buf: &mut String, text: &str, math_font_size: f64, fo
                     let next_close_is_dollar = j + 1 < bytes.len() && bytes[j + 1] == b'$';
                     if !prev_close_is_dollar && !next_close_is_dollar {
                         let expr = text[i + 1..j].trim();
-                        if !expr.is_empty() && !expr.contains('\n') && !is_invalid_inline_math_candidate(expr) {
+                        if !expr.is_empty()
+                            && !expr.contains('\n')
+                            && !is_invalid_inline_math_candidate(expr)
+                        {
                             if let Ok(svg) = latex_to_svg(expr, false, math_font_size, font_dir) {
                                 matched = Some((j, svg));
                                 break;
@@ -265,7 +799,11 @@ fn append_inline_math_html(buf: &mut String, text: &str, math_font_size: f64, fo
     buf.push_str(&html_escape(&text[plain_start..]));
 }
 
-fn render_display_math_paragraph(plain: &str, math_font_size: f64, font_dir: &str) -> Option<String> {
+fn render_display_math_paragraph(
+    plain: &str,
+    math_font_size: f64,
+    font_dir: &str,
+) -> Option<String> {
     let trimmed = plain.trim();
     if trimmed.len() < 4 || !trimmed.starts_with("$$") || !trimmed.ends_with("$$") {
         return None;
@@ -288,13 +826,26 @@ fn render_markdown(
     ss: &SyntaxSet,
     ts: &ThemeSet,
 ) -> Result<RenderedSection> {
+    render_markdown_with_depth(source, base_dir, math_font_size, font_dir, ss, ts, 0)
+}
+
+fn render_markdown_with_depth(
+    source: &str,
+    base_dir: &Path,
+    math_font_size: f64,
+    font_dir: &str,
+    ss: &SyntaxSet,
+    ts: &ThemeSet,
+    depth: usize,
+) -> Result<RenderedSection> {
+    let source = preprocess_markdown_extensions(source);
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_FOOTNOTES);
 
-    let parser = MdParser::new_ext(source, opts);
+    let parser = MdParser::new_ext(&source, opts);
     let events: Vec<Event> = parser.collect();
 
     let mut html = String::new();
@@ -309,8 +860,15 @@ fn render_markdown(
 
     enum Context {
         Normal,
-        CodeBlock { lang: String, buf: String },
-        Heading { level: u32, buf: String, image: Option<PendingImage> },
+        CodeBlock {
+            lang: String,
+            buf: String,
+        },
+        Heading {
+            level: u32,
+            buf: String,
+            image: Option<PendingImage>,
+        },
         Image(PendingImage),
     }
 
@@ -327,7 +885,8 @@ fn render_markdown(
             Context::CodeBlock { lang, buf } => match event {
                 Event::Text(text) => buf.push_str(text),
                 Event::End(TagEnd::CodeBlock) => {
-                    let lang_str = lang
+                    let lang_info = lang.trim().to_string();
+                    let lang_str = lang_info
                         .split_whitespace()
                         .next()
                         .unwrap_or("")
@@ -349,10 +908,33 @@ fn render_markdown(
                                 }
                             }
                         }
-                        "mermaid" | "mmd" => {
-                            match render_mermaid(&buf_str) {
-                                Ok(rendered) => html.push_str(&rendered),
-                                Err(_) => html.push_str(&mermaid_error_html(&buf_str)),
+                        "mermaid" | "mmd" => match render_mermaid(&buf_str) {
+                            Ok(rendered) => html.push_str(&rendered),
+                            Err(_) => html.push_str(&mermaid_error_html(&buf_str)),
+                        },
+                        "plantuml" | "puml" | "uml" => match render_plantuml(&buf_str) {
+                            Ok(rendered) => html.push_str(&rendered),
+                            Err(_) => html.push_str(&plantuml_error_html(&buf_str)),
+                        },
+                        "pagemd-callout" => {
+                            if let Some((kind, title)) = parse_internal_callout_info(&lang_info) {
+                                match render_callout(
+                                    &kind,
+                                    &title,
+                                    &buf_str,
+                                    base_dir,
+                                    math_font_size,
+                                    font_dir,
+                                    ss,
+                                    ts,
+                                    depth,
+                                ) {
+                                    Ok(rendered) => html.push_str(&rendered),
+                                    Err(_) => html
+                                        .push_str(&highlight_code(&buf_str, &lang_str, ss, theme)),
+                                }
+                            } else {
+                                html.push_str(&highlight_code(&buf_str, &lang_str, ss, theme));
                             }
                         }
                         _ => {
@@ -373,14 +955,21 @@ fn render_markdown(
                     match event {
                         Event::End(TagEnd::Image) => {
                             let alt = html_escape(&pending.alt_buf);
-                            buf.push_str(&format!("<img src=\"{}\" alt=\"{}\"{}>", pending.src.as_str(), alt, pending.title_attr.as_str()));
+                            buf.push_str(&format!(
+                                "<img src=\"{}\" alt=\"{}\"{}>",
+                                pending.src.as_str(),
+                                alt,
+                                pending.title_attr.as_str()
+                            ));
                             *image = None;
                         }
                         _ => push_plain_text(&mut pending.alt_buf, event),
                     }
                 } else {
                     match event {
-                        Event::Text(text) => append_inline_math_html(buf, text, math_font_size, font_dir),
+                        Event::Text(text) => {
+                            append_inline_math_html(buf, text, math_font_size, font_dir)
+                        }
                         Event::Code(code) => {
                             buf.push_str("<code>");
                             buf.push_str(&html_escape(code));
@@ -392,16 +981,27 @@ fn render_markdown(
                         Event::End(TagEnd::Strong) => buf.push_str("</strong>"),
                         Event::Start(Tag::Strikethrough) => buf.push_str("<del>"),
                         Event::End(TagEnd::Strikethrough) => buf.push_str("</del>"),
-                        Event::Start(Tag::Link { dest_url, title: link_title, .. }) => {
+                        Event::Start(Tag::Link {
+                            dest_url,
+                            title: link_title,
+                            ..
+                        }) => {
                             let title_attr = if link_title.is_empty() {
                                 String::new()
                             } else {
                                 format!(" title=\"{}\"", html_escape(link_title))
                             };
-                            buf.push_str(&format!("<a href=\"{}\"{title_attr}>", html_escape(dest_url)));
+                            buf.push_str(&format!(
+                                "<a href=\"{}\"{title_attr}>",
+                                html_escape(dest_url)
+                            ));
                         }
                         Event::End(TagEnd::Link) => buf.push_str("</a>"),
-                        Event::Start(Tag::Image { dest_url, title: img_title, .. }) => {
+                        Event::Start(Tag::Image {
+                            dest_url,
+                            title: img_title,
+                            ..
+                        }) => {
                             let src = image_to_data_uri(dest_url, base_dir);
                             let title_attr = if img_title.is_empty() {
                                 String::new()
@@ -421,8 +1021,10 @@ fn render_markdown(
                                 buf.push_str("</span>");
                             }
                         }
-                        Event::Html(raw) => buf.push_str(raw),
-                        Event::InlineHtml(raw) => buf.push_str(raw),
+                        Event::Html(raw) => buf.push_str(&inline_raw_html_resources(raw, base_dir)),
+                        Event::InlineHtml(raw) => {
+                            buf.push_str(&inline_raw_html_resources(raw, base_dir))
+                        }
                         Event::SoftBreak => buf.push(' '),
                         Event::HardBreak => buf.push(' '),
                         Event::End(TagEnd::Heading(_)) => {
@@ -444,8 +1046,12 @@ fn render_markdown(
             Context::Image(pending) => match event {
                 Event::End(TagEnd::Image) => {
                     let alt = html_escape(&pending.alt_buf);
-                    current_target(&mut html, &mut paragraph_html)
-                        .push_str(&format!("<img src=\"{}\" alt=\"{}\"{}>", pending.src.as_str(), alt, pending.title_attr.as_str()));
+                    current_target(&mut html, &mut paragraph_html).push_str(&format!(
+                        "<img src=\"{}\" alt=\"{}\"{}>",
+                        pending.src.as_str(),
+                        alt,
+                        pending.title_attr.as_str()
+                    ));
                     ctx = Context::Normal;
                 }
                 _ => push_plain_text(&mut pending.alt_buf, event),
@@ -457,14 +1063,25 @@ fn render_markdown(
                         pulldown_cmark::CodeBlockKind::Fenced(l) => l.to_string(),
                         pulldown_cmark::CodeBlockKind::Indented => String::new(),
                     };
-                    ctx = Context::CodeBlock { lang, buf: String::new() };
+                    ctx = Context::CodeBlock {
+                        lang,
+                        buf: String::new(),
+                    };
                 }
 
                 Event::Start(Tag::Heading { level, .. }) => {
-                    ctx = Context::Heading { level: *level as u32, buf: String::new(), image: None };
+                    ctx = Context::Heading {
+                        level: *level as u32,
+                        buf: String::new(),
+                        image: None,
+                    };
                 }
 
-                Event::Start(Tag::Image { dest_url, title: img_title, .. }) => {
+                Event::Start(Tag::Image {
+                    dest_url,
+                    title: img_title,
+                    ..
+                }) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
@@ -518,7 +1135,11 @@ fn render_markdown(
                     }
                 }
 
-                Event::Start(Tag::Link { dest_url, title: link_title, .. }) => {
+                Event::Start(Tag::Link {
+                    dest_url,
+                    title: link_title,
+                    ..
+                }) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
@@ -527,8 +1148,10 @@ fn render_markdown(
                     } else {
                         format!(" title=\"{}\"", html_escape(link_title))
                     };
-                    current_target(&mut html, &mut paragraph_html)
-                        .push_str(&format!("<a href=\"{}\"{title_attr}>", html_escape(dest_url)));
+                    current_target(&mut html, &mut paragraph_html).push_str(&format!(
+                        "<a href=\"{}\"{title_attr}>",
+                        html_escape(dest_url)
+                    ));
                 }
                 Event::End(TagEnd::Link) => {
                     if paragraph_html.is_some() {
@@ -541,13 +1164,15 @@ fn render_markdown(
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str(raw);
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str(&inline_raw_html_resources(raw, base_dir));
                 }
                 Event::InlineHtml(raw) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str(raw);
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str(&inline_raw_html_resources(raw, base_dir));
                 }
 
                 Event::Start(Tag::Paragraph) => {
@@ -559,7 +1184,9 @@ fn render_markdown(
                     let rendered = paragraph_html.take().unwrap_or_default();
                     let plain = paragraph_plain.take().unwrap_or_default();
                     if paragraph_is_plain {
-                        if let Some(display_html) = render_display_math_paragraph(&plain, math_font_size, font_dir) {
+                        if let Some(display_html) =
+                            render_display_math_paragraph(&plain, math_font_size, font_dir)
+                        {
                             html.push_str(&display_html);
                             html.push('\n');
                         } else {
@@ -691,7 +1318,12 @@ fn render_markdown(
                     if let Some(plain) = paragraph_plain.as_mut() {
                         plain.push_str(text);
                     }
-                    append_inline_math_html(current_target(&mut html, &mut paragraph_html), text, math_font_size, font_dir);
+                    append_inline_math_html(
+                        current_target(&mut html, &mut paragraph_html),
+                        text,
+                        math_font_size,
+                        font_dir,
+                    );
                 }
 
                 Event::SoftBreak => {
@@ -753,7 +1385,12 @@ fn render_markdown(
     Ok(RenderedSection { title, html })
 }
 
-fn highlight_code(code: &str, lang: &str, ss: &SyntaxSet, theme: &syntect::highlighting::Theme) -> String {
+fn highlight_code(
+    code: &str,
+    lang: &str,
+    ss: &SyntaxSet,
+    theme: &syntect::highlighting::Theme,
+) -> String {
     let syntax = ss
         .find_syntax_by_token(lang)
         .or_else(|| ss.find_syntax_by_extension(lang))
@@ -805,7 +1442,13 @@ fn strip_html_tags(s: &str) -> String {
 fn slugify(text: &str) -> String {
     text.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())
@@ -819,12 +1462,7 @@ fn build_html(title: &str, body_sections: &[RenderedSection]) -> String {
     } else {
         body_sections
             .iter()
-            .map(|sec| {
-                format!(
-                    "<section class=\"doc-section\">\n{}</section>\n",
-                    sec.html
-                )
-            })
+            .map(|sec| format!("<section class=\"doc-section\">\n{}</section>\n", sec.html))
             .collect()
     };
 
@@ -866,6 +1504,14 @@ const CSS: &str = r#"
   --color-code-bg: #f3f4f6;
   --color-blockquote-border: #3b82f6;
   --color-blockquote-bg: #eff6ff;
+  --color-callout-bg: #f8fafc;
+  --color-callout-title: #0f172a;
+  --color-callout-note: #2563eb;
+  --color-callout-info: #0891b2;
+  --color-callout-tip: #16a34a;
+  --color-callout-warning: #d97706;
+  --color-callout-danger: #dc2626;
+  --color-callout-muted: #64748b;
   --color-link: #2563eb;
   --color-link-hover: #1d4ed8;
   --color-table-header: #f9fafb;
@@ -982,6 +1628,74 @@ blockquote p:last-child {
   margin-bottom: 0;
 }
 
+.callout {
+  --callout-accent: var(--color-callout-note);
+  margin: 1.25rem 0;
+  border: 1px solid color-mix(in srgb, var(--callout-accent) 26%, var(--color-border));
+  border-left: 4px solid var(--callout-accent);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--callout-accent) 7%, #fff), var(--color-callout-bg));
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.callout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0.35rem;
+  color: var(--color-callout-title);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.callout-title::before {
+  content: "";
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: var(--callout-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--callout-accent) 14%, transparent);
+  flex: 0 0 auto;
+}
+
+.callout-body {
+  padding: 0.25rem 1rem 0.85rem 2.15rem;
+  color: #334155;
+}
+
+.callout-body > :last-child {
+  margin-bottom: 0;
+}
+
+.callout-info,
+.callout-abstract {
+  --callout-accent: var(--color-callout-info);
+}
+
+.callout-tip,
+.callout-success {
+  --callout-accent: var(--color-callout-tip);
+}
+
+.callout-warning,
+.callout-caution,
+.callout-important,
+.callout-question {
+  --callout-accent: var(--color-callout-warning);
+}
+
+.callout-danger,
+.callout-failure,
+.callout-bug {
+  --callout-accent: var(--color-callout-danger);
+}
+
+.callout-example,
+.callout-quote {
+  --callout-accent: var(--color-callout-muted);
+}
+
 ul, ol {
   padding-left: 1.75rem;
   margin-bottom: 1rem;
@@ -1001,34 +1715,47 @@ li > ul, li > ol {
 
 .table-wrap {
   overflow-x: auto;
-  margin: 1.25rem 0;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  border: 1px solid var(--color-border);
+  margin: 1.5rem 0;
+  border-radius: 14px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.06);
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
 }
 
 table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9375rem;
+  min-width: 680px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.925rem;
 }
 
 thead {
-  background: var(--color-table-header);
+  background: linear-gradient(180deg, #f8fafc, #eef2ff);
 }
 
 th {
-  font-weight: 600;
+  font-weight: 700;
   text-align: left;
-  padding: 0.65rem 1rem;
-  border-bottom: 2px solid var(--color-border);
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid #cbd5e1;
   white-space: nowrap;
-  color: #374151;
+  color: #0f172a;
+  letter-spacing: 0.015em;
 }
 
 td {
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--color-border);
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  vertical-align: top;
+}
+
+td code {
+  white-space: nowrap;
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
 }
 
 tr:last-child td {
@@ -1036,7 +1763,11 @@ tr:last-child td {
 }
 
 tr:nth-child(even) {
-  background: var(--color-table-row-alt);
+  background: #f8fafc;
+}
+
+tr:hover td {
+  background: #f1f5f9;
 }
 
 col.left { text-align: left; }
@@ -1044,7 +1775,7 @@ col.right { text-align: right; }
 col.center { text-align: center; }
 
 th.left, td.left { text-align: left; }
-th.right, td.right { text-align: right; }
+th.right, td.right { text-align: right; font-variant-numeric: tabular-nums; }
 th.center, td.center { text-align: center; }
 
 hr {
@@ -1064,11 +1795,15 @@ img {
 .math-inline {
   display: inline-flex;
   align-items: center;
-  vertical-align: middle;
-  margin: 0 0.1em;
+  vertical-align: -0.18em;
+  margin: 0 0.08em;
+  line-height: 1;
 }
 
 .math-inline svg {
+  height: 1.25em;
+  width: auto;
+  max-width: none;
   vertical-align: middle;
 }
 
@@ -1090,24 +1825,22 @@ img {
 }
 
 .mermaid-display {
-  margin: 1.75rem 0;
-  padding: 1rem;
+  margin: 1.5rem 0;
+  padding: 0;
   overflow-x: auto;
-  border: 1px solid color-mix(in srgb, var(--mermaid-border) 85%, transparent);
-  border-radius: 14px;
-  background:
-    radial-gradient(circle at 16px 16px, color-mix(in srgb, var(--mermaid-accent) 10%, transparent) 0 1px, transparent 1px 18px),
-    linear-gradient(135deg, color-mix(in srgb, var(--mermaid-surface) 75%, #ffffff), var(--mermaid-bg));
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.08);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .mermaid-canvas {
   min-width: max-content;
   display: flex;
   justify-content: center;
-  padding: 1.25rem;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--mermaid-bg) 88%, transparent);
+  padding: 0.25rem 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .mermaid-display svg {
@@ -1135,10 +1868,10 @@ img {
 .mermaid-display svg .node ellipse,
 .mermaid-display svg .node polygon,
 .mermaid-display svg .node path {
-  fill: var(--mermaid-surface);
-  stroke: var(--mermaid-border);
+  fill: #ffffff;
+  stroke: #94a3b8;
   stroke-width: 1.5px;
-  filter: drop-shadow(0 6px 14px rgba(15, 23, 42, 0.08));
+  filter: none;
 }
 
 .mermaid-display svg .edgePath path,
@@ -1165,8 +1898,8 @@ img {
 }
 
 .mermaid-display svg .cluster rect {
-  fill: color-mix(in srgb, var(--mermaid-surface) 78%, transparent);
-  stroke: color-mix(in srgb, var(--mermaid-border) 85%, transparent);
+  fill: transparent;
+  stroke: #cbd5e1;
   stroke-dasharray: 5 5;
 }
 
@@ -1177,6 +1910,60 @@ img {
 }
 
 .mermaid-error pre {
+  margin: 0.75rem 0 0;
+  background: #450a0a;
+}
+
+.plantuml-display {
+  margin: 1.5rem 0;
+  padding: 0;
+  overflow-x: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+}
+
+.plantuml-canvas {
+  min-width: max-content;
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.plantuml-canvas svg {
+  max-width: 100%;
+  height: auto;
+  background: transparent !important;
+}
+
+.plantuml-canvas svg rect[fill='#E2E2F0'],
+.plantuml-canvas svg polygon[fill='#E2E2F0'],
+.plantuml-canvas svg ellipse[fill='#E2E2F0'],
+.plantuml-canvas svg circle[fill='#E2E2F0'] {
+  fill: #ffffff !important;
+}
+
+.plantuml-image {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.plantuml-error {
+  color: #991b1b;
+  background: linear-gradient(135deg, #fff7f7, #fff);
+  border-color: #fecaca;
+  text-align: left;
+}
+
+.plantuml-error pre {
   margin: 0.75rem 0 0;
   background: #450a0a;
 }
@@ -1251,7 +2038,12 @@ fn render_document(args: &CliArgs, title_hint: Option<&Path>) -> Result<Rendered
         doc_title = title_hint
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
-            .or_else(|| args.inputs.first().and_then(|p| p.file_stem()).and_then(|s| s.to_str()))
+            .or_else(|| {
+                args.inputs
+                    .first()
+                    .and_then(|p| p.file_stem())
+                    .and_then(|s| s.to_str())
+            })
             .unwrap_or("Document")
             .to_string();
     }
@@ -1259,7 +2051,10 @@ fn render_document(args: &CliArgs, title_hint: Option<&Path>) -> Result<Rendered
     let section_count = sections.len();
     let html = build_html(&doc_title, &sections);
 
-    Ok(RenderedDocument { html, section_count })
+    Ok(RenderedDocument {
+        html,
+        section_count,
+    })
 }
 
 fn write_document(args: &CliArgs, output: &Path, title_hint: Option<&Path>) -> Result<usize> {
@@ -1272,7 +2067,13 @@ fn write_document(args: &CliArgs, output: &Path, title_hint: Option<&Path>) -> R
 fn sanitize_file_stem(value: &str) -> String {
     let stem = value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|part| !part.is_empty())
@@ -1355,7 +2156,10 @@ fn run_convert(args: &CliArgs) -> Result<()> {
 }
 
 fn run_view(args: &CliArgs) -> Result<()> {
-    let output = args.output.clone().unwrap_or_else(|| default_view_output_path(args));
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| default_view_output_path(args));
     let title_hint = args.output.as_deref();
     let section_count = write_document(args, &output, title_hint)?;
     open_in_browser(&output)?;
@@ -1382,12 +2186,26 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    fn render_html(source: &str) -> String {
+    fn render_html_at(source: &str, base_dir: &Path) -> String {
         let ss = SyntaxSet::load_defaults_newlines();
         let ts = ThemeSet::load_defaults();
-        render_markdown(source, Path::new("."), 16.0, "", &ss, &ts)
+        render_markdown(source, base_dir, 16.0, "", &ss, &ts)
             .unwrap()
             .html
+    }
+
+    fn render_html(source: &str) -> String {
+        render_html_at(source, Path::new("."))
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pagemd-{name}-{id}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     fn math_inline_count(html: &str) -> usize {
@@ -1396,6 +2214,14 @@ mod tests {
 
     fn mermaid_count(html: &str) -> usize {
         html.matches("class=\"mermaid-display\"").count()
+    }
+
+    fn plantuml_count(html: &str) -> usize {
+        html.matches("plantuml-display").count()
+    }
+
+    fn callout_count(html: &str) -> usize {
+        html.matches("class=\"callout callout-").count()
     }
 
     #[test]
@@ -1441,5 +2267,68 @@ mod tests {
         assert_eq!(mermaid_count(&html), 1);
         assert!(html.contains("<svg"));
         assert!(!html.contains("language-mermaid"));
+    }
+
+    #[test]
+    fn plantuml_code_block_renders_self_contained_output() {
+        let html = render_html("```plantuml\n@startuml\nAlice -> Bob: Hi\n@enduml\n```\n");
+        assert_eq!(plantuml_count(&html), 1);
+        assert!(!html.contains("https://www.plantuml.com/plantuml/svg/"));
+        assert!(html.contains("<svg") || html.contains("PlantUML render failed"));
+        assert!(!html.contains("language-plantuml"));
+    }
+
+    #[test]
+    fn github_callout_renders_admonition() {
+        let html = render_html("> [!NOTE] Custom title\n> This is **important**.\n");
+        assert_eq!(callout_count(&html), 1);
+        assert!(html.contains("class=\"callout callout-note\""));
+        assert!(html.contains("Custom title"));
+        assert!(html.contains("<strong>important</strong>"));
+        assert!(!html.contains("<blockquote>"));
+    }
+
+    #[test]
+    fn fenced_admonition_renders_nested_markdown() {
+        let html = render_html(":::warning Pay attention\nUse `pagemd` safely.\n:::\n");
+        assert_eq!(callout_count(&html), 1);
+        assert!(html.contains("class=\"callout callout-warning\""));
+        assert!(html.contains("Pay attention"));
+        assert!(html.contains("<code>pagemd</code>"));
+    }
+
+    #[test]
+    fn local_markdown_images_are_embedded_as_data_uris() {
+        let dir = temp_test_dir("local-image");
+        std::fs::write(
+            dir.join("tiny.svg"),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>",
+        )
+        .unwrap();
+        let html = render_html_at("![tiny](tiny.svg)\n", &dir);
+        assert!(html.contains("data:image/svg+xml;base64,"));
+        assert!(!html.contains("src=\"tiny.svg\""));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn raw_html_resources_are_embedded() {
+        let dir = temp_test_dir("raw-html");
+        std::fs::write(
+            dir.join("tiny.svg"),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>",
+        )
+        .unwrap();
+        std::fs::write(dir.join("style.css"), "body { color: #111; }").unwrap();
+        let html = render_html_at(
+            "<img src=\"tiny.svg\"><link rel=\"stylesheet\" href=\"style.css\"><style>.x{background:url('tiny.svg')}</style>",
+            &dir,
+        );
+        assert!(html.contains("data:image/svg+xml;base64,"));
+        assert!(html.contains("data:text/css;base64,"));
+        assert!(!html.contains("src=\"tiny.svg\""));
+        assert!(!html.contains("href=\"style.css\""));
+        assert!(!html.contains("url('tiny.svg')"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

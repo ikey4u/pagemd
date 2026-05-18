@@ -13,6 +13,9 @@ pulldown-cmark = { version = "0.13", features = [] }
 syntect = "5.3"
 base64 = "0.22"
 mermaid-rs-renderer = { version = "0.2.2", default-features = false }
+plantuml_encoding = "2.0.3"
+regex = "1.12"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 ratex-svg = { version = "0.0.15", features = ["standalone", "cli"] }
 ratex-parser = "0.0.15"
 ratex-layout = "0.0.15"

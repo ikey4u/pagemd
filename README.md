@@ -1,47 +1,48 @@
 # PageMD
 
-## 使用例子
+## Introduction
 
-假设你想将腾讯会议的 [开放平台文档](https://cloud.tencent.com/document/product/1095/83658)
-全部爬取并转换为 markdown, 则可以编写如下 Hook:
+PageMD is a Rust command-line tool that converts Markdown into a SingleFile-style HTML document. It is designed for readable, portable documents with embedded styling, resources, syntax highlighting, diagrams, math rendering, and callout blocks.
 
+Browser extension documentation is available at `extension/README.md`.
 
+## Features
+
+PageMD converts one or more Markdown files into a single HTML document, embeds the default stylesheet, inlines local and remote resources when possible, and rewrites common raw HTML resources such as `src`, `poster`, `<link href>`, and CSS `url(...)`.
+
+- Generates SingleFile-style HTML by embedding styling and supported resources into one portable document.
+- Supports common Markdown syntax, including headings, tables, task lists, footnotes, blockquotes, links, images, and fenced code blocks.
+- Highlights code blocks with `syntect`.
+- Renders inline and display math as embedded SVG.
+- Renders `mermaid` / `mmd` diagrams as inline SVG.
+- Fetches `plantuml` / `puml` / `uml` diagrams during conversion and embeds the returned SVG.
+- Supports GitHub-style callouts, fenced admonitions, and indented admonitions.
+- Provides a full conversion fixture at `examples/BASIC.md`.
+
+## Development
+
+Build and run the CLI:
+
+```bash
+cargo run -- --input input.md --output output.html
 ```
-// Clean
-(function() {
-  const sels = ['#document-feedback-container', '.J-relatedArticleLayout'];
-  let removed = 0;
-  sels.forEach(s =>
-    document.querySelectorAll(s).forEach(el => { el.remove(); removed++; })
-  );
-  return { removed };
-})()
 
-// Extract
-(function() {
-  const el = document.querySelector("div.J-mainContent.responsible.documents-container");
-  if (!el) return null;
-  const clone = el.cloneNode(true);
-  clone.querySelectorAll('nav, .ads').forEach(e => e.remove());
-  return {
-    title: document.title,
-    html: clone.innerHTML
-  };
-})()
+Convert the basic example into a demo HTML file:
 
-// Navigate
-(function() {
-  const next = document.querySelector("a.next.J-docDetailPaginationPage");
-  if (!next || next.classList.contains('disabled'))
-    return { success: false };
-  next.click();
-  return { success: true };
-})()
+```bash
+cargo run -- --input examples/BASIC.md --output pagemd-basic.html
+```
 
-// Stop
-(function(context) {
-  if (context.currentUrl === 'https://cloud.tencent.com/document/product/1095/94313')
-    return { shouldStop: true, reason: 'Reached target' };
-  return { shouldStop: false };
-})()
+Preview the basic example in the default browser:
+
+```bash
+cargo run -- view --input examples/BASIC.md
+```
+
+Run validation checks:
+
+```bash
+cargo test
+cargo check
+cargo fmt --check
 ```

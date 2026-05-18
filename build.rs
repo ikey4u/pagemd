@@ -35,6 +35,9 @@ fn main() {
             .unwrap_or_else(|err| panic!("failed to write bundled KaTeX font {filename}: {err}"));
     }
 
-    println!("cargo:rustc-env=PAGEMD_KATEX_FONT_DIR={}", font_dir.display());
+    println!(
+        "cargo:rustc-env=PAGEMD_KATEX_FONT_DIR={}",
+        font_dir.display()
+    );
     println!("cargo:rerun-if-changed=build.rs");
 }
