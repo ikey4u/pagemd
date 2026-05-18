@@ -22,6 +22,4 @@ ratex-layout = "0.0.15"
 ratex-types = "0.0.15"
 ratex-font = "0.0.15"
 anyhow = "1"
-
-[build-dependencies]
 ratex-katex-fonts = "0.1.8"
