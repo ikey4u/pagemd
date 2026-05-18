@@ -1,8 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -22,11 +21,17 @@ use syntect::highlighting::ThemeSet;
 use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
 use syntect::parsing::SyntaxSet;
 
+mod view;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "pagemd",
     about = "Convert Markdown to a self-contained single HTML file",
-    long_about = None,
+    long_about = "Convert Markdown to a SingleFile-style HTML document (default mode).\n\n\
+                  Usage:\n  \
+                  pagemd -i INPUT.md -o OUTPUT.html\n  \
+                  pagemd --input a.md --input b.md --output doc.html\n\n\
+                  Use `pagemd view --help` for live preview with hot reload.",
 )]
 struct Cli {
     #[command(subcommand)]
@@ -38,22 +43,68 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    #[command(about = "Convert Markdown and open the generated HTML in the default browser")]
-    View(CliArgs),
+    #[command(
+        about = "Live-preview Markdown in the browser",
+        long_about = "Start a local HTTP server and open the rendered page in your browser.\n\
+                      The page hot-reloads when you save the input Markdown or referenced local assets.\n\
+                      Press Ctrl+C to stop.\n\n\
+                      Usage:\n  \
+                      pagemd view -i INPUT.md\n  \
+                      pagemd view -i doc.md --port 8080 --no-open\n\n\
+                      Export clean SingleFile HTML (no live-reload script) on each successful render:\n  \
+                      pagemd view -i doc.md --export out.html\n  \
+                      pagemd view -i doc.md -o out.html\n\n\
+                      One-shot export without preview:\n  \
+                      pagemd -i doc.md -o out.html"
+    )]
+    View(ViewArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct ViewArgs {
+    #[command(flatten)]
+    convert: CliArgs,
+
+    #[arg(long, default_value = "127.0.0.1", help = "Preview server bind address")]
+    host: String,
+
+    #[arg(long, default_value_t = 3847, help = "Preview server port")]
+    port: u16,
+
+    #[arg(long = "no-open", help = "Do not open the default browser")]
+    no_open: bool,
+
+    #[arg(
+        long = "export",
+        value_name = "FILE",
+        help = "Write clean SingleFile HTML on each successful render (same as -o/--output)"
+    )]
+    export: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Clone)]
 struct CliArgs {
-    #[arg(short = 'i', long = "input", value_name = "FILE", num_args = 1..)]
+    #[arg(
+        short = 'i',
+        long = "input",
+        value_name = "FILE",
+        num_args = 1..,
+        help = "Markdown input file(s)"
+    )]
     inputs: Vec<PathBuf>,
 
-    #[arg(short = 'o', long = "output", value_name = "FILE")]
+    #[arg(
+        short = 'o',
+        long = "output",
+        value_name = "FILE",
+        help = "Output HTML path (required for convert; in view, exports on each render)"
+    )]
     output: Option<PathBuf>,
 
-    #[arg(long = "title", value_name = "TITLE")]
+    #[arg(long = "title", value_name = "TITLE", help = "Document title")]
     title: Option<String>,
 
-    #[arg(long = "font-size", default_value = "16")]
+    #[arg(long = "font-size", default_value = "16", help = "Math font size")]
     math_font_size: f64,
 
     #[arg(
@@ -2052,17 +2103,35 @@ struct RenderedDocument {
     section_count: usize,
 }
 
+struct RenderResources {
+    ss: SyntaxSet,
+    ts: ThemeSet,
+    font_dir: String,
+}
+
+fn prepare_render_resources(args: &CliArgs) -> Result<RenderResources> {
+    let font_dir = find_katex_fonts(args.katex_fonts.as_deref())?;
+    eprintln!("Using KaTeX fonts from: {}", font_dir);
+    Ok(RenderResources {
+        ss: SyntaxSet::load_defaults_newlines(),
+        ts: ThemeSet::load_defaults(),
+        font_dir,
+    })
+}
+
 fn render_document(args: &CliArgs, title_hint: Option<&Path>) -> Result<RenderedDocument> {
     if args.inputs.is_empty() {
         bail!("Missing required input. Pass --input <FILE>.");
     }
+    let resources = prepare_render_resources(args)?;
+    render_document_with_resources(args, title_hint, &resources)
+}
 
-    let ss = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-
-    let font_dir = find_katex_fonts(args.katex_fonts.as_deref())?;
-    eprintln!("Using KaTeX fonts from: {}", font_dir);
-
+fn render_document_with_resources(
+    args: &CliArgs,
+    title_hint: Option<&Path>,
+    resources: &RenderResources,
+) -> Result<RenderedDocument> {
     let mut sections: Vec<RenderedSection> = Vec::new();
     let mut doc_title = args.title.clone().unwrap_or_default();
 
@@ -2075,8 +2144,15 @@ fn render_document(args: &CliArgs, title_hint: Option<&Path>) -> Result<Rendered
         let source = std::fs::read_to_string(input_path)
             .with_context(|| format!("Cannot read {}", input_path.display()))?;
 
-        let section = render_markdown(&source, &base_dir, args.math_font_size, &font_dir, &ss, &ts)
-            .with_context(|| format!("Failed to render {}", input_path.display()))?;
+        let section = render_markdown(
+            &source,
+            &base_dir,
+            args.math_font_size,
+            &resources.font_dir,
+            &resources.ss,
+            &resources.ts,
+        )
+        .with_context(|| format!("Failed to render {}", input_path.display()))?;
 
         if doc_title.is_empty() && !section.title.is_empty() {
             doc_title = section.title.clone();
@@ -2115,81 +2191,6 @@ fn write_document(args: &CliArgs, output: &Path, title_hint: Option<&Path>) -> R
     Ok(document.section_count)
 }
 
-fn sanitize_file_stem(value: &str) -> String {
-    let stem = value
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
-    if stem.is_empty() {
-        "document".to_string()
-    } else {
-        stem
-    }
-}
-
-fn default_view_output_path(args: &CliArgs) -> PathBuf {
-    let stem = args
-        .inputs
-        .first()
-        .and_then(|p| p.file_stem())
-        .and_then(|s| s.to_str())
-        .map(sanitize_file_stem)
-        .unwrap_or_else(|| "document".to_string());
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
-
-    std::env::temp_dir().join(format!("pagemd-{stem}-{timestamp}.html"))
-}
-
-fn open_in_browser(path: &Path) -> Result<()> {
-    let path = path
-        .canonicalize()
-        .with_context(|| format!("Cannot resolve {}", path.display()))?;
-
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(&path);
-        command
-    };
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", ""]).arg(&path);
-        command
-    };
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(&path);
-        command
-    };
-
-    let status = command
-        .status()
-        .with_context(|| format!("Cannot open {}", path.display()))?;
-    if !status.success() {
-        bail!("Failed to open {}", path.display());
-    }
-
-    Ok(())
-}
-
 fn run_convert(args: &CliArgs) -> Result<()> {
     let output = args
         .output
@@ -2206,22 +2207,83 @@ fn run_convert(args: &CliArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_view(args: &CliArgs) -> Result<()> {
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| default_view_output_path(args));
-    let title_hint = args.output.as_deref();
-    let section_count = write_document(args, &output, title_hint)?;
-    open_in_browser(&output)?;
-
-    eprintln!(
-        "Opened {} section(s) -> {}",
-        section_count,
-        output.display()
+fn build_preview_error_html(err: &anyhow::Error) -> String {
+    let message = html_escape(&format!("{err:#}"));
+    let body = format!(
+        r#"<div class="callout callout-warning" role="alert">
+<p><strong>Preview render failed</strong></p>
+<pre><code>{message}</code></pre>
+<p>Fix the source file and save again. The preview will update automatically.</p>
+</div>"#
     );
+    build_html(
+        "Preview Error",
+        &[RenderedSection {
+            title: "Preview Error".to_string(),
+            html: body,
+        }],
+    )
+}
 
-    Ok(())
+fn run_view(args: &ViewArgs) -> Result<()> {
+    view::validate_inputs(&args.convert.inputs)?;
+
+    let export_path = args
+        .export
+        .clone()
+        .or_else(|| args.convert.output.clone());
+
+    let resources = prepare_render_resources(&args.convert)?;
+    let convert = args.convert.clone();
+    let title_hint = convert.inputs.first().cloned();
+
+    let sources: Vec<(PathBuf, String)> = convert
+        .inputs
+        .iter()
+        .map(|input| {
+            let source = fs::read_to_string(input)
+                .with_context(|| format!("Cannot read {}", input.display()))?;
+            Ok((input.clone(), source))
+        })
+        .collect::<Result<_>>()?;
+
+    let watch_paths = view::collect_initial_watch_paths(&convert.inputs, &sources);
+
+    view::run(
+        view::ViewOptions {
+            host: args.host.clone(),
+            port: args.port,
+            inputs: convert.inputs.clone(),
+            watch_paths,
+            open_browser: !args.no_open,
+            export_path,
+        },
+        move |request: view::RenderRequest| match render_document_with_resources(
+            &convert,
+            title_hint.as_deref(),
+            &resources,
+        ) {
+            Ok(document) => {
+                let extra_watch_paths = match view::discover_watch_paths(&request.inputs) {
+                    Ok(paths) => paths,
+                    Err(err) => {
+                        eprintln!("Resource watch discovery warning: {err:#}");
+                        Vec::new()
+                    }
+                };
+                view::RenderResult::Ok {
+                    html: document.html,
+                    extra_watch_paths,
+                }
+            }
+            Err(err) => {
+                eprintln!("Render error: {err:#}");
+                view::RenderResult::Err {
+                    html: build_preview_error_html(&err),
+                }
+            }
+        },
+    )
 }
 
 fn main() -> Result<()> {
@@ -2235,6 +2297,8 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
 
     fn render_html_at(source: &str, base_dir: &Path) -> String {
