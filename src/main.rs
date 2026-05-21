@@ -65,7 +65,11 @@ struct ViewArgs {
     #[arg(long, default_value = "127.0.0.1", help = "Preview server bind address")]
     host: String,
 
-    #[arg(long, default_value_t = 3847, help = "Preview server port")]
+    #[arg(
+        long,
+        default_value_t = 3847,
+        help = "Preview server port (if busy, picks a random available port)"
+    )]
     port: u16,
 
     #[arg(long = "no-open", help = "Do not open the default browser")]

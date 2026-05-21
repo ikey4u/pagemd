@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::fs;
+use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
@@ -50,6 +51,40 @@ struct WatchState {
     watched: HashSet<PathBuf>,
 }
 
+async fn bind_preview_listener(host: &str, preferred_port: u16) -> Result<(tokio::net::TcpListener, SocketAddr)> {
+    let preferred: SocketAddr = format!("{host}:{preferred_port}")
+        .parse()
+        .with_context(|| format!("Invalid host/port: {host}:{preferred_port}"))?;
+
+    match tokio::net::TcpListener::bind(preferred).await {
+        Ok(listener) => {
+            let bound = listener
+                .local_addr()
+                .context("Read bound preview server address")?;
+            return Ok((listener, bound));
+        }
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => {}
+        Err(err) => {
+            return Err(err).with_context(|| format!("Cannot bind preview server to {preferred}"));
+        }
+    }
+
+    let ephemeral: SocketAddr = format!("{host}:0")
+        .parse()
+        .with_context(|| format!("Invalid host: {host}"))?;
+    let listener = tokio::net::TcpListener::bind(ephemeral)
+        .await
+        .context("Cannot bind preview server to an available port")?;
+    let bound = listener
+        .local_addr()
+        .context("Read bound preview server address")?;
+    eprintln!(
+        "Port {preferred_port} in use, using port {} instead",
+        bound.port()
+    );
+    Ok((listener, bound))
+}
+
 pub fn run(
     options: ViewOptions,
     render: impl Fn(RenderRequest) -> RenderResult + Send + Sync + 'static,
@@ -97,17 +132,13 @@ pub fn run(
         shutdown.clone(),
     );
 
-    let addr: SocketAddr = format!("{}:{}", options.host, options.port)
-        .parse()
-        .context("Invalid host/port")?;
-
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("Failed to start async runtime")?;
 
-    let url = format!("http://{addr}/");
-    let serve_url = url.clone();
+    let host = options.host.clone();
+    let start_port = options.port;
 
     rt.block_on(async {
         let app = Router::new()
@@ -115,9 +146,8 @@ pub fn run(
             .route("/__events", get(events_handler))
             .with_state(state);
 
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .with_context(|| format!("Cannot bind to {addr}"))?;
+        let (listener, bound_addr) = bind_preview_listener(&host, start_port).await?;
+        let serve_url = format!("http://{bound_addr}/");
 
         eprintln!("Preview server listening at {serve_url}");
         let watch_count = watch_state
@@ -150,7 +180,7 @@ pub fn run(
         eprintln!("Render worker panicked: {err:?}");
     }
 
-    eprintln!("Preview server stopped ({url}).");
+    eprintln!("Preview server stopped.");
     Ok(())
 }
 
