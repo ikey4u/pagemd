@@ -101,6 +101,14 @@ struct CliArgs {
     #[arg(long = "title", value_name = "TITLE", help = "Document title")]
     title: Option<String>,
 
+    #[arg(
+        long = "icon",
+        value_name = "XX",
+        value_parser = parse_icon_arg,
+        help = "Two-character favicon label (a-z, A-Z, 0-9); shown uppercase in the tab icon"
+    )]
+    icon: Option<String>,
+
     #[arg(long = "font-size", default_value = "16", help = "Math font size")]
     math_font_size: f64,
 
@@ -1565,6 +1573,107 @@ fn strip_html_tags(s: &str) -> String {
     out
 }
 
+fn parse_icon_arg(s: &str) -> Result<String, String> {
+    if s.chars().count() != 2 {
+        return Err("icon must be exactly 2 characters".into());
+    }
+    if !s.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("icon must use only a-z, A-Z, and 0-9".into());
+    }
+    Ok(s.to_ascii_uppercase())
+}
+
+/// Default favicon label from the input path (first two alphanumeric chars of the stem, uppercase).
+fn default_icon_label_from_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let chars: Vec<char> = stem
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(2)
+        .collect();
+    match chars.len() {
+        0 => "PG".to_string(),
+        1 => {
+            let c = chars[0].to_ascii_uppercase();
+            format!("{c}{c}")
+        }
+        _ => chars
+            .into_iter()
+            .map(|c| c.to_ascii_uppercase())
+            .collect(),
+    }
+}
+
+fn resolve_icon_label(args: &CliArgs) -> String {
+    if let Some(icon) = &args.icon {
+        return icon.clone();
+    }
+    args.inputs
+        .first()
+        .map(|p| default_icon_label_from_path(p))
+        .unwrap_or_else(|| "PG".to_string())
+}
+
+fn icon_accent_rgb(label: &str) -> (u8, u8, u8) {
+    const PALETTE: &[(u8, u8, u8)] = &[
+        (37, 99, 235),
+        (5, 150, 105),
+        (180, 83, 9),
+        (190, 24, 93),
+        (109, 40, 217),
+        (14, 116, 144),
+        (220, 38, 38),
+        (55, 65, 81),
+    ];
+    let mut h: u32 = 0;
+    for b in label.bytes() {
+        h = h.wrapping_mul(31).wrapping_add(u32::from(b));
+    }
+    PALETTE[(h as usize) % PALETTE.len()]
+}
+
+fn encode_svg_for_data_uri(svg: &str) -> String {
+    svg.chars()
+        .map(|c| match c {
+            '#' => "%23".to_string(),
+            '%' => "%25".to_string(),
+            '<' => "%3C".to_string(),
+            '>' => "%3E".to_string(),
+            '"' => "%22".to_string(),
+            '\'' => "%27".to_string(),
+            '&' => "%26".to_string(),
+            '+' => "%2B".to_string(),
+            ' ' => "%20".to_string(),
+            _ if c.is_ascii() => c.to_string(),
+            c => {
+                let mut buf = [0u8; 4];
+                let encoded = c.encode_utf8(&mut buf);
+                encoded
+                    .bytes()
+                    .map(|b| format!("%{b:02X}"))
+                    .collect()
+            }
+        })
+        .collect()
+}
+
+fn favicon_link_tag(label: &str) -> String {
+    let label = label.to_ascii_uppercase();
+    let (r, g, b) = icon_accent_rgb(&label);
+    // Full-bleed background (no rx): transparent corners made the glyph look tiny on
+    // browser tab masks. Large centered text, similar to native site favicons.
+    let svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><rect width='32' height='32' fill='#{r:02x}{g:02x}{b:02x}'/><text x='16' y='16' text-anchor='middle' dominant-baseline='central' font-family='system-ui,-apple-system,sans-serif' font-size='18' font-weight='700' letter-spacing='1.5' fill='#ffffff'>{label}</text></svg>"
+    );
+    format!(
+        "<link rel=\"icon\" href=\"data:image/svg+xml,{}\">\n",
+        encode_svg_for_data_uri(&svg)
+    )
+}
+
 fn slugify(text: &str) -> String {
     text.to_lowercase()
         .chars()
@@ -1582,7 +1691,7 @@ fn slugify(text: &str) -> String {
         .join("-")
 }
 
-fn build_html(title: &str, body_sections: &[RenderedSection]) -> String {
+fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) -> String {
     let body_html: String = if body_sections.len() == 1 {
         body_sections[0].html.clone()
     } else {
@@ -1599,6 +1708,7 @@ fn build_html(title: &str, body_sections: &[RenderedSection]) -> String {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
+{favicon}
 <style>
 {css}
 </style>
@@ -1610,6 +1720,7 @@ fn build_html(title: &str, body_sections: &[RenderedSection]) -> String {
 </body>
 </html>"#,
         title = html_escape(title),
+        favicon = favicon_link_tag(icon_label),
         css = CSS,
         body_html = body_html,
     )
@@ -2238,7 +2349,8 @@ fn render_document_with_resources(
     }
 
     let section_count = sections.len();
-    let html = build_html(&doc_title, &sections);
+    let icon_label = resolve_icon_label(args);
+    let html = build_html(&doc_title, &sections, &icon_label);
 
     Ok(RenderedDocument {
         html,
@@ -2284,6 +2396,7 @@ fn build_preview_error_html(err: &anyhow::Error) -> String {
             title: "Preview Error".to_string(),
             html: body,
         }],
+        "ER",
     )
 }
 
@@ -2403,6 +2516,45 @@ mod tests {
 
     fn callout_count(html: &str) -> usize {
         html.matches("class=\"callout callout-").count()
+    }
+
+    #[test]
+    fn parse_icon_arg_validates_and_uppercases() {
+        assert_eq!(parse_icon_arg("ab").unwrap(), "AB");
+        assert_eq!(parse_icon_arg("x9").unwrap(), "X9");
+        assert!(parse_icon_arg("a").is_err());
+        assert!(parse_icon_arg("abc").is_err());
+        assert!(parse_icon_arg("a!").is_err());
+        assert!(parse_icon_arg("中文").is_err());
+    }
+
+    #[test]
+    fn default_icon_label_from_path_rules() {
+        assert_eq!(
+            default_icon_label_from_path(Path::new("readme.md")),
+            "RE"
+        );
+        assert_eq!(default_icon_label_from_path(Path::new("a.md")), "AA");
+        assert_eq!(
+            default_icon_label_from_path(Path::new("my-doc.md")),
+            "MY"
+        );
+        assert_eq!(default_icon_label_from_path(Path::new("笔记.md")), "PG");
+    }
+
+    #[test]
+    fn build_html_embeds_two_char_favicon() {
+        let html = build_html(
+            "Title",
+            &[RenderedSection {
+                title: String::new(),
+                html: "<p>x</p>".to_string(),
+            }],
+            "ab",
+        );
+        assert!(html.contains("rel=\"icon\""));
+        assert!(html.contains("data:image/svg+xml,"));
+        assert!(html.contains("AB</text>") || html.contains("AB%3C/text"));
     }
 
     #[test]

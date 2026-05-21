@@ -12,6 +12,15 @@ const LIVE_RELOAD_SCRIPT: &str = r#"<script>
     if (doc.title) {
       document.title = doc.title;
     }
+    const freshIcon = doc.querySelector('link[rel="icon"]');
+    let currentIcon = document.querySelector('link[rel="icon"]');
+    if (freshIcon) {
+      if (currentIcon) {
+        currentIcon.href = freshIcon.href;
+      } else {
+        document.head.appendChild(document.importNode(freshIcon, true));
+      }
+    }
     window.scrollTo(0, scrollY);
     return true;
   }
