@@ -16,6 +16,8 @@ PageMD converts one or more Markdown files into a single HTML document, embeds t
 - Renders inline and display math as embedded SVG.
 - Renders `mermaid` / `mmd` diagrams as inline SVG.
 - Fetches `plantuml` / `puml` / `uml` diagrams during conversion and embeds the returned SVG.
+- Renders `typst` code blocks to inline SVG via the Typst compiler (embedded and system fonts).
+- Embeds Typst diagrams (fenced blocks with language `typst`): built-in offline `@preview/cetz:0.3.2`, `@preview/fletcher:0.5.8`, `@preview/codelst:2.0.2`; see `pagemd --help` (Typst embedding section). Other `@preview` imports download on demand when rendering.
 - Supports GitHub-style callouts, fenced admonitions, and indented admonitions.
 - Live-preview Markdown in the browser with hot reload (`pagemd view`).
 - Provides a full conversion fixture at `examples/BASIC.md`.

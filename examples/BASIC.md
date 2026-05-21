@@ -36,7 +36,7 @@ This paragraph includes **strong text**, *emphasis*, `inline code`, a [link](htt
 | Code | `` `inline` `` | Center | Ready | 96 | Inline code inside cells is rendered as a compact badge. |
 | Math | `$x+y$` | Center | Ready | 94 | Inline math works inside table cells: $x+y$. |
 | Callouts | `> [!NOTE]` | Center | Ready | 92 | Use callouts outside tables for richer block content. |
-| Diagrams | `mermaid` / `plantuml` | Center | Ready | 90 | Diagram blocks are rendered as embedded graphics. |
+| Diagrams | `mermaid` / `plantuml` / `typst` | Center | Ready | 90 | Diagram blocks are rendered as embedded graphics. |
 
 Here is a footnote reference.[^demo]
 
@@ -52,7 +52,7 @@ fn main() {
 ```
 
 ```typescript
-const features = ['markdown', 'math', 'mermaid', 'plantuml', 'callouts'];
+const features = ['markdown', 'math', 'mermaid', 'plantuml', 'typst', 'callouts'];
 console.log(features.join(', '));
 ```
 
@@ -92,6 +92,26 @@ User -> PageMD: Convert examples/BASIC.md
 PageMD -> HTML: Embed content and resources
 HTML --> User: Open locally
 @enduml
+```
+
+## Typst
+
+Built-in packages (offline): `@preview/cetz:0.3.2`, `@preview/fletcher:0.5.8`, `@preview/codelst:2.0.2`.
+
+```typst
+#import "@preview/cetz:0.3.2"
+#cetz.canvas({
+  import cetz.draw: *
+  circle((0, 0), radius: 1, fill: rgb("#0969da").lighten(35%))
+  content((0, 0), [$arrow.r$ PageMD], anchor: "center")
+})
+```
+
+Plain Typst (no package) also works:
+
+```typst
+#circle(radius: 28pt, fill: rgb("#0969da").lighten(40%))
+#text(size: 12pt)[Typst → SVG]
 ```
 
 ## Admonitions and Callouts

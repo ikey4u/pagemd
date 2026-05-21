@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use clap::{Args, Parser, Subcommand};
 use mermaid_rs_renderer::{render_with_options, RenderOptions};
 use plantuml_encoding::encode_plantuml_deflate;
+mod typst;
 use pulldown_cmark::{Event, Options, Parser as MdParser, Tag, TagEnd};
 use ratex_layout::{layout, to_display_list, LayoutOptions};
 use ratex_parser::parser::parse as parse_latex;
@@ -27,11 +28,7 @@ mod view;
 #[command(
     name = "pagemd",
     about = "Convert Markdown to a self-contained single HTML file",
-    long_about = "Convert Markdown to a SingleFile-style HTML document (default mode).\n\n\
-                  Usage:\n  \
-                  pagemd -i INPUT.md -o OUTPUT.html\n  \
-                  pagemd --input a.md --input b.md --output doc.html\n\n\
-                  Use `pagemd view --help` for live preview with hot reload.",
+    long_about = typst::PAGEMD_LONG_ABOUT,
 )]
 struct Cli {
     #[command(subcommand)]
@@ -226,6 +223,20 @@ fn http_client() -> &'static Client {
             .build()
             .expect("failed to build HTTP client")
     })
+}
+
+/// Log fenced-block render failures to stderr (convert and `pagemd view` both use this path).
+fn eprint_fence_render_error(kind: &str, err: &(impl std::fmt::Display + ?Sized), source: &str) {
+    eprintln!("\n[pagemd] {kind} block render failed");
+    eprintln!("{err:#}");
+    let trimmed = source.trim();
+    if !trimmed.is_empty() {
+        eprintln!("\n--- {kind} source ---");
+        eprintln!("{trimmed}");
+        eprintln!("--- end {kind} source ---\n");
+    } else {
+        eprintln!();
+    }
 }
 
 fn render_mermaid(code: &str) -> Result<String> {
@@ -1012,11 +1023,24 @@ fn render_markdown_with_depth(
                         }
                         "mermaid" | "mmd" => match render_mermaid(&buf_str) {
                             Ok(rendered) => html.push_str(&rendered),
-                            Err(_) => html.push_str(&mermaid_error_html(&buf_str)),
+                            Err(err) => {
+                                eprint_fence_render_error("Mermaid", &err, &buf_str);
+                                html.push_str(&mermaid_error_html(&buf_str));
+                            }
                         },
                         "plantuml" | "puml" | "uml" => match render_plantuml(&buf_str) {
                             Ok(rendered) => html.push_str(&rendered),
-                            Err(_) => html.push_str(&plantuml_error_html(&buf_str)),
+                            Err(err) => {
+                                eprint_fence_render_error("PlantUML", &err, &buf_str);
+                                html.push_str(&plantuml_error_html(&buf_str));
+                            }
+                        },
+                        "typst" => match typst::render_typst(&buf_str) {
+                            Ok(rendered) => html.push_str(&rendered),
+                            Err(err) => {
+                                eprint_fence_render_error("Typst", &err, &buf_str);
+                                html.push_str(&typst::typst_error_html(&buf_str));
+                            }
                         },
                         "pagemd-callout" => {
                             if let Some((kind, title)) = parse_internal_callout_info(&lang_info) {
@@ -2070,6 +2094,44 @@ img {
   background: #450a0a;
 }
 
+.typst-display {
+  margin: 1.5rem 0;
+  padding: 0;
+  overflow-x: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+}
+
+.typst-canvas {
+  min-width: max-content;
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.typst-canvas svg {
+  max-width: 100%;
+  height: auto;
+  background: transparent !important;
+}
+
+.typst-error {
+  color: #991b1b;
+  background: linear-gradient(135deg, #fff7f7, #fff);
+  border-color: #fecaca;
+  text-align: left;
+}
+
+.typst-error pre {
+  margin: 0.75rem 0 0;
+  background: #450a0a;
+}
+
 .footnote {
   font-size: 0.875rem;
   color: var(--color-muted);
@@ -2335,6 +2397,10 @@ mod tests {
         html.matches("plantuml-display").count()
     }
 
+    fn typst_count(html: &str) -> usize {
+        html.matches("class=\"typst-display\"").count()
+    }
+
     fn callout_count(html: &str) -> usize {
         html.matches("class=\"callout callout-").count()
     }
@@ -2391,6 +2457,35 @@ mod tests {
         assert!(!html.contains("https://www.plantuml.com/plantuml/svg/"));
         assert!(html.contains("<svg") || html.contains("PlantUML render failed"));
         assert!(!html.contains("language-plantuml"));
+    }
+
+    #[test]
+    fn typst_code_block_renders_svg() {
+        let html = render_html(
+            "```typst\n#circle(radius: 30pt, fill: blue.lighten(30%))\n#text(size: 14pt)[Hello Typst]\n```\n",
+        );
+        assert_eq!(typst_count(&html), 1);
+        assert!(html.contains("<svg") || html.contains("Typst render failed"));
+        assert!(!html.contains("language-typst"));
+    }
+
+    #[test]
+    fn bundled_typst_packages_are_embedded() {
+        assert_eq!(typst::bundled_specs().len(), 3);
+    }
+
+    #[test]
+    fn typst_cetz_package_renders_svg() {
+        let html = render_html(
+            "```typst\n#import \"@preview/cetz:0.3.2\"\n#cetz.canvas({\n  import cetz.draw: *\n  circle((0, 0), radius: 1)\n})\n```\n",
+        );
+        assert_eq!(typst_count(&html), 1);
+        assert!(
+            html.contains("<svg"),
+            "expected cetz diagram SVG, got: {}",
+            &html[..html.len().min(500)]
+        );
+        assert!(!html.contains("Typst render failed"));
     }
 
     #[test]

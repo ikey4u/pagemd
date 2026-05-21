@@ -1,11 +1,20 @@
 [package]
 name = "pagemd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+build = "build.rs"
 
 [[bin]]
 name = "pagemd"
 path = "src/main.rs"
+
+[build-dependencies]
+anyhow = "1"
+flate2 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+tar = "0.4"
+toml = "0.8"
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
@@ -29,3 +38,12 @@ notify = "8"
 notify-debouncer-mini = "0.6"
 async-stream = "0.3"
 futures = "0.3"
+typst-as-lib = { version = "0.15.4", features = ["typst-kit-fonts", "typst-kit-embed-fonts", "packages", "reqwest"] }
+typst-svg = "0.14"
+typst = "0.14"
+flate2 = "1"
+tar = "0.4"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+dirs = "6"
+rust-embed = "8"
