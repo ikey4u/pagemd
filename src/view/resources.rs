@@ -19,9 +19,7 @@ fn html_attr_re() -> &'static Regex {
 
 fn css_url_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r#"url\(\s*['"]?([^'")]+)['"]?\s*\)"#).expect("css url regex")
-    })
+    RE.get_or_init(|| Regex::new(r#"url\(\s*['"]?([^'")]+)['"]?\s*\)"#).expect("css url regex"))
 }
 
 fn is_local_reference(reference: &str) -> bool {
@@ -92,7 +90,10 @@ pub fn discover_from_sources(sources: &[(PathBuf, String)]) -> Vec<PathBuf> {
 }
 
 /// Initial watch set: input files, sibling assets, common asset subdirectories, and discovered paths.
-pub fn collect_initial_watch_paths(inputs: &[PathBuf], sources: &[(PathBuf, String)]) -> Vec<PathBuf> {
+pub fn collect_initial_watch_paths(
+    inputs: &[PathBuf],
+    sources: &[(PathBuf, String)],
+) -> Vec<PathBuf> {
     let mut paths = HashSet::new();
 
     for input in inputs {
@@ -101,7 +102,9 @@ pub fn collect_initial_watch_paths(inputs: &[PathBuf], sources: &[(PathBuf, Stri
 
         let parent = input.parent().unwrap_or_else(|| Path::new("."));
         if !parent.as_os_str().is_empty() {
-            let parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            let parent = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
             for name in ASSET_DIR_NAMES {
                 let dir = parent.join(name);
                 if dir.is_dir() {
@@ -122,8 +125,12 @@ pub fn collect_initial_watch_paths(inputs: &[PathBuf], sources: &[(PathBuf, Stri
 pub fn discover_watch_paths(inputs: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
     let mut sources = Vec::new();
     for input in inputs {
-        let source = std::fs::read_to_string(input)
-            .map_err(|err| std::io::Error::new(err.kind(), format!("Cannot read {}: {err}", input.display())))?;
+        let source = std::fs::read_to_string(input).map_err(|err| {
+            std::io::Error::new(
+                err.kind(),
+                format!("Cannot read {}: {err}", input.display()),
+            )
+        })?;
         sources.push((input.clone(), source));
     }
     Ok(discover_from_sources(&sources))

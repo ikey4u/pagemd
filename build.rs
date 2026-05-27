@@ -18,7 +18,9 @@ fn main() {
         );
     } else if let Err(err) = typst_package::ensure_bundled(manifest_dir, false) {
         eprintln!("error: failed to prepare bundled Typst packages for compile-time embed: {err}");
-        eprintln!("hint: check network, or populate assets/typst-packages/preview/ before building");
+        eprintln!(
+            "hint: check network, or populate assets/typst-packages/preview/ before building"
+        );
         process::exit(1);
     }
 

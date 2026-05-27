@@ -44,9 +44,7 @@ pub fn preview_root(workspace: &Path) -> PathBuf {
 }
 
 pub fn package_install_dir(workspace: &Path, spec: &PackageSpec) -> PathBuf {
-    preview_root(workspace)
-        .join(&spec.name)
-        .join(&spec.version)
+    preview_root(workspace).join(&spec.name).join(&spec.version)
 }
 
 pub fn is_installed(dir: &Path) -> bool {
@@ -95,8 +93,7 @@ fn fetch_package(spec: &PackageSpec, dest: &Path) -> Result<()> {
         .with_context(|| format!("read body from {url}"))?;
 
     if dest.exists() {
-        fs::remove_dir_all(dest)
-            .with_context(|| format!("remove existing {}", dest.display()))?;
+        fs::remove_dir_all(dest).with_context(|| format!("remove existing {}", dest.display()))?;
     }
     fs::create_dir_all(dest).with_context(|| format!("create {}", dest.display()))?;
 

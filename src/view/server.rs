@@ -51,7 +51,10 @@ struct WatchState {
     watched: HashSet<PathBuf>,
 }
 
-async fn bind_preview_listener(host: &str, preferred_port: u16) -> Result<(tokio::net::TcpListener, SocketAddr)> {
+async fn bind_preview_listener(
+    host: &str,
+    preferred_port: u16,
+) -> Result<(tokio::net::TcpListener, SocketAddr)> {
     let preferred: SocketAddr = format!("{host}:{preferred_port}")
         .parse()
         .with_context(|| format!("Invalid host/port: {host}:{preferred_port}"))?;
@@ -96,7 +99,10 @@ pub fn run(
         inputs: options.inputs.clone(),
     });
     let (initial_html, initial_extra, export_initial) = match first {
-        RenderResult::Ok { html, extra_watch_paths } => (html, extra_watch_paths, true),
+        RenderResult::Ok {
+            html,
+            extra_watch_paths,
+        } => (html, extra_watch_paths, true),
         RenderResult::Err { html } => (html, Vec::new(), false),
     };
 
@@ -190,20 +196,20 @@ fn setup_watcher(
 ) -> Result<WatchState> {
     let watched = HashSet::new();
 
-    let debouncer = new_debouncer(Duration::from_millis(300), move |result: DebounceEventResult| {
-        let Ok(events) = result else {
-            return;
-        };
-        if should_trigger_render(&events) {
-            let _ = render_tx.send(());
-        }
-    })
+    let debouncer = new_debouncer(
+        Duration::from_millis(300),
+        move |result: DebounceEventResult| {
+            let Ok(events) = result else {
+                return;
+            };
+            if should_trigger_render(&events) {
+                let _ = render_tx.send(());
+            }
+        },
+    )
     .context("Failed to create file watcher")?;
 
-    let mut state = WatchState {
-        debouncer,
-        watched,
-    };
+    let mut state = WatchState { debouncer, watched };
 
     for path in paths {
         let recursive = path.is_dir();
@@ -299,7 +305,8 @@ fn spawn_render_worker(
                     commit_html(&state, html, true);
                     if let Some(watch_state) = watch_state.upgrade() {
                         if let Ok(mut guard) = watch_state.lock() {
-                            if let Err(err) = register_extra_watches(&mut guard, &extra_watch_paths) {
+                            if let Err(err) = register_extra_watches(&mut guard, &extra_watch_paths)
+                            {
                                 eprintln!("Watch registration error: {err:#}");
                             }
                         }
@@ -353,7 +360,8 @@ fn write_export_if_configured(path: Option<&std::path::Path>, html: &str) -> Res
                 .with_context(|| format!("Cannot create {}", parent.display()))?;
         }
     }
-    fs::write(path, html.as_bytes()).with_context(|| format!("Cannot export {}", path.display()))?;
+    fs::write(path, html.as_bytes())
+        .with_context(|| format!("Cannot export {}", path.display()))?;
     eprintln!("Exported -> {}", path.display());
     Ok(())
 }

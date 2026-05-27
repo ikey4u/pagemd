@@ -62,7 +62,11 @@ struct ViewArgs {
     #[command(flatten)]
     convert: CliArgs,
 
-    #[arg(long, default_value = "127.0.0.1", help = "Preview server bind address")]
+    #[arg(
+        long,
+        default_value = "127.0.0.1",
+        help = "Preview server bind address"
+    )]
     host: String,
 
     #[arg(
@@ -93,6 +97,15 @@ struct CliArgs {
         help = "Markdown input file(s)"
     )]
     inputs: Vec<PathBuf>,
+
+    #[arg(
+        short = 'd',
+        long = "dir",
+        value_name = "DIR",
+        num_args = 1..,
+        help = "Directory/directories to scan recursively for Markdown files"
+    )]
+    directories: Vec<PathBuf>,
 
     #[arg(
         short = 'o',
@@ -776,6 +789,14 @@ fn inline_raw_html_resources(raw: &str, base_dir: &Path) -> String {
 struct RenderedSection {
     title: String,
     html: String,
+    outline: Vec<HeadingOutline>,
+}
+
+#[derive(Clone)]
+struct HeadingOutline {
+    level: u32,
+    id: String,
+    text: String,
 }
 
 struct PendingImage {
@@ -975,6 +996,8 @@ fn render_markdown_with_depth(
 
     let mut html = String::new();
     let mut title = String::new();
+    let mut outline: Vec<HeadingOutline> = Vec::new();
+    let mut heading_ids = std::collections::HashMap::new();
     let mut first_heading = true;
 
     let theme = ts
@@ -1168,11 +1191,16 @@ fn render_markdown_with_depth(
                         Event::End(TagEnd::Heading(_)) => {
                             let lvl = *level;
                             let plain = strip_html_tags(buf);
-                            let id = slugify(&plain);
+                            let id = unique_heading_id(&plain, &mut heading_ids);
                             if first_heading && lvl == 1 {
                                 title = plain.clone();
                                 first_heading = false;
                             }
+                            outline.push(HeadingOutline {
+                                level: lvl,
+                                id: id.clone(),
+                                text: plain,
+                            });
                             html.push_str(&format!("<h{lvl} id=\"{id}\">{buf}</h{lvl}>\n"));
                             ctx = Context::Normal;
                         }
@@ -1520,7 +1548,11 @@ fn render_markdown_with_depth(
         }
     }
 
-    Ok(RenderedSection { title, html })
+    Ok(RenderedSection {
+        title,
+        html,
+        outline,
+    })
 }
 
 fn highlight_code(
@@ -1587,6 +1619,102 @@ fn parse_icon_arg(s: &str) -> Result<String, String> {
     Ok(s.to_ascii_uppercase())
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedInputs {
+    files: Vec<PathBuf>,
+    directories: Vec<PathBuf>,
+}
+
+fn is_markdown_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown"))
+        .unwrap_or(false)
+}
+
+fn canonical_key(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn push_unique_file(
+    files: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    path: PathBuf,
+) {
+    if seen.insert(canonical_key(&path)) {
+        files.push(path);
+    }
+}
+
+fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("Cannot read directory {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("Cannot list directory {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("Cannot inspect {}", path.display()))?;
+        if file_type.is_dir() {
+            collect_markdown_files(&path, files)?;
+        } else if file_type.is_file() && is_markdown_file(&path) {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_inputs(args: &CliArgs) -> Result<ResolvedInputs> {
+    if args.inputs.is_empty() && args.directories.is_empty() {
+        bail!("Missing required input. Pass --input <FILE> or --dir <DIR>.");
+    }
+
+    let mut files = Vec::new();
+    let mut directories = Vec::new();
+    let mut seen_files = std::collections::HashSet::new();
+    let mut seen_dirs = std::collections::HashSet::new();
+
+    for input in &args.inputs {
+        if !input.exists() {
+            bail!("Input file does not exist: {}", input.display());
+        }
+        if !input.is_file() {
+            bail!("Input is not a file: {}", input.display());
+        }
+        push_unique_file(&mut files, &mut seen_files, input.clone());
+    }
+
+    for dir in &args.directories {
+        if !dir.exists() {
+            bail!("Input directory does not exist: {}", dir.display());
+        }
+        if !dir.is_dir() {
+            bail!("Input is not a directory: {}", dir.display());
+        }
+
+        let canonical = canonical_key(dir);
+        if seen_dirs.insert(canonical.clone()) {
+            directories.push(canonical);
+        }
+
+        let mut dir_files = Vec::new();
+        collect_markdown_files(dir, &mut dir_files)?;
+        for path in dir_files {
+            push_unique_file(&mut files, &mut seen_files, path);
+        }
+    }
+
+    if files.is_empty() {
+        bail!("No Markdown files found. Pass --input <FILE> or --dir <DIR> containing .md/.markdown files.");
+    }
+
+    Ok(ResolvedInputs { files, directories })
+}
+
 /// Default favicon label from the input path (first two alphanumeric chars of the stem, uppercase).
 fn default_icon_label_from_path(path: &Path) -> String {
     let stem = path
@@ -1604,18 +1732,15 @@ fn default_icon_label_from_path(path: &Path) -> String {
             let c = chars[0].to_ascii_uppercase();
             format!("{c}{c}")
         }
-        _ => chars
-            .into_iter()
-            .map(|c| c.to_ascii_uppercase())
-            .collect(),
+        _ => chars.into_iter().map(|c| c.to_ascii_uppercase()).collect(),
     }
 }
 
-fn resolve_icon_label(args: &CliArgs) -> String {
+fn resolve_icon_label(args: &CliArgs, resolved_inputs: &[PathBuf]) -> String {
     if let Some(icon) = &args.icon {
         return icon.clone();
     }
-    args.inputs
+    resolved_inputs
         .first()
         .map(|p| default_icon_label_from_path(p))
         .unwrap_or_else(|| "PG".to_string())
@@ -1712,10 +1837,7 @@ fn encode_svg_for_data_uri(svg: &str) -> String {
             c => {
                 let mut buf = [0u8; 4];
                 let encoded = c.encode_utf8(&mut buf);
-                encoded
-                    .bytes()
-                    .map(|b| format!("%{b:02X}"))
-                    .collect()
+                encoded.bytes().map(|b| format!("%{b:02X}")).collect()
             }
         })
         .collect()
@@ -1751,14 +1873,137 @@ fn slugify(text: &str) -> String {
         .join("-")
 }
 
+fn unique_heading_id(
+    text: &str,
+    heading_ids: &mut std::collections::HashMap<String, usize>,
+) -> String {
+    let base = {
+        let slug = slugify(text);
+        if slug.is_empty() {
+            "heading".to_string()
+        } else {
+            slug
+        }
+    };
+    let count = heading_ids.entry(base.clone()).or_insert(0);
+    *count += 1;
+    if *count == 1 {
+        base
+    } else {
+        format!("{base}-{}", *count)
+    }
+}
+
+fn section_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn build_outline_nav(body_sections: &[RenderedSection]) -> String {
+    body_sections
+        .iter()
+        .enumerate()
+        .map(|(section_index, section)| {
+            let doc_id = format!("doc-{}", section_index + 1);
+            let active = if section_index == 0 { " is-active" } else { "" };
+            let items = if section.outline.is_empty() {
+                "<div class=\"doc-outline-empty\">No headings</div>\n".to_string()
+            } else {
+                section
+                    .outline
+                    .iter()
+                    .map(|heading| {
+                        let depth = heading.level.saturating_sub(1).min(5);
+                        format!(
+                            "<a class=\"doc-outline-link depth-{depth}\" href=\"#{}\" data-heading-target=\"{}\" title=\"{}\">{}</a>\n",
+                            html_escape(&heading.id),
+                            html_escape(&heading.id),
+                            html_escape(&heading.text),
+                            html_escape(&heading.text)
+                        )
+                    })
+                    .collect()
+            };
+            format!(
+                "<nav class=\"doc-outline-list{active}\" data-outline-for=\"{doc_id}\">\n{items}</nav>\n"
+            )
+        })
+        .collect()
+}
+
 fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) -> String {
-    let body_html: String = if body_sections.len() == 1 {
+    build_html_with_nav(title, body_sections, icon_label, None)
+}
+
+fn build_html_with_nav(
+    title: &str,
+    body_sections: &[RenderedSection],
+    icon_label: &str,
+    nav_labels: Option<&[String]>,
+) -> String {
+    let use_sidebar = body_sections.len() > 1;
+    let body_html: String = if !use_sidebar {
         body_sections[0].html.clone()
     } else {
         body_sections
             .iter()
-            .map(|sec| format!("<section class=\"doc-section\">\n{}</section>\n", sec.html))
+            .enumerate()
+            .map(|(index, sec)| {
+                let active = if index == 0 { " is-active" } else { "" };
+                format!(
+                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel>\n{}</section>\n",
+                    index + 1,
+                    sec.html
+                )
+            })
             .collect()
+    };
+    let (layout_open, layout_close, nav_html, script_html) = if use_sidebar {
+        let nav_items: String = body_sections
+            .iter()
+            .enumerate()
+            .map(|(index, section)| {
+                let label = nav_labels
+                    .and_then(|labels| labels.get(index))
+                    .cloned()
+                    .filter(|label| !label.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        if section.title.trim().is_empty() {
+                            format!("Document {}", index + 1)
+                        } else {
+                            section.title.clone()
+                        }
+                    });
+                let active = if index == 0 { " is-active" } else { "" };
+                format!(
+                    "<a class=\"doc-nav-link{active}\" href=\"#doc-{}\" data-doc-target=\"doc-{}\" title=\"{}\">{}</a>\n",
+                    index + 1,
+                    index + 1,
+                    html_escape(&label),
+                    html_escape(&label)
+                )
+            })
+            .collect();
+        let outline_nav = build_outline_nav(body_sections);
+        (
+            "<div class=\"doc-workspace outline-hidden\" data-doc-workspace>\n".to_string(),
+            "</div>\n".to_string(),
+            format!(
+                "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\"><nav class=\"doc-nav\">\n{nav_items}</nav>\n</aside>\n<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n<main class=\"doc-main\">\n<button type=\"button\" class=\"doc-outline-toggle\" data-outline-toggle>Outline</button>\n"
+            ),
+            format!(
+                "</main>\n<div class=\"doc-resizer doc-resizer-right\" role=\"separator\" aria-label=\"Resize outline\" data-resizer=\"right\"></div>\n<aside class=\"doc-outline doc-pane\" aria-label=\"Markdown outline\">\n<div class=\"doc-pane-header\">Outline</div>\n{outline_nav}</aside>\n<script>\n{DOC_WORKSPACE_SCRIPT}\n</script>\n"
+            ),
+        )
+    } else {
+        (String::new(), String::new(), String::new(), String::new())
+    };
+    let container_class = if use_sidebar {
+        "container container-with-sidebar"
+    } else {
+        "container"
     };
 
     format!(
@@ -1774,17 +2019,210 @@ fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) 
 </style>
 </head>
 <body>
-<div class="container">
+<div class="{container_class}">
+{layout_open}{nav_html}
 {body_html}
+{script_html}{layout_close}
 </div>
 </body>
 </html>"#,
         title = html_escape(title),
         favicon = favicon_link_tag(icon_label),
         css = CSS,
+        layout_open = layout_open,
+        nav_html = nav_html,
         body_html = body_html,
+        script_html = script_html,
+        layout_close = layout_close,
+        container_class = container_class,
     )
 }
+
+const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
+  var workspace = document.querySelector("[data-doc-workspace]");
+  if (!workspace) return;
+
+  var storageKey = "pagemd.workspace.v1.";
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+  function storageGet(name) {
+    try {
+      return window.localStorage ? localStorage.getItem(storageKey + name) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function storageSet(name, value) {
+    try {
+      if (window.localStorage) localStorage.setItem(storageKey + name, value);
+    } catch (_) {}
+  }
+  function leftWidthBounds() {
+    if (window.matchMedia("(min-width: 1600px)").matches) {
+      return { min: 220, fallback: 280, max: 460 };
+    }
+    if (window.matchMedia("(min-width: 1200px)").matches) {
+      return { min: 200, fallback: 240, max: 420 };
+    }
+    if (window.matchMedia("(min-width: 900px)").matches) {
+      return { min: 170, fallback: 210, max: 340 };
+    }
+    return { min: 150, fallback: 180, max: 280 };
+  }
+  function rightWidthBounds() {
+    if (window.matchMedia("(min-width: 1400px)").matches) {
+      return { min: 240, fallback: 300, max: 440 };
+    }
+    return { min: 210, fallback: 260, max: 360 };
+  }
+  function loadNumber(name, fallback) {
+    var raw = storageGet(name);
+    var value = raw ? Number(raw) : NaN;
+    return Number.isFinite(value) ? value : fallback;
+  }
+  function setWidth(name, value) {
+    var rounded = Math.round(value);
+    workspace.style.setProperty("--" + name, rounded + "px");
+    storageSet(name, String(rounded));
+  }
+  function setOutlineVisible(visible) {
+    workspace.classList.toggle("outline-hidden", !visible);
+    storageSet("outlineVisible", visible ? "1" : "0");
+    var toggle = document.querySelector("[data-outline-toggle]");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", visible ? "true" : "false");
+      toggle.textContent = visible ? "Hide outline" : "Outline";
+    }
+  }
+  function panelForId(id) {
+    var panels = document.querySelectorAll("[data-doc-panel]");
+    var current = document.querySelector("[data-doc-panel].is-active");
+    if (id && current && window.CSS && CSS.escape && current.querySelector("#" + CSS.escape(id))) {
+      return current;
+    }
+    var target = id ? document.getElementById(id) : null;
+    return target
+      ? (target.matches("[data-doc-panel]") ? target : target.closest("[data-doc-panel]"))
+      : panels[0];
+  }
+  function activePanelFromHash() {
+    return panelForId((window.location.hash || "").replace(/^#/, ""));
+  }
+  function activate(id) {
+    var panels = document.querySelectorAll("[data-doc-panel]");
+    var links = document.querySelectorAll("[data-doc-target]");
+    var outlines = document.querySelectorAll("[data-outline-for]");
+    var activePanel = id ? panelForId(id) : activePanelFromHash();
+    if (!activePanel) return;
+    panels.forEach(function (panel) {
+      panel.classList.toggle("is-active", panel === activePanel);
+    });
+    links.forEach(function (link) {
+      link.classList.toggle("is-active", link.getAttribute("data-doc-target") === activePanel.id);
+    });
+    outlines.forEach(function (outline) {
+      outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
+    });
+    updateOutlineActive();
+  }
+  function updateOutlineActive() {
+    var activePanel = document.querySelector("[data-doc-panel].is-active");
+    if (!activePanel) return;
+    var headings = activePanel.querySelectorAll("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]");
+    var current = headings[0] || null;
+    headings.forEach(function (heading) {
+      if (heading.getBoundingClientRect().top <= 140) {
+        current = heading;
+      }
+    });
+    var outline = document.querySelector('[data-outline-for="' + activePanel.id + '"]');
+    if (!outline) return;
+    outline.querySelectorAll("[data-heading-target]").forEach(function (link) {
+      link.classList.toggle("is-active", !!current && link.getAttribute("data-heading-target") === current.id);
+    });
+  }
+  function scrollToHeading(id) {
+    var activePanel = activePanelFromHash();
+    if (!activePanel || !window.CSS || !CSS.escape) return false;
+    var target = activePanel.querySelector("#" + CSS.escape(id));
+    if (!target) return false;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    history.replaceState(null, "", "#" + id);
+    activate(id);
+    updateOutlineActive();
+    return true;
+  }
+
+  var leftBounds = leftWidthBounds();
+  var rightBounds = rightWidthBounds();
+  setWidth("leftWidth", clamp(loadNumber("leftWidth", leftBounds.fallback), leftBounds.min, leftBounds.max));
+  setWidth("rightWidth", clamp(loadNumber("rightWidth", rightBounds.fallback), rightBounds.min, rightBounds.max));
+  setOutlineVisible(storageGet("outlineVisible") === "1");
+
+  window.PageMDActivateDocumentFromHash = function () {
+    activate((window.location.hash || "").replace(/^#/, ""));
+  };
+
+  var outlineToggle = document.querySelector("[data-outline-toggle]");
+  if (outlineToggle) {
+    outlineToggle.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOutlineVisible(workspace.classList.contains("outline-hidden"));
+    });
+  }
+
+  document.addEventListener("click", function (event) {
+    var navLink = event.target && event.target.closest
+      ? event.target.closest("[data-doc-target]")
+      : null;
+    if (navLink) {
+      activate(navLink.getAttribute("data-doc-target"));
+      return;
+    }
+    var headingLink = event.target && event.target.closest
+      ? event.target.closest("[data-heading-target]")
+      : null;
+    if (headingLink) {
+      event.preventDefault();
+      scrollToHeading(headingLink.getAttribute("data-heading-target"));
+      return;
+    }
+  });
+
+  window.addEventListener("hashchange", window.PageMDActivateDocumentFromHash);
+  window.addEventListener("scroll", updateOutlineActive, { passive: true });
+  window.PageMDActivateDocumentFromHash();
+
+  document.querySelectorAll("[data-resizer]").forEach(function (handle) {
+    handle.addEventListener("mousedown", function (event) {
+      event.preventDefault();
+      var kind = handle.getAttribute("data-resizer");
+      var startX = event.clientX;
+      var leftBounds = leftWidthBounds();
+      var rightBounds = rightWidthBounds();
+      var startLeft = clamp(loadNumber("leftWidth", leftBounds.fallback), leftBounds.min, leftBounds.max);
+      var startRight = clamp(loadNumber("rightWidth", rightBounds.fallback), rightBounds.min, rightBounds.max);
+      document.body.classList.add("doc-resizing");
+      function onMove(moveEvent) {
+        if (kind === "left") {
+          setWidth("leftWidth", clamp(startLeft + moveEvent.clientX - startX, leftBounds.min, leftBounds.max));
+        } else {
+          setWidth("rightWidth", clamp(startRight + startX - moveEvent.clientX, rightBounds.min, rightBounds.max));
+          setOutlineVisible(true);
+        }
+      }
+      function onUp() {
+        document.body.classList.remove("doc-resizing");
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+  });
+})();"##;
 
 const CSS: &str = r#"
 *, *::before, *::after {
@@ -1843,6 +2281,227 @@ body {
   max-width: 860px;
   margin: 0 auto;
   padding: 3rem 2rem 5rem;
+}
+
+.container-with-sidebar {
+  max-width: none;
+  padding: 0;
+}
+
+.doc-workspace {
+  --leftWidth: clamp(170px, 18vw, 240px);
+  --rightWidth: clamp(220px, 20vw, 300px);
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--leftWidth) 8px minmax(0, 1fr) 8px var(--rightWidth);
+  align-items: stretch;
+  justify-content: center;
+}
+
+@media (min-width: 1200px) {
+  .doc-workspace {
+    --leftWidth: clamp(200px, 18vw, 260px);
+  }
+}
+
+@media (min-width: 1600px) {
+  .doc-workspace {
+    --leftWidth: clamp(220px, 17vw, 300px);
+    --rightWidth: clamp(260px, 18vw, 340px);
+  }
+}
+
+.doc-workspace.outline-hidden {
+  grid-template-columns: var(--leftWidth) 8px minmax(0, 1fr) 0 0;
+}
+
+.doc-pane {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: #fbfcff;
+}
+
+.doc-sidebar {
+  padding: 0.55rem 0.45rem;
+  border-right: 1px solid var(--color-border);
+}
+
+.doc-outline {
+  padding: 0.85rem 0.7rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.doc-workspace.outline-hidden .doc-outline,
+.doc-workspace.outline-hidden .doc-resizer-right {
+  display: none;
+}
+
+.doc-pane-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -1rem -0.75rem 0.65rem;
+  padding: 0.95rem 1rem 0.7rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: rgba(251, 252, 255, 0.94);
+  backdrop-filter: blur(10px);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.doc-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.doc-nav-link {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  padding: 0.38rem 0.55rem 0.38rem 0.72rem;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.doc-nav-link::before {
+  content: "";
+  position: absolute;
+  left: 0.28rem;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.doc-nav-link:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  text-decoration: none;
+}
+
+.doc-nav-link.is-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.10);
+}
+
+.doc-nav-link.is-active::before {
+  background: #2563eb;
+}
+
+.doc-resizer {
+  cursor: col-resize;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.doc-resizer:hover,
+.doc-resizing .doc-resizer {
+  background: #dbeafe;
+}
+
+.doc-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.doc-main {
+  max-width: 980px;
+  width: 100%;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 3rem 3rem 5rem;
+}
+
+.doc-outline-toggle {
+  position: fixed;
+  top: 0.85rem;
+  right: 0.9rem;
+  z-index: 10;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #475569;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.38rem 0.62rem;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+.doc-outline-toggle:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.doc-panel {
+  display: none;
+}
+
+.doc-panel.is-active {
+  display: block;
+}
+
+.doc-outline-list {
+  display: none;
+}
+
+.doc-outline-list.is-active {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.doc-outline-link {
+  display: block;
+  overflow: hidden;
+  padding: 0.35rem 0.35rem;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-outline-link.depth-2 { padding-left: 0.85rem; }
+.doc-outline-link.depth-3 { padding-left: 1.3rem; }
+.doc-outline-link.depth-4,
+.doc-outline-link.depth-5 { padding-left: 1.75rem; }
+
+.doc-outline-link:hover {
+  background: #f1f5f9;
+  color: #1d4ed8;
+  text-decoration: none;
+}
+
+.doc-outline-link.is-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.doc-outline-empty {
+  padding: 0.5rem 0.35rem;
+  color: #94a3b8;
+  font-size: 0.82rem;
 }
 
 .doc-section + .doc-section {
@@ -2320,12 +2979,49 @@ input[type="checkbox"] {
   .container {
     padding: 1.5rem 1rem 3rem;
   }
+  .container-with-sidebar {
+    max-width: 100%;
+  }
+  .doc-workspace {
+    display: block;
+  }
+  .doc-pane {
+    position: static;
+    height: auto;
+    max-height: none;
+    border: 1px solid var(--color-border);
+    margin: 1rem;
+  }
+  .doc-outline {
+    display: none;
+  }
+  .doc-resizer {
+    display: none;
+  }
+  .doc-main {
+    max-width: 100%;
+    padding: 1.5rem 1rem 3rem;
+  }
+  .doc-outline-toggle {
+    display: none;
+  }
   h1 { font-size: 1.75rem; }
   h2 { font-size: 1.35rem; }
 }
 
 @media print {
   .container { max-width: 100%; padding: 0; }
+  .doc-workspace { display: block; }
+  .doc-sidebar,
+  .doc-outline,
+  .doc-resizer,
+  .doc-outline-toggle { display: none; }
+  .doc-main { max-width: 100%; padding: 0; }
+  .doc-panel { display: block; }
+  .doc-section + .doc-section {
+    margin-top: 2rem;
+    padding-top: 2rem;
+  }
   pre { white-space: pre-wrap; word-break: break-all; }
   a { color: var(--color-text); }
 }
@@ -2353,11 +3049,9 @@ fn prepare_render_resources(args: &CliArgs) -> Result<RenderResources> {
 }
 
 fn render_document(args: &CliArgs, title_hint: Option<&Path>) -> Result<RenderedDocument> {
-    if args.inputs.is_empty() {
-        bail!("Missing required input. Pass --input <FILE>.");
-    }
+    let resolved = resolve_inputs(args)?;
     let resources = prepare_render_resources(args)?;
-    render_document_with_resources(args, title_hint, &resources)
+    render_document_from_files(args, title_hint, &resources, &resolved.files)
 }
 
 fn render_document_with_resources(
@@ -2365,10 +3059,21 @@ fn render_document_with_resources(
     title_hint: Option<&Path>,
     resources: &RenderResources,
 ) -> Result<RenderedDocument> {
+    let resolved = resolve_inputs(args)?;
+    render_document_from_files(args, title_hint, resources, &resolved.files)
+}
+
+fn render_document_from_files(
+    args: &CliArgs,
+    title_hint: Option<&Path>,
+    resources: &RenderResources,
+    input_files: &[PathBuf],
+) -> Result<RenderedDocument> {
     let mut sections: Vec<RenderedSection> = Vec::new();
+    let mut nav_labels: Vec<String> = Vec::new();
     let mut doc_title = args.title.clone().unwrap_or_default();
 
-    for input_path in &args.inputs {
+    for input_path in input_files {
         let base_dir = input_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -2391,6 +3096,7 @@ fn render_document_with_resources(
             doc_title = section.title.clone();
         }
 
+        nav_labels.push(section_label(input_path));
         sections.push(section);
     }
 
@@ -2399,7 +3105,7 @@ fn render_document_with_resources(
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
             .or_else(|| {
-                args.inputs
+                input_files
                     .first()
                     .and_then(|p| p.file_stem())
                     .and_then(|s| s.to_str())
@@ -2409,8 +3115,8 @@ fn render_document_with_resources(
     }
 
     let section_count = sections.len();
-    let icon_label = resolve_icon_label(args);
-    let html = build_html(&doc_title, &sections, &icon_label);
+    let icon_label = resolve_icon_label(args, input_files);
+    let html = build_html_with_nav(&doc_title, &sections, &icon_label, Some(&nav_labels));
 
     Ok(RenderedDocument {
         html,
@@ -2455,25 +3161,24 @@ fn build_preview_error_html(err: &anyhow::Error) -> String {
         &[RenderedSection {
             title: "Preview Error".to_string(),
             html: body,
+            outline: Vec::new(),
         }],
         "ER",
     )
 }
 
 fn run_view(args: &ViewArgs) -> Result<()> {
-    view::validate_inputs(&args.convert.inputs)?;
+    let export_path = args.export.clone().or_else(|| args.convert.output.clone());
 
-    let export_path = args
-        .export
-        .clone()
-        .or_else(|| args.convert.output.clone());
+    let resolved = resolve_inputs(&args.convert)?;
+    view::validate_inputs(&resolved.files)?;
 
     let resources = prepare_render_resources(&args.convert)?;
     let convert = args.convert.clone();
-    let title_hint = convert.inputs.first().cloned();
+    let title_hint = resolved.files.first().cloned();
 
-    let sources: Vec<(PathBuf, String)> = convert
-        .inputs
+    let sources: Vec<(PathBuf, String)> = resolved
+        .files
         .iter()
         .map(|input| {
             let source = fs::read_to_string(input)
@@ -2482,13 +3187,14 @@ fn run_view(args: &ViewArgs) -> Result<()> {
         })
         .collect::<Result<_>>()?;
 
-    let watch_paths = view::collect_initial_watch_paths(&convert.inputs, &sources);
+    let mut watch_paths = view::collect_initial_watch_paths(&resolved.files, &sources);
+    watch_paths.extend(resolved.directories.clone());
 
     view::run(
         view::ViewOptions {
             host: args.host.clone(),
             port: args.port,
-            inputs: convert.inputs.clone(),
+            inputs: resolved.files.clone(),
             watch_paths,
             open_browser: !args.no_open,
             export_path,
@@ -2499,7 +3205,10 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             &resources,
         ) {
             Ok(document) => {
-                let extra_watch_paths = match view::discover_watch_paths(&request.inputs) {
+                let _current_preview_inputs = request.inputs;
+                let extra_watch_paths = match resolve_inputs(&convert)
+                    .and_then(|resolved| view::discover_watch_paths(&resolved.files))
+                {
                     Ok(paths) => paths,
                     Err(err) => {
                         eprintln!("Resource watch discovery warning: {err:#}");
@@ -2578,6 +3287,18 @@ mod tests {
         html.matches("class=\"callout callout-").count()
     }
 
+    fn test_args(inputs: Vec<PathBuf>, directories: Vec<PathBuf>) -> CliArgs {
+        CliArgs {
+            inputs,
+            directories,
+            output: None,
+            title: None,
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+        }
+    }
+
     #[test]
     fn parse_icon_arg_validates_and_uppercases() {
         assert_eq!(parse_icon_arg("ab").unwrap(), "AB");
@@ -2590,15 +3311,9 @@ mod tests {
 
     #[test]
     fn default_icon_label_from_path_rules() {
-        assert_eq!(
-            default_icon_label_from_path(Path::new("readme.md")),
-            "RE"
-        );
+        assert_eq!(default_icon_label_from_path(Path::new("readme.md")), "RE");
         assert_eq!(default_icon_label_from_path(Path::new("a.md")), "AA");
-        assert_eq!(
-            default_icon_label_from_path(Path::new("my-doc.md")),
-            "MY"
-        );
+        assert_eq!(default_icon_label_from_path(Path::new("my-doc.md")), "MY");
         assert_eq!(default_icon_label_from_path(Path::new("笔记.md")), "PG");
     }
 
@@ -2609,6 +3324,7 @@ mod tests {
             &[RenderedSection {
                 title: String::new(),
                 html: "<p>x</p>".to_string(),
+                outline: Vec::new(),
             }],
             "ab",
         );
@@ -2616,6 +3332,97 @@ mod tests {
         assert!(html.contains("data:image/svg+xml,"));
         assert!(html.contains("AB</text>") || html.contains("AB%3C/text"));
         assert!(html.contains("rx='7'") || html.contains("rx=%277%27"));
+    }
+
+    #[test]
+    fn directory_inputs_collect_markdown_and_dedup_files() {
+        let dir = temp_test_dir("dir-inputs");
+        let nested = dir.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let first = dir.join("a.md");
+        let second = nested.join("b.markdown");
+        let ignored = nested.join("c.txt");
+        std::fs::write(&first, "# A").unwrap();
+        std::fs::write(&second, "# B").unwrap();
+        std::fs::write(&ignored, "# C").unwrap();
+
+        let args = test_args(vec![first.clone()], vec![dir.clone(), dir.clone()]);
+        let resolved = resolve_inputs(&args).unwrap();
+
+        assert_eq!(resolved.files.len(), 2);
+        assert!(resolved.files.iter().any(|path| path.ends_with("a.md")));
+        assert!(resolved
+            .files
+            .iter()
+            .any(|path| path.ends_with("b.markdown")));
+        assert!(!resolved.files.iter().any(|path| path.ends_with("c.txt")));
+        assert_eq!(resolved.directories.len(), 1);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn multi_file_html_includes_standalone_sidebar() {
+        let html = build_html_with_nav(
+            "Title",
+            &[
+                RenderedSection {
+                    title: "A".to_string(),
+                    html: "<h1>A</h1>".to_string(),
+                    outline: vec![HeadingOutline {
+                        level: 1,
+                        id: "a".to_string(),
+                        text: "A".to_string(),
+                    }],
+                },
+                RenderedSection {
+                    title: "B".to_string(),
+                    html: "<h1>B</h1>".to_string(),
+                    outline: vec![HeadingOutline {
+                        level: 1,
+                        id: "b".to_string(),
+                        text: "B".to_string(),
+                    }],
+                },
+            ],
+            "PG",
+            Some(&["a.md".to_string(), "b.md".to_string()]),
+        );
+
+        assert!(html.contains("data-doc-workspace"));
+        assert!(html.contains("class=\"doc-sidebar doc-pane\""));
+        assert!(html.contains("data-doc-target=\"doc-1\""));
+        assert!(html.contains("data-doc-panel"));
+        assert!(html.contains("class=\"doc-outline"));
+        assert!(html.contains("data-heading-target=\"a\""));
+        assert!(html.contains("PageMDActivateDocumentFromHash"));
+    }
+
+    #[test]
+    fn duplicate_heading_ids_are_unique_for_outline_links() {
+        let ss = SyntaxSet::load_defaults_newlines();
+        let ts = ThemeSet::load_defaults();
+        let section = render_markdown(
+            "# Repeat\n\n## Repeat\n\n# Repeat\n",
+            Path::new("."),
+            16.0,
+            "",
+            &ss,
+            &ts,
+        )
+        .unwrap();
+
+        assert!(section.html.contains("id=\"repeat\""));
+        assert!(section.html.contains("id=\"repeat-2\""));
+        assert!(section.html.contains("id=\"repeat-3\""));
+        assert_eq!(
+            section
+                .outline
+                .iter()
+                .map(|heading| heading.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["repeat", "repeat-2", "repeat-3"]
+        );
     }
 
     #[test]
@@ -2629,7 +3436,11 @@ mod tests {
             let (bg, fg) = icon_colors(label);
             let bg_l = relative_luminance(bg);
             let fg_l = relative_luminance(fg);
-            let (hi, lo) = if bg_l > fg_l { (bg_l, fg_l) } else { (fg_l, bg_l) };
+            let (hi, lo) = if bg_l > fg_l {
+                (bg_l, fg_l)
+            } else {
+                (fg_l, bg_l)
+            };
             let ratio = contrast_ratio(hi, lo);
             assert!(
                 ratio >= 4.5,
