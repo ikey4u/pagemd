@@ -13,7 +13,9 @@ use typst_as_lib::{
 };
 use typst_svg::{svg, svg_merged};
 
-pub use embed::{bundled_package_resolver, bundled_specs, PAGEMD_LONG_ABOUT};
+#[cfg(test)]
+pub use embed::bundled_specs;
+pub use embed::{bundled_package_resolver, PAGEMD_LONG_ABOUT};
 
 fn typst_font_options() -> TypstKitFontOptions {
     TypstKitFontOptions::default()

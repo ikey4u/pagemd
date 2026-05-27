@@ -332,6 +332,32 @@ fn plantuml_error_html(code: &str) -> String {
     )
 }
 
+fn is_diagram_html_info(info: &str) -> bool {
+    let mut parts = info.split_whitespace();
+    let Some(kind) = parts.next() else {
+        return false;
+    };
+
+    if matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "diagram-html" | "diagram_html"
+    ) {
+        return true;
+    }
+
+    kind.eq_ignore_ascii_case("diagram")
+        && parts
+            .next()
+            .is_some_and(|format| format.eq_ignore_ascii_case("html"))
+}
+
+fn render_diagram_html(code: &str, base_dir: &Path) -> String {
+    let body = inline_raw_html_resources(code.trim(), base_dir);
+    format!(
+        "<div class=\"diagram-html-display\"><div class=\"diagram-html-canvas\">{body}</div></div>\n"
+    )
+}
+
 fn canonical_callout_kind(kind: &str) -> Option<&'static str> {
     match kind.trim().to_ascii_lowercase().as_str() {
         "note" => Some("note"),
@@ -1042,6 +1068,11 @@ fn render_markdown_with_depth(
                     let buf_str = buf.clone();
                     ctx = Context::Normal;
                     match lang_str.as_str() {
+                        "diagram" | "diagram-html" | "diagram_html"
+                            if is_diagram_html_info(&lang_info) =>
+                        {
+                            html.push_str(&render_diagram_html(&buf_str, base_dir));
+                        }
                         "math" | "latex" => {
                             match latex_to_svg(buf_str.trim(), true, math_font_size, font_dir) {
                                 Ok(svg) => {
@@ -1937,6 +1968,21 @@ fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) 
     build_html_with_nav(title, body_sections, icon_label, None)
 }
 
+const DIAGRAM_HTML_MARKER: &str = "class=\"diagram-html-display\"";
+const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/diagram-html-tailwind-browser.js"
+));
+
+fn diagram_html_tailwind_browser_js() -> &'static str {
+    std::str::from_utf8(DIAGRAM_HTML_TAILWIND_BROWSER_JS)
+        .expect("bundled diagram Tailwind browser runtime must be UTF-8")
+}
+
+fn script_escape(script: &str) -> String {
+    script.replace("</script", "<\\/script")
+}
+
 fn build_html_with_nav(
     title: &str,
     body_sections: &[RenderedSection],
@@ -2005,6 +2051,17 @@ fn build_html_with_nav(
     } else {
         "container"
     };
+    let diagram_script = if body_sections
+        .iter()
+        .any(|section| section.html.contains(DIAGRAM_HTML_MARKER))
+    {
+        format!(
+            "<script>\n{}\n</script>\n",
+            script_escape(diagram_html_tailwind_browser_js())
+        )
+    } else {
+        String::new()
+    };
 
     format!(
         r#"<!DOCTYPE html>
@@ -2017,6 +2074,7 @@ fn build_html_with_nav(
 <style>
 {css}
 </style>
+{diagram_script}
 </head>
 <body>
 <div class="{container_class}">
@@ -2029,6 +2087,7 @@ fn build_html_with_nav(
         title = html_escape(title),
         favicon = favicon_link_tag(icon_label),
         css = CSS,
+        diagram_script = diagram_script,
         layout_open = layout_open,
         nav_html = nav_html,
         body_html = body_html,
@@ -2962,6 +3021,23 @@ img {
   background: #450a0a;
 }
 
+.diagram-html-display {
+  margin: 1.5rem 0;
+  overflow-x: auto;
+}
+
+.diagram-html-canvas {
+  min-width: 0;
+  width: 100%;
+  padding: 0.25rem 0;
+}
+
+.diagram-html-canvas svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 .footnote {
   font-size: 0.875rem;
   color: var(--color-muted);
@@ -3283,6 +3359,10 @@ mod tests {
         html.matches("class=\"typst-display\"").count()
     }
 
+    fn diagram_html_count(html: &str) -> usize {
+        html.matches("class=\"diagram-html-display\"").count()
+    }
+
     fn callout_count(html: &str) -> usize {
         html.matches("class=\"callout callout-").count()
     }
@@ -3511,6 +3591,30 @@ mod tests {
         assert_eq!(typst_count(&html), 1);
         assert!(html.contains("<svg") || html.contains("Typst render failed"));
         assert!(!html.contains("language-typst"));
+    }
+
+    #[test]
+    fn diagram_html_code_block_renders_raw_html() {
+        let html = render_html(
+            "```diagram html\n<div class=\"rounded-xl bg-sky-50 p-4\">Graph node</div>\n```\n",
+        );
+        assert_eq!(diagram_html_count(&html), 1);
+        assert!(html.contains("rounded-xl bg-sky-50 p-4"));
+        assert!(html.contains("Graph node"));
+        assert!(!html.contains("language-diagram"));
+    }
+
+    #[test]
+    fn diagram_html_tailwind_browser_runtime_is_embedded_when_needed() {
+        let section = RenderedSection {
+            title: String::new(),
+            html: render_html("```diagram html\n<div class=\"rounded-xl\">Node</div>\n```\n"),
+            outline: Vec::new(),
+        };
+        let html = build_html("Title", &[section], "PG");
+        assert!(html.contains("<script>"));
+        assert!(html.contains("tailwind"));
+        assert!(html.contains("diagram-html-display"));
     }
 
     #[test]
