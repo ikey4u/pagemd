@@ -25,6 +25,32 @@ Usage:
 
 Use `pagemd view --help` for live preview with hot reload.
 
+HTML diagram embedding
+──────────────────────
+
+Embed styled HTML/SVG diagrams in the output: use a Markdown fenced code block \
+with language info \"diagram html\".
+
+Example:
+
+  ```diagram html
+  <div class=\"rounded-3xl border border-slate-200 bg-white p-6\">
+    <svg viewBox=\"0 0 640 240\" class=\"w-full\" role=\"img\" aria-label=\"Architecture\">
+      <!-- Draw nodes, connectors, and labels here. -->
+    </svg>
+  </div>
+  ```
+
+`diagram html` blocks are inserted as raw HTML inside a diagram container. Local and \
+remote resources referenced by common HTML attributes or CSS url(...) values are \
+inlined when possible, like other raw HTML resources in PageMD.
+
+Tailwind utility classes are supported by an embedded Tailwind browser runtime. \
+The runtime is fetched at PageMD build time by build.rs, embedded into the pagemd \
+binary with include_bytes!, and emitted into generated HTML only when a document \
+contains a `diagram html` block. The released pagemd binary does not call the \
+Tailwind CLI, npx, or any other external tool at render time.
+
 Typst embedding
 ───────────────
 
