@@ -2164,9 +2164,12 @@ const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
       return current;
     }
     var target = id ? document.getElementById(id) : null;
-    return target
-      ? (target.matches("[data-doc-panel]") ? target : target.closest("[data-doc-panel]"))
-      : panels[0];
+    if (target) {
+      return target.matches("[data-doc-panel]") ? target : target.closest("[data-doc-panel]");
+    }
+    var storedId = storageGet("activeDoc");
+    var stored = storedId ? document.getElementById(storedId) : null;
+    return stored && stored.matches("[data-doc-panel]") ? stored : panels[0];
   }
   function activePanelFromHash() {
     return panelForId((window.location.hash || "").replace(/^#/, ""));
@@ -2186,6 +2189,7 @@ const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
     outlines.forEach(function (outline) {
       outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
     });
+    storageSet("activeDoc", activePanel.id);
     updateOutlineActive();
   }
   function updateOutlineActive() {
@@ -2301,7 +2305,12 @@ const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
       ? event.target.closest("[data-doc-target]")
       : null;
     if (navLink) {
-      activate(navLink.getAttribute("data-doc-target"));
+      event.preventDefault();
+      var docId = navLink.getAttribute("data-doc-target");
+      if (docId) {
+        history.pushState(null, "", "#" + docId);
+        activate(docId);
+      }
       return;
     }
     var headingLink = event.target && event.target.closest
@@ -3606,6 +3615,7 @@ mod tests {
         assert!(html.contains("data-copy-label=\"a.md\""));
         assert!(html.contains("navigator.clipboard"));
         assert!(html.contains("fallbackCopyText"));
+        assert!(html.contains("activeDoc"));
         assert!(html.contains("data-doc-panel"));
         assert!(html.contains("class=\"doc-outline"));
         assert!(html.contains("data-heading-target=\"a\""));

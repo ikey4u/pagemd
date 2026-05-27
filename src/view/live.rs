@@ -60,9 +60,12 @@ const LIVE_RELOAD_SCRIPT: &str = r##"<script>
       return current;
     }
     const target = id ? document.getElementById(id) : null;
-    return target
-      ? (target.matches("[data-doc-panel]") ? target : target.closest("[data-doc-panel]"))
-      : panels[0];
+    if (target) {
+      return target.matches("[data-doc-panel]") ? target : target.closest("[data-doc-panel]");
+    }
+    const storedId = storageGet("activeDoc");
+    const stored = storedId ? document.getElementById(storedId) : null;
+    return stored && stored.matches("[data-doc-panel]") ? stored : panels[0];
   }
   function activePanelFromHash() {
     return panelForId((window.location.hash || "").replace(/^#/, ""));
@@ -85,6 +88,7 @@ const LIVE_RELOAD_SCRIPT: &str = r##"<script>
     outlines.forEach(function (outline) {
       outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
     });
+    storageSet("activeDoc", activePanel.id);
     updateOutlineActive();
   }
   function updateOutlineActive() {
@@ -126,6 +130,7 @@ const LIVE_RELOAD_SCRIPT: &str = r##"<script>
     outlines.forEach(function (outline) {
       outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
     });
+    storageSet("activeDoc", activePanel.id);
   }
   function scrollToHeading(id, panelId) {
     const activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
@@ -159,13 +164,23 @@ const LIVE_RELOAD_SCRIPT: &str = r##"<script>
   if (!window.PageMDLiveNavInstalled) {
     window.PageMDLiveNavInstalled = true;
     document.addEventListener("click", function (event) {
+      if (event.defaultPrevented) {
+        return;
+      }
       const link = event.target && event.target.closest
         ? event.target.closest("[data-doc-target]")
         : null;
       if (!link) {
         return;
       }
-      activateDocumentFromHash();
+      event.preventDefault();
+      const docId = link.getAttribute("data-doc-target");
+      const panel = docId ? panelForId(docId) : null;
+      if (docId && panel) {
+        history.pushState(null, "", "#" + docId);
+        activatePanel(panel);
+        updateOutlineActive();
+      }
     });
     document.addEventListener("click", function (event) {
       if (event.defaultPrevented) {
