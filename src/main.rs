@@ -2204,14 +2204,21 @@ const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
       link.classList.toggle("is-active", !!current && link.getAttribute("data-heading-target") === current.id);
     });
   }
-  function scrollToHeading(id) {
-    var activePanel = activePanelFromHash();
-    if (!activePanel || !window.CSS || !CSS.escape) return false;
-    var target = activePanel.querySelector("#" + CSS.escape(id));
+  function cssEscape(value) {
+    if (window.CSS && CSS.escape) {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  function scrollToHeading(id, panelId) {
+    var activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
+    if (!activePanel) return false;
+    var target = activePanel.querySelector("#" + cssEscape(id));
     if (!target) return false;
+    activate(activePanel.id);
     target.scrollIntoView({ behavior: "smooth", block: "start" });
     history.replaceState(null, "", "#" + id);
-    activate(id);
     updateOutlineActive();
     return true;
   }
@@ -2302,7 +2309,9 @@ const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
       : null;
     if (headingLink) {
       event.preventDefault();
-      scrollToHeading(headingLink.getAttribute("data-heading-target"));
+      var outline = headingLink.closest("[data-outline-for]");
+      var panelId = outline ? outline.getAttribute("data-outline-for") : null;
+      scrollToHeading(headingLink.getAttribute("data-heading-target"), panelId);
       return;
     }
   });

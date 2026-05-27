@@ -107,18 +107,38 @@ const LIVE_RELOAD_SCRIPT: &str = r##"<script>
       link.classList.toggle("is-active", !!current && link.getAttribute("data-heading-target") === current.id);
     });
   }
-  function scrollToHeading(id) {
-    const activePanel = activePanelFromHash();
-    if (!activePanel || !window.CSS || !CSS.escape) {
+  function cssEscape(value) {
+    if (window.CSS && CSS.escape) {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+  function activatePanel(activePanel) {
+    const panels = document.querySelectorAll("[data-doc-panel]");
+    const links = document.querySelectorAll("[data-doc-target]");
+    const outlines = document.querySelectorAll("[data-outline-for]");
+    panels.forEach(function (panel) {
+      panel.classList.toggle("is-active", panel === activePanel);
+    });
+    links.forEach(function (link) {
+      link.classList.toggle("is-active", link.getAttribute("data-doc-target") === activePanel.id);
+    });
+    outlines.forEach(function (outline) {
+      outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
+    });
+  }
+  function scrollToHeading(id, panelId) {
+    const activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
+    if (!activePanel) {
       return false;
     }
-    const target = activePanel.querySelector("#" + CSS.escape(id));
+    const target = activePanel.querySelector("#" + cssEscape(id));
     if (!target) {
       return false;
     }
+    activatePanel(activePanel);
     target.scrollIntoView({ behavior: "smooth", block: "start" });
     history.replaceState(null, "", "#" + id);
-    activateDocumentFromHash();
     updateOutlineActive();
     return true;
   }
@@ -156,7 +176,9 @@ const LIVE_RELOAD_SCRIPT: &str = r##"<script>
         : null;
       if (headingLink) {
         event.preventDefault();
-        scrollToHeading(headingLink.getAttribute("data-heading-target"));
+        const outline = headingLink.closest("[data-outline-for]");
+        const panelId = outline ? outline.getAttribute("data-outline-for") : null;
+        scrollToHeading(headingLink.getAttribute("data-heading-target"), panelId);
         return;
       }
       const workspace = document.querySelector("[data-doc-workspace]");
