@@ -2023,12 +2023,15 @@ fn build_html_with_nav(
                         }
                     });
                 let active = if index == 0 { " is-active" } else { "" };
+                let escaped_label = html_escape(&label);
                 format!(
-                    "<a class=\"doc-nav-link{active}\" href=\"#doc-{}\" data-doc-target=\"doc-{}\" title=\"{}\">{}</a>\n",
+                    "<div class=\"doc-nav-row\"><a class=\"doc-nav-link{active}\" href=\"#doc-{}\" data-doc-target=\"doc-{}\" title=\"{}\"><span class=\"doc-nav-label\">{}</span></a><button type=\"button\" class=\"doc-nav-copy\" data-copy-label=\"{}\" aria-label=\"Copy filename {}\" title=\"Copy filename\">Copy</button></div>\n",
                     index + 1,
                     index + 1,
-                    html_escape(&label),
-                    html_escape(&label)
+                    escaped_label,
+                    escaped_label,
+                    escaped_label,
+                    escaped_label
                 )
             })
             .collect();
@@ -2232,7 +2235,61 @@ const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
     });
   }
 
+  function fallbackCopyText(text) {
+    var textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    var ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (_) {
+      ok = false;
+    }
+    textarea.remove();
+    return ok;
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text)
+        .then(function () { return true; })
+        .catch(function () { return fallbackCopyText(text); });
+    }
+    return Promise.resolve(fallbackCopyText(text));
+  }
+
+  function markCopyButton(button, ok) {
+    var original = button.getAttribute("data-copy-original") || button.textContent;
+    button.setAttribute("data-copy-original", original);
+    button.classList.toggle("is-copied", ok);
+    button.classList.toggle("is-copy-failed", !ok);
+    button.textContent = ok ? "Copied" : "Failed";
+    window.setTimeout(function () {
+      button.classList.remove("is-copied", "is-copy-failed");
+      button.textContent = original;
+    }, 1400);
+  }
+
   document.addEventListener("click", function (event) {
+    var copyButton = event.target && event.target.closest
+      ? event.target.closest("[data-copy-label]")
+      : null;
+    if (copyButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      var label = copyButton.getAttribute("data-copy-label") || "";
+      copyText(label).then(function (ok) {
+        markCopyButton(copyButton, ok);
+      });
+      return;
+    }
+
     var navLink = event.target && event.target.closest
       ? event.target.closest("[data-doc-target]")
       : null;
@@ -2419,19 +2476,30 @@ body {
   gap: 0.08rem;
 }
 
+.doc-nav-row {
+  position: relative;
+}
+
 .doc-nav-link {
   position: relative;
-  display: block;
+  display: flex;
+  align-items: center;
   overflow: hidden;
-  padding: 0.38rem 0.55rem 0.38rem 0.72rem;
+  min-width: 0;
+  padding: 0.38rem 2.8rem 0.38rem 0.72rem;
   border-radius: 8px;
   color: #475569;
   font-size: 0.78rem;
   font-weight: 500;
   line-height: 1.25;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.doc-nav-label {
+  overflow: hidden;
+  min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .doc-nav-link::before {
@@ -2446,7 +2514,8 @@ body {
   transition: background 120ms ease;
 }
 
-.doc-nav-link:hover {
+.doc-nav-link:hover,
+.doc-nav-row:hover .doc-nav-link {
   background: #f1f5f9;
   color: #0f172a;
   text-decoration: none;
@@ -2461,6 +2530,57 @@ body {
 
 .doc-nav-link.is-active::before {
   background: #2563eb;
+}
+
+.doc-nav-copy {
+  position: absolute;
+  top: 50%;
+  right: 0.35rem;
+  transform: translateY(-50%);
+  z-index: 1;
+  max-width: 2.25rem;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #64748b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  padding: 0.22rem 0.34rem;
+  text-overflow: clip;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+  white-space: nowrap;
+}
+
+.doc-nav-row:hover .doc-nav-copy,
+.doc-nav-copy:focus-visible,
+.doc-nav-copy.is-copied,
+.doc-nav-copy.is-copy-failed {
+  opacity: 1;
+}
+
+.doc-nav-copy:hover,
+.doc-nav-copy:focus-visible {
+  border-color: #bfdbfe;
+  background: #ffffff;
+  color: #1d4ed8;
+  outline: none;
+}
+
+.doc-nav-copy.is-copied {
+  max-width: none;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.doc-nav-copy.is-copy-failed {
+  max-width: none;
+  border-color: #fecaca;
+  color: #b91c1c;
 }
 
 .doc-resizer {
@@ -3472,6 +3592,11 @@ mod tests {
         assert!(html.contains("data-doc-workspace"));
         assert!(html.contains("class=\"doc-sidebar doc-pane\""));
         assert!(html.contains("data-doc-target=\"doc-1\""));
+        assert!(html.contains("class=\"doc-nav-label\""));
+        assert!(html.contains("class=\"doc-nav-copy\""));
+        assert!(html.contains("data-copy-label=\"a.md\""));
+        assert!(html.contains("navigator.clipboard"));
+        assert!(html.contains("fallbackCopyText"));
         assert!(html.contains("data-doc-panel"));
         assert!(html.contains("class=\"doc-outline"));
         assert!(html.contains("data-heading-target=\"a\""));
