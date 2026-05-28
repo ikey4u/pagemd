@@ -475,6 +475,18 @@ fn internal_callout_fence(kind: &str, title: &str, content: &str) -> String {
     out
 }
 
+fn internal_math_fence(content: &str) -> String {
+    let fence = "`".repeat(max_backtick_run(content).max(3) + 1);
+    let mut out = format!("{fence}math\n");
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
 fn preprocess_markdown_extensions(source: &str) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let mut out = String::new();
@@ -500,6 +512,40 @@ fn preprocess_markdown_extensions(source: &str) -> String {
         }
 
         let trimmed = lines[i].trim_start();
+        if trimmed.starts_with("$$") {
+            let math_start = trimmed.trim_end();
+            if math_start.len() >= 4 && math_start.ends_with("$$") {
+                let inner = math_start[2..math_start.len() - 2].trim();
+                if !inner.is_empty() && !inner.contains("$$") {
+                    out.push_str(&internal_math_fence(inner));
+                    i += 1;
+                    continue;
+                }
+            } else if math_start == "$$" {
+                let start_i = i;
+                i += 1;
+                let mut content = String::new();
+                while i < lines.len() && lines[i].trim() != "$$" {
+                    content.push_str(lines[i]);
+                    content.push('\n');
+                    i += 1;
+                }
+                let found_closing = i < lines.len() && lines[i].trim() == "$$";
+                if found_closing && !content.trim().is_empty() {
+                    i += 1;
+                    out.push_str(&internal_math_fence(content.trim()));
+                    continue;
+                }
+                let end_i = if found_closing { i + 1 } else { i };
+                for line in &lines[start_i..end_i] {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                i = end_i;
+                continue;
+            }
+        }
+
         if let Some(rest) = trimmed.strip_prefix(":::") {
             if let Some((kind, title)) = parse_admonition_info(rest) {
                 i += 1;
@@ -3708,6 +3754,34 @@ mod tests {
         assert_eq!(math_inline_count(&html), 2);
         assert_eq!(html.matches("class=\"math-display\"").count(), 1);
         assert!(html.contains("<strong><span class=\"math-inline\">"));
+    }
+
+    #[test]
+    fn display_math_with_text_commands_renders() {
+        let html = render_html("$$\n\\text{score}(w_1 \\cdots w_n) = \\sum_i \\bigl[\\log P(w_i) + \\lambda \\cdot \\log P(w_i \\mid w_{i-1}) + \\text{WORD\\_PENALTY}\\bigr]\n$$");
+        assert_eq!(html.matches("class=\"math-display\"").count(), 1);
+    }
+
+    #[test]
+    fn display_math_renders_inside_chinese_section() {
+        let html = render_html(
+            r#"#### 示例小节
+
+这是一段包含中文上下文的说明：
+
+$$
+\text{label}(x_1 \cdots x_n) = \sum_i \bigl[x_i + \text{TOKEN\_VALUE}\bigr]
+$$
+
+**说明**：这里包含后续加粗文本和 `inline-code`。
+
+**下一步**：继续普通 Markdown 内容。
+"#,
+        );
+        assert_eq!(html.matches("class=\"math-display\"").count(), 1);
+        assert!(html.contains("<h4"));
+        assert!(html.contains("<strong>说明</strong>"));
+        assert!(html.contains("<code>inline-code</code>"));
     }
 
     #[test]
