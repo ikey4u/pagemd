@@ -360,6 +360,7 @@ fn write_export_if_configured(path: Option<&std::path::Path>, html: &str) -> Res
                 .with_context(|| format!("Cannot create {}", parent.display()))?;
         }
     }
+    let html = live::ensure_export_html(html.to_string());
     fs::write(path, html.as_bytes())
         .with_context(|| format!("Cannot export {}", path.display()))?;
     eprintln!("Exported -> {}", path.display());

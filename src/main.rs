@@ -2011,7 +2011,7 @@ fn build_outline_nav(body_sections: &[RenderedSection]) -> String {
 }
 
 fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) -> String {
-    build_html_with_nav(title, body_sections, icon_label, None)
+    build_html_with_nav(title, body_sections, icon_label, None, true)
 }
 
 const DIAGRAM_HTML_MARKER: &str = "class=\"diagram-html-display\"";
@@ -2029,30 +2029,19 @@ fn script_escape(script: &str) -> String {
     script.replace("</script", "<\\/script")
 }
 
-fn build_html_with_nav(
-    title: &str,
+fn build_workspace_layout(
     body_sections: &[RenderedSection],
-    icon_label: &str,
     nav_labels: Option<&[String]>,
-) -> String {
-    let use_sidebar = body_sections.len() > 1;
-    let body_html: String = if !use_sidebar {
-        body_sections[0].html.clone()
+    use_file_sidebar: bool,
+    embed_workspace_script: bool,
+) -> (String, String, String, String) {
+    let outline_nav = build_outline_nav(body_sections);
+    let workspace_class = if use_file_sidebar {
+        "doc-workspace outline-hidden"
     } else {
-        body_sections
-            .iter()
-            .enumerate()
-            .map(|(index, sec)| {
-                let active = if index == 0 { " is-active" } else { "" };
-                format!(
-                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel>\n{}</section>\n",
-                    index + 1,
-                    sec.html
-                )
-            })
-            .collect()
+        "doc-workspace doc-workspace-single outline-hidden"
     };
-    let (layout_open, layout_close, nav_html, script_html) = if use_sidebar {
+    let file_sidebar = if use_file_sidebar {
         let nav_items: String = body_sections
             .iter()
             .enumerate()
@@ -2081,21 +2070,73 @@ fn build_html_with_nav(
                 )
             })
             .collect();
-        let outline_nav = build_outline_nav(body_sections);
-        (
-            "<div class=\"doc-workspace outline-hidden\" data-doc-workspace>\n".to_string(),
-            "</div>\n".to_string(),
-            format!(
-                "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\"><nav class=\"doc-nav\">\n{nav_items}</nav>\n</aside>\n<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n<main class=\"doc-main\">\n<button type=\"button\" class=\"doc-outline-toggle\" data-outline-toggle>Outline</button>\n"
-            ),
-            format!(
-                "</main>\n<div class=\"doc-resizer doc-resizer-right\" role=\"separator\" aria-label=\"Resize outline\" data-resizer=\"right\"></div>\n<aside class=\"doc-outline doc-pane\" aria-label=\"Markdown outline\">\n<div class=\"doc-pane-header\">Outline</div>\n{outline_nav}</aside>\n<script>\n{DOC_WORKSPACE_SCRIPT}\n</script>\n"
-            ),
+        format!(
+            "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\"><nav class=\"doc-nav\">\n{nav_items}</nav>\n</aside>\n<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n"
+        )
+    } else {
+        String::new()
+    };
+    let workspace_script = if embed_workspace_script {
+        view::workspace_script_tag()
+    } else {
+        String::new()
+    };
+    (
+        format!("<div class=\"{workspace_class}\" data-doc-workspace>\n"),
+        "</div>\n".to_string(),
+        format!(
+            "{file_sidebar}<main class=\"doc-main\">\n<button type=\"button\" class=\"doc-outline-toggle\" data-outline-toggle>Outline</button>\n"
+        ),
+        format!(
+            "</main>\n<div class=\"doc-resizer doc-resizer-right\" role=\"separator\" aria-label=\"Resize outline\" data-resizer=\"right\"></div>\n<aside class=\"doc-outline doc-pane\" aria-label=\"Markdown outline\">\n<div class=\"doc-pane-header\">Outline</div>\n{outline_nav}</aside>\n{workspace_script}"
+        ),
+    )
+}
+
+fn build_html_with_nav(
+    title: &str,
+    body_sections: &[RenderedSection],
+    icon_label: &str,
+    nav_labels: Option<&[String]>,
+    embed_workspace_script: bool,
+) -> String {
+    let use_file_sidebar = body_sections.len() > 1;
+    let use_outline_workspace = use_file_sidebar
+        || body_sections
+            .first()
+            .is_some_and(|section| !section.outline.is_empty());
+    let body_html: String = if use_file_sidebar {
+        body_sections
+            .iter()
+            .enumerate()
+            .map(|(index, sec)| {
+                let active = if index == 0 { " is-active" } else { "" };
+                format!(
+                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel>\n{}</section>\n",
+                    index + 1,
+                    sec.html
+                )
+            })
+            .collect()
+    } else if use_outline_workspace {
+        format!(
+            "<section class=\"doc-section doc-panel is-active\" id=\"doc-1\" data-doc-panel>\n{}</section>\n",
+            body_sections[0].html
+        )
+    } else {
+        body_sections[0].html.clone()
+    };
+    let (layout_open, layout_close, nav_html, script_html) = if use_outline_workspace {
+        build_workspace_layout(
+            body_sections,
+            nav_labels,
+            use_file_sidebar,
+            embed_workspace_script,
         )
     } else {
         (String::new(), String::new(), String::new(), String::new())
     };
-    let container_class = if use_sidebar {
+    let container_class = if use_outline_workspace {
         "container container-with-sidebar"
     } else {
         "container"
@@ -2145,264 +2186,6 @@ fn build_html_with_nav(
         container_class = container_class,
     )
 }
-
-const DOC_WORKSPACE_SCRIPT: &str = r##"(function () {
-  var workspace = document.querySelector("[data-doc-workspace]");
-  if (!workspace) return;
-
-  var storageKey = "pagemd.workspace.v1.";
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
-  function storageGet(name) {
-    try {
-      return window.localStorage ? localStorage.getItem(storageKey + name) : null;
-    } catch (_) {
-      return null;
-    }
-  }
-  function storageSet(name, value) {
-    try {
-      if (window.localStorage) localStorage.setItem(storageKey + name, value);
-    } catch (_) {}
-  }
-  function leftWidthBounds() {
-    if (window.matchMedia("(min-width: 1600px)").matches) {
-      return { min: 220, fallback: 280, max: 460 };
-    }
-    if (window.matchMedia("(min-width: 1200px)").matches) {
-      return { min: 200, fallback: 240, max: 420 };
-    }
-    if (window.matchMedia("(min-width: 900px)").matches) {
-      return { min: 170, fallback: 210, max: 340 };
-    }
-    return { min: 150, fallback: 180, max: 280 };
-  }
-  function rightWidthBounds() {
-    if (window.matchMedia("(min-width: 1400px)").matches) {
-      return { min: 240, fallback: 300, max: 440 };
-    }
-    return { min: 210, fallback: 260, max: 360 };
-  }
-  function loadNumber(name, fallback) {
-    var raw = storageGet(name);
-    var value = raw ? Number(raw) : NaN;
-    return Number.isFinite(value) ? value : fallback;
-  }
-  function setWidth(name, value) {
-    var rounded = Math.round(value);
-    workspace.style.setProperty("--" + name, rounded + "px");
-    storageSet(name, String(rounded));
-  }
-  function setOutlineVisible(visible) {
-    workspace.classList.toggle("outline-hidden", !visible);
-    storageSet("outlineVisible", visible ? "1" : "0");
-    var toggle = document.querySelector("[data-outline-toggle]");
-    if (toggle) {
-      toggle.setAttribute("aria-expanded", visible ? "true" : "false");
-      toggle.textContent = visible ? "Hide outline" : "Outline";
-    }
-  }
-  function panelForId(id) {
-    var panels = document.querySelectorAll("[data-doc-panel]");
-    var current = document.querySelector("[data-doc-panel].is-active");
-    if (id && current && window.CSS && CSS.escape && current.querySelector("#" + CSS.escape(id))) {
-      return current;
-    }
-    var target = id ? document.getElementById(id) : null;
-    if (target) {
-      return target.matches("[data-doc-panel]") ? target : target.closest("[data-doc-panel]");
-    }
-    var storedId = storageGet("activeDoc");
-    var stored = storedId ? document.getElementById(storedId) : null;
-    return stored && stored.matches("[data-doc-panel]") ? stored : panels[0];
-  }
-  function activePanelFromHash() {
-    return panelForId((window.location.hash || "").replace(/^#/, ""));
-  }
-  function activate(id) {
-    var panels = document.querySelectorAll("[data-doc-panel]");
-    var links = document.querySelectorAll("[data-doc-target]");
-    var outlines = document.querySelectorAll("[data-outline-for]");
-    var activePanel = id ? panelForId(id) : activePanelFromHash();
-    if (!activePanel) return;
-    panels.forEach(function (panel) {
-      panel.classList.toggle("is-active", panel === activePanel);
-    });
-    links.forEach(function (link) {
-      link.classList.toggle("is-active", link.getAttribute("data-doc-target") === activePanel.id);
-    });
-    outlines.forEach(function (outline) {
-      outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
-    });
-    storageSet("activeDoc", activePanel.id);
-    updateOutlineActive();
-  }
-  function updateOutlineActive() {
-    var activePanel = document.querySelector("[data-doc-panel].is-active");
-    if (!activePanel) return;
-    var headings = activePanel.querySelectorAll("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]");
-    var current = headings[0] || null;
-    headings.forEach(function (heading) {
-      if (heading.getBoundingClientRect().top <= 140) {
-        current = heading;
-      }
-    });
-    var outline = document.querySelector('[data-outline-for="' + activePanel.id + '"]');
-    if (!outline) return;
-    outline.querySelectorAll("[data-heading-target]").forEach(function (link) {
-      link.classList.toggle("is-active", !!current && link.getAttribute("data-heading-target") === current.id);
-    });
-  }
-  function cssEscape(value) {
-    if (window.CSS && CSS.escape) {
-      return CSS.escape(value);
-    }
-    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
-  }
-
-  function scrollToHeading(id, panelId) {
-    var activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
-    if (!activePanel) return false;
-    var target = activePanel.querySelector("#" + cssEscape(id));
-    if (!target) return false;
-    activate(activePanel.id);
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    history.replaceState(null, "", "#" + id);
-    updateOutlineActive();
-    return true;
-  }
-
-  var leftBounds = leftWidthBounds();
-  var rightBounds = rightWidthBounds();
-  setWidth("leftWidth", clamp(loadNumber("leftWidth", leftBounds.fallback), leftBounds.min, leftBounds.max));
-  setWidth("rightWidth", clamp(loadNumber("rightWidth", rightBounds.fallback), rightBounds.min, rightBounds.max));
-  setOutlineVisible(storageGet("outlineVisible") === "1");
-
-  window.PageMDActivateDocumentFromHash = function () {
-    activate((window.location.hash || "").replace(/^#/, ""));
-  };
-
-  var outlineToggle = document.querySelector("[data-outline-toggle]");
-  if (outlineToggle) {
-    outlineToggle.addEventListener("click", function (event) {
-      event.preventDefault();
-      event.stopPropagation();
-      setOutlineVisible(workspace.classList.contains("outline-hidden"));
-    });
-  }
-
-  function fallbackCopyText(text) {
-    var textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.top = "-9999px";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    var ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch (_) {
-      ok = false;
-    }
-    textarea.remove();
-    return ok;
-  }
-
-  function copyText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text)
-        .then(function () { return true; })
-        .catch(function () { return fallbackCopyText(text); });
-    }
-    return Promise.resolve(fallbackCopyText(text));
-  }
-
-  function markCopyButton(button, ok) {
-    var original = button.getAttribute("data-copy-original") || button.textContent;
-    button.setAttribute("data-copy-original", original);
-    button.classList.toggle("is-copied", ok);
-    button.classList.toggle("is-copy-failed", !ok);
-    button.textContent = ok ? "Copied" : "Failed";
-    window.setTimeout(function () {
-      button.classList.remove("is-copied", "is-copy-failed");
-      button.textContent = original;
-    }, 1400);
-  }
-
-  document.addEventListener("click", function (event) {
-    var copyButton = event.target && event.target.closest
-      ? event.target.closest("[data-copy-label]")
-      : null;
-    if (copyButton) {
-      event.preventDefault();
-      event.stopPropagation();
-      var label = copyButton.getAttribute("data-copy-label") || "";
-      copyText(label).then(function (ok) {
-        markCopyButton(copyButton, ok);
-      });
-      return;
-    }
-
-    var navLink = event.target && event.target.closest
-      ? event.target.closest("[data-doc-target]")
-      : null;
-    if (navLink) {
-      event.preventDefault();
-      var docId = navLink.getAttribute("data-doc-target");
-      if (docId) {
-        history.pushState(null, "", "#" + docId);
-        activate(docId);
-      }
-      return;
-    }
-    var headingLink = event.target && event.target.closest
-      ? event.target.closest("[data-heading-target]")
-      : null;
-    if (headingLink) {
-      event.preventDefault();
-      var outline = headingLink.closest("[data-outline-for]");
-      var panelId = outline ? outline.getAttribute("data-outline-for") : null;
-      scrollToHeading(headingLink.getAttribute("data-heading-target"), panelId);
-      return;
-    }
-  });
-
-  window.addEventListener("hashchange", window.PageMDActivateDocumentFromHash);
-  window.addEventListener("scroll", updateOutlineActive, { passive: true });
-  window.PageMDActivateDocumentFromHash();
-
-  document.querySelectorAll("[data-resizer]").forEach(function (handle) {
-    handle.addEventListener("mousedown", function (event) {
-      event.preventDefault();
-      var kind = handle.getAttribute("data-resizer");
-      var startX = event.clientX;
-      var leftBounds = leftWidthBounds();
-      var rightBounds = rightWidthBounds();
-      var startLeft = clamp(loadNumber("leftWidth", leftBounds.fallback), leftBounds.min, leftBounds.max);
-      var startRight = clamp(loadNumber("rightWidth", rightBounds.fallback), rightBounds.min, rightBounds.max);
-      document.body.classList.add("doc-resizing");
-      function onMove(moveEvent) {
-        if (kind === "left") {
-          setWidth("leftWidth", clamp(startLeft + moveEvent.clientX - startX, leftBounds.min, leftBounds.max));
-        } else {
-          setWidth("rightWidth", clamp(startRight + startX - moveEvent.clientX, rightBounds.min, rightBounds.max));
-          setOutlineVisible(true);
-        }
-      }
-      function onUp() {
-        document.body.classList.remove("doc-resizing");
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      }
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    });
-  });
-})();"##;
 
 const CSS: &str = r#"
 *, *::before, *::after {
@@ -2493,6 +2276,19 @@ body {
 
 .doc-workspace.outline-hidden {
   grid-template-columns: var(--leftWidth) 8px minmax(0, 1fr) 0 0;
+}
+
+.doc-workspace-single {
+  grid-template-columns: minmax(0, 1fr) 8px var(--rightWidth);
+}
+
+.doc-workspace-single.outline-hidden {
+  grid-template-columns: minmax(0, 1fr) 0 0;
+}
+
+.doc-workspace-single .doc-sidebar,
+.doc-workspace-single .doc-resizer-left {
+  display: none;
 }
 
 .doc-pane {
@@ -3311,16 +3107,17 @@ fn prepare_render_resources(args: &CliArgs) -> Result<RenderResources> {
 fn render_document(args: &CliArgs, title_hint: Option<&Path>) -> Result<RenderedDocument> {
     let resolved = resolve_inputs(args)?;
     let resources = prepare_render_resources(args)?;
-    render_document_from_files(args, title_hint, &resources, &resolved.files)
+    render_document_from_files(args, title_hint, &resources, &resolved.files, false)
 }
 
 fn render_document_with_resources(
     args: &CliArgs,
     title_hint: Option<&Path>,
     resources: &RenderResources,
+    for_preview: bool,
 ) -> Result<RenderedDocument> {
     let resolved = resolve_inputs(args)?;
-    render_document_from_files(args, title_hint, resources, &resolved.files)
+    render_document_from_files(args, title_hint, resources, &resolved.files, for_preview)
 }
 
 fn render_document_from_files(
@@ -3328,6 +3125,7 @@ fn render_document_from_files(
     title_hint: Option<&Path>,
     resources: &RenderResources,
     input_files: &[PathBuf],
+    for_preview: bool,
 ) -> Result<RenderedDocument> {
     let mut sections: Vec<RenderedSection> = Vec::new();
     let mut nav_labels: Vec<String> = Vec::new();
@@ -3376,7 +3174,13 @@ fn render_document_from_files(
 
     let section_count = sections.len();
     let icon_label = resolve_icon_label(args, input_files);
-    let html = build_html_with_nav(&doc_title, &sections, &icon_label, Some(&nav_labels));
+    let html = build_html_with_nav(
+        &doc_title,
+        &sections,
+        &icon_label,
+        Some(&nav_labels),
+        !for_preview,
+    );
 
     Ok(RenderedDocument {
         html,
@@ -3463,6 +3267,7 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             &convert,
             title_hint.as_deref(),
             &resources,
+            true,
         ) {
             Ok(document) => {
                 let _current_preview_inputs = request.inputs;
@@ -3626,6 +3431,102 @@ mod tests {
     }
 
     #[test]
+    fn preview_html_omits_embedded_workspace_script() {
+        let html = build_html_with_nav(
+            "Title",
+            &[RenderedSection {
+                title: "Doc".to_string(),
+                html: "<h1 id=\"intro\">Intro</h1>".to_string(),
+                outline: vec![HeadingOutline {
+                    level: 1,
+                    id: "intro".to_string(),
+                    text: "Intro".to_string(),
+                }],
+            }],
+            "PG",
+            None,
+            false,
+        );
+        assert!(html.contains("data-doc-workspace"));
+        assert!(!html.contains("data-pagemd-workspace"));
+        let preview = view::wrap_for_preview(html);
+        assert!(preview.contains("data-pagemd-workspace"));
+        assert!(preview.contains("data-pagemd-live-preview"));
+    }
+
+    #[test]
+    fn export_html_restores_workspace_script_for_preview_render() {
+        let html = build_html_with_nav(
+            "Title",
+            &[RenderedSection {
+                title: "Doc".to_string(),
+                html: "<h1 id=\"intro\">Intro</h1>".to_string(),
+                outline: vec![HeadingOutline {
+                    level: 1,
+                    id: "intro".to_string(),
+                    text: "Intro".to_string(),
+                }],
+            }],
+            "PG",
+            None,
+            false,
+        );
+        let exported = view::ensure_export_html(html);
+        assert!(exported.contains("data-pagemd-workspace"));
+        assert!(!exported.contains("data-pagemd-live-preview"));
+    }
+
+    #[test]
+    fn single_file_html_includes_outline_workspace() {
+        let html = build_html(
+            "Title",
+            &[RenderedSection {
+                title: "Doc".to_string(),
+                html: "<h1 id=\"intro\">Intro</h1><h2 id=\"details\">Details</h2>".to_string(),
+                outline: vec![
+                    HeadingOutline {
+                        level: 1,
+                        id: "intro".to_string(),
+                        text: "Intro".to_string(),
+                    },
+                    HeadingOutline {
+                        level: 2,
+                        id: "details".to_string(),
+                        text: "Details".to_string(),
+                    },
+                ],
+            }],
+            "PG",
+        );
+
+        assert!(html.contains("doc-workspace-single"));
+        assert!(html.contains("data-doc-workspace"));
+        assert!(html.contains("data-pagemd-workspace"));
+        assert!(html.contains("id=\"doc-1\" data-doc-panel"));
+        assert!(html.contains("data-outline-toggle"));
+        assert!(html.contains("data-heading-target=\"intro\""));
+        assert!(html.contains("data-heading-target=\"details\""));
+        assert!(!html.contains("class=\"doc-sidebar doc-pane\""));
+    }
+
+    #[test]
+    fn single_file_without_headings_uses_plain_container() {
+        let html = build_html(
+            "Title",
+            &[RenderedSection {
+                title: String::new(),
+                html: "<p>No headings here.</p>".to_string(),
+                outline: Vec::new(),
+            }],
+            "PG",
+        );
+
+        assert!(!html.contains("data-doc-workspace"));
+        assert!(!html.contains("data-outline-toggle"));
+        assert!(html.contains("<p>No headings here.</p>"));
+    }
+
+    #[test]
     fn multi_file_html_includes_standalone_sidebar() {
         let html = build_html_with_nav(
             "Title",
@@ -3651,9 +3552,11 @@ mod tests {
             ],
             "PG",
             Some(&["a.md".to_string(), "b.md".to_string()]),
+            true,
         );
 
         assert!(html.contains("data-doc-workspace"));
+        assert!(html.contains("data-pagemd-workspace"));
         assert!(html.contains("class=\"doc-sidebar doc-pane\""));
         assert!(html.contains("data-doc-target=\"doc-1\""));
         assert!(html.contains("class=\"doc-nav-label\""));

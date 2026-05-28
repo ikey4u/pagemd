@@ -4,6 +4,7 @@ mod server;
 
 use std::path::PathBuf;
 
+pub use live::{ensure_export_html, workspace_script_tag, wrap_for_preview};
 pub use resources::{collect_initial_watch_paths, discover_watch_paths};
 pub use server::{run, RenderRequest, RenderResult};
 
