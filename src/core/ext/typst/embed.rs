@@ -13,7 +13,7 @@ use typst_as_lib::file_resolver::FileResolver;
 
 use super::package::{self, PackageSpec};
 
-const MANIFEST: &str = include_str!("../../assets/typst-packages/manifest.toml");
+const MANIFEST: &str = include_str!("../../../../assets/typst-packages/manifest.toml");
 
 /// Top-level `pagemd --help` text. Typst package ids must stay in sync with `manifest.toml`.
 pub const PAGEMD_LONG_ABOUT: &str = "\
@@ -45,8 +45,8 @@ Example:
 remote resources referenced by common HTML attributes or CSS url(...) values are \
 inlined when possible, like other raw HTML resources in PageMD.
 
-Tailwind utility classes are supported by an embedded Tailwind browser runtime. \
-The runtime is fetched at PageMD build time by build.rs, embedded into the pagemd \
+Tailwind utility classes are supported by an embedded Tailwind browser runtime \
+(@tailwindcss/browser@4.3.0). It is fetched at PageMD build time, embedded into the pagemd \
 binary with include_bytes!, and emitted into generated HTML only when a document \
 contains a `diagram html` block. The released pagemd binary does not call the \
 Tailwind CLI, npx, or any other external tool at render time.

@@ -75,6 +75,6 @@ pub fn render_typst(code: &str) -> Result<String> {
 pub fn typst_error_html(code: &str) -> String {
     format!(
         "<div class=\"typst-display typst-error\"><strong>Typst render failed</strong><pre><code>{}</code></pre></div>\n",
-        crate::html_escape(code)
+        crate::core::util::html_escape(code)
     )
 }

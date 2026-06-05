@@ -1,19 +1,17 @@
-const WORKSPACE_SCRIPT: &str = include_str!("../../assets/workspace.js");
-const PREVIEW_SCRIPT: &str = include_str!("../../assets/preview.js");
+use crate::core::workspace_script_tag;
 
-pub fn workspace_script_tag() -> String {
-    format!("<script data-pagemd-workspace>\n{WORKSPACE_SCRIPT}\n</script>\n")
-}
+const PREVIEW_SCRIPT: &str = include_str!("../../../assets/preview.js");
 
 /// Ensure exported HTML includes workspace interactivity when the layout uses it.
 pub fn ensure_export_html(mut html: String) -> String {
     if !html.contains("data-doc-workspace") || html.contains("data-pagemd-workspace") {
         return html;
     }
+    let tag = workspace_script_tag();
     if let Some(pos) = html.rfind("</body>") {
-        html.insert_str(pos, &workspace_script_tag());
+        html.insert_str(pos, &tag);
     } else {
-        html.push_str(&workspace_script_tag());
+        html.push_str(&tag);
     }
     html
 }
@@ -21,9 +19,8 @@ pub fn ensure_export_html(mut html: String) -> String {
 /// Wrap clean HTML for browser preview (workspace + live-reload scripts only in the response).
 pub fn wrap_for_preview(mut html: String) -> String {
     let scripts = format!(
-        "{}{}",
-        workspace_script_tag(),
-        format!("<script data-pagemd-live-preview>\n{PREVIEW_SCRIPT}\n</script>\n")
+        "{}<script data-pagemd-live-preview>\n{PREVIEW_SCRIPT}\n</script>\n",
+        workspace_script_tag()
     );
     if let Some(pos) = html.rfind("</body>") {
         html.insert_str(pos, &scripts);

@@ -3,7 +3,7 @@ use std::convert::Infallible;
 use std::fs;
 use std::io;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -223,8 +223,8 @@ fn should_trigger_render(events: &[notify_debouncer_mini::DebouncedEvent]) -> bo
     !events.is_empty()
 }
 
-fn register_watch(state: &mut WatchState, path: &PathBuf, recursive: bool) -> Result<()> {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !canonical.exists() {
         return Ok(());
     }
@@ -250,7 +250,7 @@ fn register_watch(state: &mut WatchState, path: &PathBuf, recursive: bool) -> Re
     if canonical.is_file() {
         if let Some(parent) = canonical.parent() {
             if !parent.as_os_str().is_empty() {
-                register_watch(state, &parent.to_path_buf(), false)?;
+                register_watch(state, parent, false)?;
             }
         }
     }

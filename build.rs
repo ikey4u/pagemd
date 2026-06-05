@@ -1,6 +1,6 @@
 // Bundled Typst packages must exist before compile (then embedded via rust-embed).
 
-#[path = "src/typst/package.rs"]
+#[path = "src/core/ext/typst/package.rs"]
 mod typst_package;
 
 use std::env;
@@ -8,6 +8,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
+const TAILWINDCSS_BROWSER_VERSION: &str = "4.3.0";
 const DIAGRAM_TAILWIND_BROWSER_URL: &str =
     "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.0/dist/index.global.min.js";
 const DIAGRAM_TAILWIND_BROWSER_OUT: &str = "diagram-html-tailwind-browser.js";
@@ -58,7 +59,9 @@ fn prepare_diagram_tailwind_browser() {
         .and_then(|response| response.error_for_status())
         .and_then(|response| response.bytes())
         .unwrap_or_else(|err| {
-            eprintln!("error: failed to fetch Tailwind browser runtime from {url}: {err}");
+            eprintln!(
+                "error: failed to fetch @tailwindcss/browser@{TAILWINDCSS_BROWSER_VERSION} from {url}: {err}"
+            );
             process::exit(1);
         });
 
