@@ -1,0 +1,33 @@
+min_version = "2024.11.1"
+
+[tools]
+node = "22"
+pnpm = "10"
+rust = "stable"
+"aqua:wasm-bindgen/wasm-pack" = "0.15.0"
+
+[vars]
+extension_dir = "extension/chrome"
+
+[tasks.fmt]
+description = "Format Rust code with nightly rustfmt"
+tools = { rust = "nightly" }
+run = "cargo fmt"
+
+[tasks."extension:install"]
+description = "Install Chrome extension Node dependencies"
+dir = "{{vars.extension_dir}}"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.extension]
+description = "Build the Chrome extension (load extension/chrome/dist unpacked in Chrome)"
+depends = ["extension:install"]
+dir = "{{vars.extension_dir}}"
+run = """
+pnpm run build
+echo "Extension built -> {{vars.extension_dir}}/dist (Chrome: Load unpacked)"
+"""
+
+[tasks.extension-clean]
+description = "Remove Chrome extension build output"
+run = "rm -rf {{vars.extension_dir}}/dist"
