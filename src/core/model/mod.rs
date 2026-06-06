@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 #[derive(Clone)]
 pub(crate) struct HeadingOutline {
     pub level: u32,
@@ -16,6 +18,7 @@ pub(crate) struct Document {
     pub icon_label: String,
     pub sections: Vec<Section>,
     pub nav_labels: Vec<String>,
+    pub input_paths: Vec<PathBuf>,
 }
 
 // Compatibility aliases for tests and transitional code.

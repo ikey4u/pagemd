@@ -12,6 +12,7 @@ use crate::core::export::{self, HtmlExportOptions, OutputFormat};
 use crate::core::ext::math::find_katex_fonts;
 use crate::core::md::render_markdown;
 use crate::core::model::{Document, Section};
+use crate::core::util::exclude::ExcludeMatcher;
 use crate::core::ConvertOptions;
 
 #[derive(Debug, Clone)]
@@ -43,7 +44,12 @@ fn push_unique_file(files: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path:
     }
 }
 
-fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_markdown_files(
+    dir: &Path,
+    scan_root: &Path,
+    exclude: &ExcludeMatcher,
+    files: &mut Vec<PathBuf>,
+) -> Result<()> {
     let mut entries = fs::read_dir(dir)
         .with_context(|| format!("Cannot read directory {}", dir.display()))?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -56,13 +62,32 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             .file_type()
             .with_context(|| format!("Cannot inspect {}", path.display()))?;
         if file_type.is_dir() {
-            collect_markdown_files(&path, files)?;
+            if exclude.should_skip_dir(&path, scan_root) {
+                continue;
+            }
+            collect_markdown_files(&path, scan_root, exclude, files)?;
         } else if file_type.is_file() && is_markdown_file(&path) {
-            files.push(path);
+            if !exclude.should_skip_file(&path, scan_root) {
+                files.push(path);
+            }
         }
     }
 
     Ok(())
+}
+
+fn nearest_scan_root(path: &Path, directories: &[PathBuf]) -> PathBuf {
+    let canonical = canonical_key(path);
+    directories
+        .iter()
+        .map(|dir| canonical_key(dir))
+        .filter(|dir| canonical.starts_with(dir))
+        .max_by_key(|dir| dir.components().count())
+        .unwrap_or_else(|| {
+            path.parent()
+                .map(canonical_key)
+                .unwrap_or_else(|| canonical.clone())
+        })
 }
 
 pub(crate) fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
@@ -75,15 +100,7 @@ pub(crate) fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     let mut seen_files = HashSet::new();
     let mut seen_dirs = HashSet::new();
 
-    for input in &opts.inputs {
-        if !input.exists() {
-            bail!("Input file does not exist: {}", input.display());
-        }
-        if !input.is_file() {
-            bail!("Input is not a file: {}", input.display());
-        }
-        push_unique_file(&mut files, &mut seen_files, input.clone());
-    }
+    let exclude = ExcludeMatcher::new(&opts.excludes);
 
     for dir in &opts.directories {
         if !dir.exists() {
@@ -97,9 +114,27 @@ pub(crate) fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
         if seen_dirs.insert(canonical.clone()) {
             directories.push(canonical);
         }
+    }
 
+    for input in &opts.inputs {
+        if !input.exists() {
+            bail!("Input file does not exist: {}", input.display());
+        }
+        if !input.is_file() {
+            bail!("Input is not a file: {}", input.display());
+        }
+        if !exclude.is_empty() {
+            let scan_root = nearest_scan_root(input, &directories);
+            if exclude.should_skip_file(input, &scan_root) {
+                continue;
+            }
+        }
+        push_unique_file(&mut files, &mut seen_files, input.clone());
+    }
+
+    for dir in &opts.directories {
         let mut dir_files = Vec::new();
-        collect_markdown_files(dir, &mut dir_files)?;
+        collect_markdown_files(dir, dir, &exclude, &mut dir_files)?;
         for path in dir_files {
             push_unique_file(&mut files, &mut seen_files, path);
         }
@@ -180,6 +215,7 @@ fn build_document(
         icon_label,
         sections,
         nav_labels,
+        input_paths: input_files.to_vec(),
     })
 }
 

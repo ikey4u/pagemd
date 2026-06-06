@@ -21,6 +21,7 @@ use anyhow::Result;
 pub(crate) struct ConvertOptions {
     pub inputs: Vec<PathBuf>,
     pub directories: Vec<PathBuf>,
+    pub excludes: Vec<String>,
     pub title: Option<String>,
     pub icon: Option<String>,
     pub math_font_size: f64,

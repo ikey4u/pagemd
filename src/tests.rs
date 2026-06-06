@@ -65,6 +65,7 @@ fn test_args(inputs: Vec<PathBuf>, directories: Vec<PathBuf>) -> CliArgs {
     CliArgs {
         inputs,
         directories,
+        excludes: Vec::new(),
         output: None,
         title: None,
         icon: None,
@@ -135,6 +136,82 @@ fn directory_inputs_collect_markdown_and_dedup_files() {
 }
 
 #[test]
+fn exclude_patterns_skip_directories_and_files() {
+    let dir = temp_test_dir("exclude-inputs");
+    let skipped_dir = dir.join("drafts");
+    let nested = dir.join("guide");
+    std::fs::create_dir_all(skipped_dir.join("nested")).unwrap();
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(dir.join("keep.md"), "# Keep").unwrap();
+    std::fs::write(skipped_dir.join("skip.md"), "# Skip").unwrap();
+    std::fs::write(nested.join("topic.md"), "# Topic").unwrap();
+    std::fs::write(dir.join("notes.tmp.md"), "# Tmp").unwrap();
+
+    let mut args = test_args(Vec::new(), vec![dir.clone()]);
+    args.excludes = vec!["drafts".to_string(), "*.tmp.md".to_string()];
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+
+    assert_eq!(resolved.files.len(), 2);
+    assert!(resolved.files.iter().any(|path| path.ends_with("keep.md")));
+    assert!(resolved
+        .files
+        .iter()
+        .any(|path| path.ends_with("guide/topic.md") || path.ends_with("guide\\topic.md")));
+    assert!(!resolved.files.iter().any(|path| path.ends_with("skip.md")));
+    assert!(!resolved
+        .files
+        .iter()
+        .any(|path| path.ends_with("notes.tmp.md")));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn exclude_skips_explicit_input_files_in_excluded_directories() {
+    let dir = temp_test_dir("exclude-input-file");
+    let guide = dir.join("guide");
+    std::fs::create_dir_all(&guide).unwrap();
+    let guide_file = guide.join("topic.md");
+    std::fs::write(&guide_file, "# Topic").unwrap();
+
+    let mut args = test_args(vec![guide_file.clone()], Vec::new());
+    args.excludes = vec!["guide".to_string()];
+    let resolved = resolve_inputs(&(&args).into());
+
+    assert!(resolved.is_err() || resolved.unwrap().files.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn tree_nav_uses_directory_structure_with_tmp_paths() {
+    let dir = temp_test_dir("tree-nav");
+    let guide = dir.join("guide");
+    std::fs::create_dir_all(&guide).unwrap();
+    std::fs::write(dir.join("keep.md"), "# Keep").unwrap();
+    std::fs::write(guide.join("topic.md"), "# Topic").unwrap();
+
+    let args = test_args(Vec::new(), vec![dir.clone()]);
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+    let html_opts = crate::core::HtmlExportOptions {
+        embed_workspace_script: true,
+    };
+    let convert_opts = (&args).into();
+    let resources = crate::core::prepare_resources(&convert_opts).unwrap();
+    let output = crate::core::export_with_resources(
+        &convert_opts,
+        &html_opts,
+        &resources,
+        resolved.files.first().map(|path| path.as_path()),
+    )
+    .unwrap();
+
+    assert!(output.html.contains("data-nav-folder=\"guide\""));
+    assert!(output.html.contains("class=\"doc-nav-tree\""));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn preview_html_omits_embedded_workspace_script() {
     let html = build_html_with_nav(
         "Title",
@@ -148,6 +225,7 @@ fn preview_html_omits_embedded_workspace_script() {
             }],
         }],
         "PG",
+        None,
         None,
         false,
     );
@@ -172,6 +250,7 @@ fn export_html_restores_workspace_script_for_preview_render() {
             }],
         }],
         "PG",
+        None,
         None,
         false,
     );
@@ -256,6 +335,7 @@ fn multi_file_html_includes_standalone_sidebar() {
         ],
         "PG",
         Some(&["a.md".to_string(), "b.md".to_string()]),
+        None,
         true,
     );
 
@@ -273,6 +353,38 @@ fn multi_file_html_includes_standalone_sidebar() {
     assert!(html.contains("class=\"doc-outline"));
     assert!(html.contains("data-heading-target=\"a\""));
     assert!(html.contains("PageMDActivateDocumentFromHash"));
+}
+
+#[test]
+fn multi_file_tree_sidebar_renders_folders() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "Root".to_string(),
+                html: "<h1>Root</h1>".to_string(),
+                outline: Vec::new(),
+            },
+            RenderedSection {
+                title: "Guide".to_string(),
+                html: "<h1>Guide</h1>".to_string(),
+                outline: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["readme.md".to_string(), "guide/start.md".to_string()]),
+        Some(&[
+            PathBuf::from("/project/docs/readme.md"),
+            PathBuf::from("/project/docs/guide/start.md"),
+        ]),
+        true,
+    );
+
+    assert!(html.contains("class=\"doc-nav-tree\""));
+    assert!(html.contains("data-nav-folder=\"guide\""));
+    assert!(html.contains("class=\"doc-nav-folder-toggle\""));
+    assert!(html.contains("folder:"));
+    assert!(html.contains("restoreFolderStates"));
 }
 
 #[test]

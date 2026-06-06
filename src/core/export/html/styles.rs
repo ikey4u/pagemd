@@ -116,8 +116,11 @@ body {
 }
 
 .doc-outline {
-  padding: 0.85rem 0.7rem;
+  padding: 0;
   border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .doc-workspace.outline-hidden .doc-outline,
@@ -125,15 +128,42 @@ body {
   display: none;
 }
 
+.doc-outline-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+  padding: 1rem 0.85rem 0.85rem;
+  background: #f8fafc;
+  box-shadow: inset 0 -1px 0 #e8edf3;
+}
+
+.doc-outline-top .doc-pane-header {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: #334155;
+  line-height: 1.2;
+}
+
+.doc-outline-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.85rem 0.75rem 1rem;
+  background: #fbfcff;
+}
+
 .doc-pane-header {
-  position: sticky;
-  top: 0;
+  position: static;
   z-index: 1;
-  margin: -1rem -0.75rem 0.65rem;
-  padding: 0.95rem 1rem 0.7rem;
-  border-bottom: 1px solid #e2e8f0;
-  background: rgba(251, 252, 255, 0.94);
-  backdrop-filter: blur(10px);
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+  backdrop-filter: none;
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -145,6 +175,89 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.08rem;
+}
+
+.doc-nav-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.doc-nav-tree .doc-nav-tree {
+  margin: 0.08rem 0 0.12rem;
+  padding-left: 0.45rem;
+  border-left: 1px solid #e2e8f0;
+}
+
+.doc-nav-folder.is-collapsed > .doc-nav-tree {
+  display: none;
+}
+
+.doc-nav-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-height: 1.45rem;
+  padding: 0.08rem 0.2rem 0.08rem 0.05rem;
+  border-radius: 8px;
+  color: #64748b;
+}
+
+.doc-nav-folder-row:hover {
+  background: #f8fafc;
+  color: #334155;
+}
+
+.doc-nav-folder-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.doc-nav-folder-toggle:hover,
+.doc-nav-folder-toggle:focus-visible {
+  background: #e2e8f0;
+  outline: none;
+}
+
+.doc-nav-folder-chevron {
+  display: block;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg) translate(-0.04rem, -0.02rem);
+  transition: transform 120ms ease;
+}
+
+.doc-nav-folder.is-expanded > .doc-nav-folder-row .doc-nav-folder-chevron {
+  transform: rotate(45deg) translate(-0.02rem, -0.04rem);
+}
+
+.doc-nav-folder-label {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-nav-file {
+  list-style: none;
 }
 
 .doc-nav-row {
@@ -279,26 +392,56 @@ body {
 }
 
 .doc-outline-toggle {
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.doc-outline-toggle-main {
   position: fixed;
   top: 0.85rem;
   right: 0.9rem;
   z-index: 10;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.96);
   color: #475569;
-  cursor: pointer;
-  font: inherit;
   font-size: 0.72rem;
   font-weight: 700;
-  line-height: 1;
   padding: 0.38rem 0.62rem;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
 }
 
-.doc-outline-toggle:hover {
+.doc-workspace:not(.outline-hidden) .doc-outline-toggle-main {
+  display: none;
+}
+
+.doc-outline-toggle-panel {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.28rem 0.45rem;
+  box-shadow: none;
+}
+
+.doc-outline-toggle-panel:hover,
+.doc-outline-toggle-panel:focus-visible {
+  background: #e2e8f0;
+  color: #334155;
+  outline: none;
+}
+
+.doc-outline-toggle-main:hover,
+.doc-outline-toggle-main:focus-visible {
   border-color: #93c5fd;
   color: #1d4ed8;
+  outline: none;
 }
 
 .doc-panel {

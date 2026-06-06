@@ -6,6 +6,7 @@ impl From<&CliArgs> for ConvertOptions {
         ConvertOptions {
             inputs: args.inputs.clone(),
             directories: args.directories.clone(),
+            excludes: args.excludes.clone(),
             title: args.title.clone(),
             icon: args.icon.clone(),
             math_font_size: args.math_font_size,

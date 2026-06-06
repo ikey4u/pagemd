@@ -1,6 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::core::export::html::favicon::favicon_link_tag;
+use crate::core::export::html::nav_tree::{
+    build_nav_tree, common_path_prefix, nav_entries_have_tree, relativize_to_root,
+    render_flat_nav_html, render_nav_tree_html,
+};
 use crate::core::model::RenderedSection;
 use crate::core::util::{html_escape, script_escape};
 
@@ -50,7 +54,7 @@ pub(crate) fn build_html(
     body_sections: &[RenderedSection],
     icon_label: &str,
 ) -> String {
-    build_html_with_nav(title, body_sections, icon_label, None, true)
+    build_html_with_nav(title, body_sections, icon_label, None, None, true)
 }
 
 const DIAGRAM_HTML_MARKER: &str = "class=\"diagram-html-display\"";
@@ -64,9 +68,64 @@ fn diagram_html_tailwind_browser_js() -> &'static str {
         .expect("bundled diagram Tailwind browser runtime must be UTF-8")
 }
 
+fn build_nav_entries(
+    body_sections: &[RenderedSection],
+    nav_labels: Option<&[String]>,
+    input_paths: Option<&[PathBuf]>,
+) -> Vec<(PathBuf, usize, String)> {
+    let nav_root = input_paths.and_then(common_path_prefix);
+
+    body_sections
+        .iter()
+        .enumerate()
+        .map(|(index, section)| {
+            let label = nav_labels
+                .and_then(|labels| labels.get(index))
+                .cloned()
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or_else(|| {
+                    if section.title.trim().is_empty() {
+                        format!("Document {}", index + 1)
+                    } else {
+                        section.title.clone()
+                    }
+                });
+
+            let rel_path = input_paths
+                .and_then(|paths| paths.get(index))
+                .and_then(|path| {
+                    nav_root
+                        .as_ref()
+                        .and_then(|root| relativize_to_root(path, root))
+                })
+                .unwrap_or_else(|| PathBuf::from(&label));
+
+            (rel_path, index, label)
+        })
+        .collect()
+}
+
+fn build_file_sidebar(
+    body_sections: &[RenderedSection],
+    nav_labels: Option<&[String]>,
+    input_paths: Option<&[PathBuf]>,
+) -> String {
+    let entries = build_nav_entries(body_sections, nav_labels, input_paths);
+    let nav_items = if nav_entries_have_tree(&entries) {
+        render_nav_tree_html(&build_nav_tree(&entries), 0)
+    } else {
+        render_flat_nav_html(&entries, 0)
+    };
+
+    format!(
+        "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\"><nav class=\"doc-nav\">\n{nav_items}</nav>\n</aside>\n<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n"
+    )
+}
+
 fn build_workspace_layout(
     body_sections: &[RenderedSection],
     nav_labels: Option<&[String]>,
+    input_paths: Option<&[PathBuf]>,
     use_file_sidebar: bool,
     embed_workspace_script: bool,
 ) -> (String, String, String, String) {
@@ -77,37 +136,7 @@ fn build_workspace_layout(
         "doc-workspace doc-workspace-single outline-hidden"
     };
     let file_sidebar = if use_file_sidebar {
-        let nav_items: String = body_sections
-            .iter()
-            .enumerate()
-            .map(|(index, section)| {
-                let label = nav_labels
-                    .and_then(|labels| labels.get(index))
-                    .cloned()
-                    .filter(|label| !label.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        if section.title.trim().is_empty() {
-                            format!("Document {}", index + 1)
-                        } else {
-                            section.title.clone()
-                        }
-                    });
-                let active = if index == 0 { " is-active" } else { "" };
-                let escaped_label = html_escape(&label);
-                format!(
-                    "<div class=\"doc-nav-row\"><a class=\"doc-nav-link{active}\" href=\"#doc-{}\" data-doc-target=\"doc-{}\" title=\"{}\"><span class=\"doc-nav-label\">{}</span></a><button type=\"button\" class=\"doc-nav-copy\" data-copy-label=\"{}\" aria-label=\"Copy filename {}\" title=\"Copy filename\">Copy</button></div>\n",
-                    index + 1,
-                    index + 1,
-                    escaped_label,
-                    escaped_label,
-                    escaped_label,
-                    escaped_label
-                )
-            })
-            .collect();
-        format!(
-            "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\"><nav class=\"doc-nav\">\n{nav_items}</nav>\n</aside>\n<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n"
-        )
+        build_file_sidebar(body_sections, nav_labels, input_paths)
     } else {
         String::new()
     };
@@ -120,10 +149,10 @@ fn build_workspace_layout(
         format!("<div class=\"{workspace_class}\" data-doc-workspace>\n"),
         "</div>\n".to_string(),
         format!(
-            "{file_sidebar}<main class=\"doc-main\">\n<button type=\"button\" class=\"doc-outline-toggle\" data-outline-toggle>Outline</button>\n"
+            "{file_sidebar}<main class=\"doc-main\">\n<button type=\"button\" class=\"doc-outline-toggle doc-outline-toggle-main\" data-outline-toggle>Outline</button>\n"
         ),
         format!(
-            "</main>\n<div class=\"doc-resizer doc-resizer-right\" role=\"separator\" aria-label=\"Resize outline\" data-resizer=\"right\"></div>\n<aside class=\"doc-outline doc-pane\" aria-label=\"Markdown outline\">\n<div class=\"doc-pane-header\">Outline</div>\n{outline_nav}</aside>\n{workspace_script}"
+            "</main>\n<div class=\"doc-resizer doc-resizer-right\" role=\"separator\" aria-label=\"Resize outline\" data-resizer=\"right\"></div>\n<aside class=\"doc-outline doc-pane\" aria-label=\"Markdown outline\">\n<div class=\"doc-outline-top\"><div class=\"doc-pane-header\">Outline</div><button type=\"button\" class=\"doc-outline-toggle doc-outline-toggle-panel\" data-outline-toggle aria-label=\"Hide outline\">Hide</button></div>\n<div class=\"doc-outline-body\">\n{outline_nav}</div></aside>\n{workspace_script}"
         ),
     )
 }
@@ -133,6 +162,7 @@ pub(crate) fn build_html_with_nav(
     body_sections: &[RenderedSection],
     icon_label: &str,
     nav_labels: Option<&[String]>,
+    input_paths: Option<&[PathBuf]>,
     embed_workspace_script: bool,
 ) -> String {
     let use_file_sidebar = body_sections.len() > 1;
@@ -165,6 +195,7 @@ pub(crate) fn build_html_with_nav(
         build_workspace_layout(
             body_sections,
             nav_labels,
+            input_paths,
             use_file_sidebar,
             embed_workspace_script,
         )
@@ -235,6 +266,7 @@ pub(crate) fn render_document_html(
         &doc.sections,
         &doc.icon_label,
         Some(&doc.nav_labels),
+        Some(&doc.input_paths),
         opts.embed_workspace_script,
     )
 }

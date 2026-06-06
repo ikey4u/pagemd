@@ -51,11 +51,14 @@
   function setOutlineVisible(workspace, visible) {
     workspace.classList.toggle("outline-hidden", !visible);
     storageSet("outlineVisible", visible ? "1" : "0");
-    var toggle = document.querySelector("[data-outline-toggle]");
-    if (toggle) {
+    document.querySelectorAll("[data-outline-toggle]").forEach(function (toggle) {
       toggle.setAttribute("aria-expanded", visible ? "true" : "false");
-      toggle.textContent = visible ? "Hide outline" : "Outline";
-    }
+      if (toggle.classList.contains("doc-outline-toggle-panel")) {
+        toggle.textContent = visible ? "Hide" : "Outline";
+      } else {
+        toggle.textContent = visible ? "Hide outline" : "Outline";
+      }
+    });
   }
   function panelForId(id) {
     var panels = document.querySelectorAll("[data-doc-panel]");
@@ -92,6 +95,10 @@
     outlines.forEach(function (outline) {
       outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
     });
+    var activeLink = document.querySelector('[data-doc-target="' + activePanel.id + '"]');
+    if (activeLink) {
+      expandFolderAncestors(activeLink);
+    }
     storageSet("activeDoc", activePanel.id);
     updateOutlineActive();
   }
@@ -134,6 +141,10 @@
     outlines.forEach(function (outline) {
       outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
     });
+    var activeLink = document.querySelector('[data-doc-target="' + activePanel.id + '"]');
+    if (activeLink) {
+      expandFolderAncestors(activeLink);
+    }
     storageSet("activeDoc", activePanel.id);
   }
   function scrollToHeading(id, panelId) {
@@ -151,6 +162,46 @@
     updateOutlineActive();
     return true;
   }
+  function folderStorageKey(id) {
+    return "folder:" + id;
+  }
+
+  function setFolderExpanded(folder, expanded) {
+    folder.classList.toggle("is-expanded", expanded);
+    folder.classList.toggle("is-collapsed", !expanded);
+    var toggle = folder.querySelector(".doc-nav-folder-toggle");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+    var id = folder.getAttribute("data-nav-folder");
+    if (id) {
+      storageSet(folderStorageKey(id), expanded ? "1" : "0");
+    }
+  }
+
+  function restoreFolderStates() {
+    document.querySelectorAll("[data-nav-folder]").forEach(function (folder) {
+      var id = folder.getAttribute("data-nav-folder");
+      if (!id) {
+        return;
+      }
+      var stored = storageGet(folderStorageKey(id));
+      if (stored === "0") {
+        setFolderExpanded(folder, false);
+      } else if (stored === "1") {
+        setFolderExpanded(folder, true);
+      }
+    });
+  }
+
+  function expandFolderAncestors(node) {
+    var folder = node && node.closest ? node.closest("[data-nav-folder]") : null;
+    while (folder) {
+      setFolderExpanded(folder, true);
+      folder = folder.parentElement ? folder.parentElement.closest("[data-nav-folder]") : null;
+    }
+  }
+
   function initWorkspace() {
     var workspace = document.querySelector("[data-doc-workspace]");
     if (!workspace) {
@@ -161,6 +212,7 @@
     setWorkspaceWidth(workspace, "leftWidth", clamp(loadNumber("leftWidth", leftBounds.fallback), leftBounds.min, leftBounds.max));
     setWorkspaceWidth(workspace, "rightWidth", clamp(loadNumber("rightWidth", rightBounds.fallback), rightBounds.min, rightBounds.max));
     setOutlineVisible(workspace, storageGet("outlineVisible") === "1");
+    restoreFolderStates();
     activateDocumentFromHash();
   }
 
@@ -231,6 +283,7 @@
       : null;
     if (navLink) {
       event.preventDefault();
+      expandFolderAncestors(navLink);
       var docId = navLink.getAttribute("data-doc-target");
       var panel = docId ? panelForId(docId) : null;
       if (docId && panel) {
@@ -249,6 +302,19 @@
       var outline = headingLink.closest("[data-outline-for]");
       var panelId = outline ? outline.getAttribute("data-outline-for") : null;
       scrollToHeading(headingLink.getAttribute("data-heading-target"), panelId);
+      return;
+    }
+
+    var folderToggle = event.target && event.target.closest
+      ? event.target.closest(".doc-nav-folder-toggle")
+      : null;
+    if (folderToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      var folder = folderToggle.closest("[data-nav-folder]");
+      if (folder) {
+        setFolderExpanded(folder, !folder.classList.contains("is-expanded"));
+      }
       return;
     }
 

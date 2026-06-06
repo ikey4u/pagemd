@@ -100,6 +100,15 @@ pub(crate) struct CliArgs {
     )]
     pub(crate) output: Option<PathBuf>,
 
+    #[arg(
+        short = 'x',
+        long = "exclude",
+        value_name = "PATTERN",
+        num_args = 1..,
+        help = "Exclude files or directories while scanning (name, path, or glob such as drafts/**)"
+    )]
+    pub(crate) excludes: Vec<String>,
+
     #[arg(long = "title", value_name = "TITLE", help = "Document title")]
     pub(crate) title: Option<String>,
 

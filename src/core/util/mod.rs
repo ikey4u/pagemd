@@ -1,3 +1,5 @@
+pub(crate) mod exclude;
+
 use std::sync::OnceLock;
 
 use regex::Regex;
