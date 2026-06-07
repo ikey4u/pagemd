@@ -9,6 +9,8 @@ Steps (in order):
 
 Hard rules:
 - Change DOM ONLY via `browser_clean` / `browser_eval` (these operate on the sandbox when active)
+- **`browser_eval` defaults to `record_undo: false`** — keep it false for read-only probes (`document.querySelector`, checks). Set `true` only when mutating DOM.
+- Do **NOT** read `.pagemd/runtime.json`, curl the bridge, or **kill the pagemd process** — if a tool times out, tell the user to Ctrl+C and retry with `record_undo: false`
 - Do **NOT** write or paste Markdown in chat
 - Do **NOT** loop unless extraction is clearly broken (missing main body)
 - Do **NOT** call `browser_get_html` unless eval failed and you need structure

@@ -164,12 +164,12 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "browser_eval",
-            "Run JavaScript in sandbox iframe when active, else live page MAIN world. Use record_undo:false for read-only probes.",
+            "Run JavaScript in sandbox iframe when active, else live page MAIN world. Default record_undo=false (fast). Set record_undo=true only when mutating DOM.",
             json!({
                 "type": "object",
                 "properties": {
                     "expression": { "type": "string", "description": "JavaScript expression to evaluate" },
-                    "record_undo": { "type": "boolean", "description": "Snapshot before eval for /undo (default true). Set false for read-only checks — much faster." }
+                    "record_undo": { "type": "boolean", "description": "Snapshot before eval for /undo (default false). Set true only when mutating DOM — slow on large pages." }
                 },
                 "required": ["expression"],
                 "additionalProperties": false

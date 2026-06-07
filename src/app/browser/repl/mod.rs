@@ -140,17 +140,21 @@ pub async fn run(
                 session_preview: &mut session_preview,
                 session_preview_opened: &mut session_preview_opened,
             };
-            match handle_slash(trimmed, &mut ctx).await? {
-                SlashOutcome::Continue { refresh_status } => {
+            match handle_slash(trimmed, &mut ctx).await {
+                Ok(SlashOutcome::Continue { refresh_status }) => {
                     if refresh_status {
                         print_status(&session, &undo, vendor.is_some(), ai_forward).await?;
                     }
                     repl_prepare_next_prompt();
                 }
-                SlashOutcome::Quit => break,
-                SlashOutcome::SetAiForward(enabled) => {
+                Ok(SlashOutcome::Quit) => break,
+                Ok(SlashOutcome::SetAiForward(enabled)) => {
                     ai_forward = enabled;
                     print_status(&session, &undo, vendor.is_some(), ai_forward).await?;
+                    repl_prepare_next_prompt();
+                }
+                Err(err) => {
+                    eprintln!("error: {err:#}");
                     repl_prepare_next_prompt();
                 }
             }
@@ -167,7 +171,10 @@ pub async fn run(
             continue;
         };
 
-        v.send_user_line(trimmed)?;
+        if let Err(err) = v.send_user_line(trimmed).await {
+            eprintln!("agent error: {err:#}");
+            repl_prepare_next_prompt();
+        }
     }
 
     if let Some(v) = vendor {
@@ -279,7 +286,7 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             let Some(v) = ctx.vendor else {
                 bail!("no AI backend; ensure `agent` is installed");
             };
-            v.send_context_block(&text)?;
+            v.send_context_block(&text).await?;
             return Ok(SlashOutcome::Continue {
                 refresh_status: false,
             });
@@ -297,16 +304,35 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
         }
         "/eval" => {
             if rest.is_empty() {
-                bail!("usage: /eval <javascript expression>");
+                bail!("usage: /eval [--no-undo] <javascript expression>");
+            }
+            let no_undo = rest.split_whitespace().any(|t| t == "--no-undo");
+            let expr = rest
+                .split_whitespace()
+                .filter(|t| *t != "--no-undo")
+                .collect::<Vec<_>>()
+                .join(" ");
+            if expr.is_empty() {
+                bail!("usage: /eval [--no-undo] <javascript expression>");
             }
             let target = repl_dom_target(ctx.sandbox_enabled);
-            ctx.undo.push_before_mutate(ctx.session, target).await?;
-            let value = if target == DomTarget::Sandbox {
-                sandbox::eval_expression(ctx.session, rest).await?
+            if !no_undo {
+                ctx.undo.push_before_mutate(ctx.session, target).await?;
+            }
+            let eval_result = if target == DomTarget::Sandbox {
+                sandbox::eval_expression(ctx.session, &expr).await
             } else {
-                ctx.session.evaluate(rest, false).await?
+                ctx.session.evaluate(&expr, false).await
             };
-            print_eval_result(&value);
+            match eval_result {
+                Ok(value) => print_eval_result(&value),
+                Err(err) => {
+                    if !no_undo {
+                        let _ = ctx.undo.undo_one(ctx.session, target).await;
+                    }
+                    eprintln!("eval error: {err:#}");
+                }
+            }
             return Ok(SlashOutcome::Continue {
                 refresh_status: false,
             });
@@ -415,7 +441,7 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                 ctx.export_dir.display()
             );
             io::stderr().flush()?;
-            v.send_user_line(&prompt)?;
+            v.send_user_line(&prompt).await?;
             return Ok(SlashOutcome::Continue {
                 refresh_status: false,
             });
@@ -436,7 +462,7 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             );
             eprintln!("[agent] page cleanup… (stream below; /stop to cancel)");
             io::stderr().flush()?;
-            v.send_user_line(PRETTY_PROMPT)?;
+            v.send_user_line(PRETTY_PROMPT).await?;
             return Ok(SlashOutcome::Continue {
                 refresh_status: false,
             });
@@ -682,11 +708,11 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
     println!("  /snap                 Page summary (URL, title, outline)");
     if ai {
         println!("  /snap send            Snap + forward context to Cursor agent");
-        println!("  /stop                 Interrupt in-flight agent turn");
+        println!("  /stop                 Interrupt in-flight agent turn (same as Ctrl+C during agent)");
         println!("  /manual  /ai          Disable / enable natural-language forwarding");
         println!("  /provider             Show AI backend");
     }
-    println!("  /eval <js>            Run JavaScript in the page (records undo)");
+    println!("  /eval [--no-undo] <js>  Run JavaScript (use --no-undo on large pages; errors stay in REPL)");
     println!("  /undo                 Undo last mutating step");
     println!("  /undo all             Restore baseline DOM for this session");
     println!("  /html [-o file]       Dump HTML (terminal preview; use -o for full output)");
@@ -698,6 +724,7 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
         println!("  /export [name]        Export validated .pagemd.js to REPL cwd");
         println!();
         println!("Agent output: [thinking]/[assistant]; MCP as [agent] → pagemd-browser.browser_* (args + result)");
+        println!("  Ctrl+C during agent output interrupts the turn; at the prompt Ctrl+C clears the line");
         println!("  Set PAGEMD_VERBOSE_TOOLS=1 for full MCP JSON args/result");
         if let Some(dir) = export_dir {
             println!("Export dir (cwd at startup): {}", dir.display());

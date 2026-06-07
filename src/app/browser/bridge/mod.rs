@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::extract::State;
@@ -21,6 +22,7 @@ use super::tools::{self, format_eval_result, parse_max_chars, truncate};
 use super::undo::{DomTarget, UndoStack};
 
 const DEFAULT_MAX_CHARS: usize = 50_000;
+const CDP_LOCK_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Clone)]
 struct BridgeState {
@@ -28,8 +30,19 @@ struct BridgeState {
     undo: Arc<Mutex<UndoStack>>,
     session_md: Arc<SessionMarkdown>,
     sandbox_enabled: Arc<AtomicBool>,
+    cdp_lock: Arc<tokio::sync::Mutex<()>>,
     token: String,
     preferred_url: Option<String>,
+}
+
+async fn acquire_cdp(state: &BridgeState) -> Result<tokio::sync::MutexGuard<'_, ()>> {
+    match tokio::time::timeout(CDP_LOCK_WAIT, state.cdp_lock.lock()).await {
+        Ok(guard) => Ok(guard),
+        Err(_) => Err(anyhow::anyhow!(
+            "bridge busy: another CDP operation is still running. Retry the MCP tool; \
+             do not curl runtime.json or kill the pagemd process."
+        )),
+    }
 }
 
 fn dom_target(state: &BridgeState) -> DomTarget {
@@ -68,6 +81,7 @@ impl BrowserBridge {
             undo,
             session_md,
             sandbox_enabled,
+            cdp_lock: Arc::new(tokio::sync::Mutex::new(())),
             token: token.clone(),
             preferred_url,
         };
@@ -161,6 +175,10 @@ async fn snap(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Resp
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
+    let _cdp = match acquire_cdp(&state).await {
+        Ok(g) => g,
+        Err(err) => return tool_error(err),
+    };
     let result = if dom_target(&state) == DomTarget::Sandbox {
         sandbox::capture_page(&state.session)
             .await
@@ -265,8 +283,12 @@ async fn eval(
     if req.expression.trim().is_empty() {
         return tool_error(anyhow::anyhow!("expression is required"));
     }
+    let _cdp = match acquire_cdp(&state).await {
+        Ok(g) => g,
+        Err(err) => return tool_error(err),
+    };
     let target = dom_target(&state);
-    let record_undo = req.record_undo.unwrap_or(true);
+    let record_undo = req.record_undo.unwrap_or(false);
     if record_undo {
         let mut undo = state.undo.lock().await;
         if let Err(err) = undo.push_before_mutate(&state.session, target).await {
@@ -306,13 +328,24 @@ async fn clean_dom(
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
+    let _cdp = match acquire_cdp(&state).await {
+        Ok(g) => g,
+        Err(err) => return tool_error(err),
+    };
     let extra = req.extra_selectors.unwrap_or_default();
     let target = dom_target(&state);
-    let mut undo = state.undo.lock().await;
-    if let Err(err) = undo.push_before_mutate(&state.session, target).await {
-        return tool_error(err);
+    let mut undo_skipped = false;
+    {
+        let mut undo = state.undo.lock().await;
+        if let Err(err) = undo.push_before_mutate(&state.session, target).await {
+            let msg = err.to_string();
+            if msg.contains("too slow") || msg.contains("too large") {
+                undo_skipped = true;
+            } else {
+                return tool_error(err);
+            }
+        }
     }
-    drop(undo);
     let result = if target == DomTarget::Sandbox {
         sandbox::run_clean(&state.session, &extra).await
     } else {
@@ -326,6 +359,7 @@ async fn clean_dom(
                 "text": format_eval_result(&value),
                 "undo_depth": undo_depth,
                 "sandbox": target == DomTarget::Sandbox,
+                "undo_skipped": undo_skipped,
             }))
             .into_response()
         }

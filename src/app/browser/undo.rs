@@ -6,6 +6,8 @@ use super::sandbox;
 
 /// Body HTML larger than this cannot be snapshotted for undo (CDP round-trip cost).
 const MAX_UNDO_HTML_CHARS: usize = 1_500_000;
+/// Above this size, pulling full innerHTML over CDP is usually too slow (Seeking Alpha–class pages).
+const SOFT_UNDO_HTML_CHARS: usize = 350_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DomTarget {
@@ -61,6 +63,20 @@ impl UndoStack {
         Ok(())
     }
 
+    /// Fast size probe — avoids transferring megabytes of HTML when undo would be too slow.
+    pub async fn estimate_body_html_chars(session: &CdpSession, target: DomTarget) -> Result<usize> {
+        let expr = match target {
+            DomTarget::Live => {
+                r#"(() => document.body?.innerHTML?.length ?? 0)()"#
+            }
+            DomTarget::Sandbox => {
+                r#"(() => window.__PAGEMD_SANDBOX_DOC__?.body?.innerHTML?.length ?? 0)()"#
+            }
+        };
+        let value = session.evaluate(expr, false).await?;
+        Ok(value.as_u64().unwrap_or(0) as usize)
+    }
+
     pub async fn undo_one(&mut self, session: &CdpSession, target: DomTarget) -> Result<bool> {
         let Some(entry) = self.entries.pop() else {
             return Ok(false);
@@ -80,6 +96,20 @@ impl UndoStack {
 }
 
 async fn capture_entry(session: &CdpSession, target: DomTarget) -> Result<UndoEntry> {
+    let est = UndoStack::estimate_body_html_chars(session, target).await?;
+    if est > MAX_UNDO_HTML_CHARS {
+        bail!(
+            "page body HTML is too large for undo snapshot (~{est} chars; max {MAX_UNDO_HTML_CHARS}). \
+             Use browser_eval with record_undo=false for read-only checks, or clean in smaller steps."
+        );
+    }
+    if est > SOFT_UNDO_HTML_CHARS {
+        bail!(
+            "page body HTML is ~{est} chars — undo snapshot over CDP would be too slow. \
+             Use browser_eval with record_undo=false for probes, or one browser_clean then smaller steps."
+        );
+    }
+
     let (body_html, url) = match target {
         DomTarget::Live => {
             let value = session

@@ -162,7 +162,7 @@ impl CdpSession {
             .await?;
 
         if let Some(details) = result.get("exceptionDetails") {
-            bail!("JS exception: {details}");
+            bail!("{}", format_js_exception(details));
         }
 
         Ok(result
@@ -235,6 +235,25 @@ impl CdpSession {
     }
 }
 
+pub fn format_js_exception(details: &Value) -> String {
+    if let Some(desc) = details
+        .get("exception")
+        .and_then(|e| e.get("description"))
+        .and_then(|v| v.as_str())
+    {
+        return desc.to_string();
+    }
+    if let Some(text) = details.get("text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+    if let Some(line) = details.get("lineNumber").and_then(|v| v.as_u64()) {
+        if let Some(col) = details.get("columnNumber").and_then(|v| v.as_u64()) {
+            return format!("Uncaught exception at line {line}, column {col}");
+        }
+    }
+    details.to_string()
+}
+
 async fn open_connection(ws_url: &str) -> Result<(mpsc::UnboundedSender<IoCommand>, Arc<AtomicU64>)> {
     let (ws_stream, _) = connect_async(ws_url)
         .await
@@ -297,4 +316,21 @@ async fn open_connection(ws_url: &str) -> Result<(mpsc::UnboundedSender<IoComman
     });
 
     Ok((tx, Arc::new(AtomicU64::new(1))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_js_exception_prefers_description() {
+        let details = json!({
+            "exception": { "description": "ReferenceError: Data is not defined" },
+            "text": "Uncaught"
+        });
+        assert_eq!(
+            format_js_exception(&details),
+            "ReferenceError: Data is not defined"
+        );
+    }
 }
