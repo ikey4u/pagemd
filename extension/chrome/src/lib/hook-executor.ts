@@ -1,4 +1,7 @@
 import type { StopHookContext } from './types';
+import { compileHookForRun } from './pagemd-script';
+import type { PagmdScript } from './pagemd-script';
+import type { HookType } from './prompt';
 
 /**
  * Cleans pasted code: strips markdown code fences, trims whitespace.
@@ -47,23 +50,24 @@ export async function executeHook(
   tabId: number,
   hookCode: string,
   contextArg?: StopHookContext,
+  hookType: HookType = 'extract',
+  pagmdScript: PagmdScript | null = null,
 ): Promise<{ success: true; value: unknown } | { success: false; error: string }> {
+  const code = compileHookForRun(hookCode, hookType, pagmdScript);
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN' as chrome.scripting.ExecutionWorld,
       func: (code: string, ctx: unknown) => {
-        // Strip trailing IIFE invocation "()" so we can call with context ourselves
         const stripped = code.replace(/\)\s*\([\s\S]*?\)\s*;?\s*$/, ')');
         const fn = new Function('context', `return (${stripped})`);
         const result = fn(ctx);
-        // If the expression evaluated to a function, call it with context
         if (typeof result === 'function') {
           return result(ctx);
         }
         return result;
       },
-      args: [hookCode, contextArg ?? null],
+      args: [code, contextArg ?? null],
     });
 
     const result = results?.[0]?.result;
@@ -85,12 +89,14 @@ export async function executeHookViaDebugger(
   tabId: number,
   hookCode: string,
   contextArg?: StopHookContext,
+  hookType: HookType = 'extract',
+  pagmdScript: PagmdScript | null = null,
 ): Promise<{ success: true; value: unknown } | { success: false; error: string }> {
+  const code = compileHookForRun(hookCode, hookType, pagmdScript);
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
 
-    // Strip trailing IIFE "()" so we control invocation with context
-    const stripped = hookCode.replace(/\)\s*\([\s\S]*?\)\s*;?\s*$/, ')');
+    const stripped = code.replace(/\)\s*\([\s\S]*?\)\s*;?\s*$/, ')');
     let expression: string;
     if (contextArg) {
       expression = `(function() { var __fn = (${stripped}); return typeof __fn === 'function' ? __fn(${JSON.stringify(contextArg)}) : __fn; })()`;

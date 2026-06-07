@@ -8,8 +8,9 @@ use std::path::PathBuf;
 #[cfg(test)]
 pub use live::{ensure_export_html, wrap_for_preview};
 pub use resources::{collect_initial_watch_paths, discover_watch_paths};
-pub use server::{run, RenderRequest, RenderResult};
+pub use server::{run, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
 
+#[derive(Clone)]
 pub struct ViewOptions {
     pub host: String,
     pub port: u16,

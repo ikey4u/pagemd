@@ -44,12 +44,37 @@ export async function findMatchingRecipe(url: string): Promise<Recipe | null> {
 /**
  * Simple URL pattern matching.
  * Pattern "example.com/*" matches any URL on example.com.
- * Pattern "example.com/docs/*" matches URLs under /docs/.
+ * Pattern "https://example.com/docs/*" matches URLs under /docs/.
  */
-function matchUrlPattern(url: string, pattern: string): boolean {
+export function matchUrlPattern(url: string, pattern: string): boolean {
   try {
     const urlObj = new URL(url);
-    const normalizedPattern = pattern.replace(/^\*:\/\//, '');
+    const pat = pattern.trim();
+
+    if (/^https?:\/\//i.test(pat)) {
+      const pathWildcard = /\/\*+\/?$/.test(pat);
+      const base = pathWildcard ? pat.replace(/\/\*+\/?$/, '') : pat;
+      const patUrl = new URL(base);
+
+      if (urlObj.protocol !== patUrl.protocol) return false;
+
+      const hostMatch = patUrl.hostname.startsWith('*.')
+        ? urlObj.hostname.endsWith(patUrl.hostname.slice(1))
+        : urlObj.hostname === patUrl.hostname || urlObj.hostname === `www.${patUrl.hostname}`;
+      if (!hostMatch) return false;
+
+      if (pathWildcard) {
+        if (patUrl.pathname === '/' || patUrl.pathname === '') {
+          return true;
+        }
+        const prefix = patUrl.pathname;
+        return urlObj.pathname === prefix || urlObj.pathname.startsWith(`${prefix}/`);
+      }
+
+      return urlObj.pathname === patUrl.pathname;
+    }
+
+    const normalizedPattern = pat.replace(/^\*:\/\//, '');
     const [patternHost, ...patternPathParts] = normalizedPattern.split('/');
     const patternPath = patternPathParts.join('/');
 

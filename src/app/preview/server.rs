@@ -19,7 +19,8 @@ use axum::Router;
 use futures::stream::Stream;
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
+use tokio::task::JoinHandle as TokioJoinHandle;
 
 use super::live;
 use super::ViewOptions;
@@ -38,7 +39,28 @@ pub enum RenderResult {
     },
 }
 
-pub struct AppState {
+#[derive(Clone)]
+pub struct HostedPreviewOptions {
+    pub host: String,
+    pub port: u16,
+    pub inputs: Vec<PathBuf>,
+    pub watch_paths: Vec<PathBuf>,
+    pub export_path: Option<PathBuf>,
+}
+
+impl From<ViewOptions> for HostedPreviewOptions {
+    fn from(options: ViewOptions) -> Self {
+        Self {
+            host: options.host,
+            port: options.port,
+            inputs: options.inputs,
+            watch_paths: options.watch_paths,
+            export_path: options.export_path,
+        }
+    }
+}
+
+struct AppState {
     /// Clean HTML without the live-reload script (safe to export).
     html: RwLock<String>,
     version: AtomicU64,
@@ -49,6 +71,211 @@ pub struct AppState {
 struct WatchState {
     debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
     watched: HashSet<PathBuf>,
+}
+
+struct PreviewEngineOptions {
+    inputs: Vec<PathBuf>,
+    watch_paths: Vec<PathBuf>,
+    export_path: Option<PathBuf>,
+}
+
+impl From<HostedPreviewOptions> for PreviewEngineOptions {
+    fn from(options: HostedPreviewOptions) -> Self {
+        Self {
+            inputs: options.inputs,
+            watch_paths: options.watch_paths,
+            export_path: options.export_path,
+        }
+    }
+}
+
+impl From<ViewOptions> for PreviewEngineOptions {
+    fn from(options: ViewOptions) -> Self {
+        HostedPreviewOptions::from(options).into()
+    }
+}
+
+struct PreviewEngine {
+    state: Arc<AppState>,
+    shutdown: Arc<AtomicBool>,
+    render_tx: Option<std::sync::mpsc::Sender<()>>,
+    render_worker: Option<JoinHandle<()>>,
+    watch_state: Arc<Mutex<WatchState>>,
+}
+
+impl PreviewEngine {
+    fn start(
+        options: PreviewEngineOptions,
+        render: Arc<dyn Fn(RenderRequest) -> RenderResult + Send + Sync>,
+    ) -> Result<Self> {
+        let (notify_tx, _) = broadcast::channel(64);
+
+        let first = render(RenderRequest {
+            inputs: options.inputs.clone(),
+        });
+        let (initial_html, initial_extra, export_initial) = match first {
+            RenderResult::Ok {
+                html,
+                extra_watch_paths,
+            } => (html, extra_watch_paths, true),
+            RenderResult::Err { html } => (html, Vec::new(), false),
+        };
+
+        let state = Arc::new(AppState {
+            html: RwLock::new(initial_html),
+            version: AtomicU64::new(0),
+            notify_tx: notify_tx.clone(),
+            export_path: options.export_path.clone(),
+        });
+
+        if export_initial {
+            if let Ok(guard) = state.html.read() {
+                if let Err(err) = write_export_if_configured(state.export_path.as_deref(), &guard) {
+                    eprintln!("Export error: {err:#}");
+                }
+            }
+        }
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (render_tx, render_rx) = std::sync::mpsc::channel::<()>();
+
+        let mut watch_paths = options.watch_paths.clone();
+        watch_paths.extend(initial_extra);
+        let watch_state = Arc::new(Mutex::new(setup_watcher(watch_paths, render_tx.clone())?));
+        let watch_weak = Arc::downgrade(&watch_state);
+
+        let render_worker = spawn_render_worker(
+            render_rx,
+            state.clone(),
+            watch_weak,
+            options.inputs.clone(),
+            render,
+            shutdown.clone(),
+        );
+
+        Ok(Self {
+            state,
+            shutdown,
+            render_tx: Some(render_tx),
+            render_worker: Some(render_worker),
+            watch_state,
+        })
+    }
+
+    fn start_in_current_thread(
+        options: PreviewEngineOptions,
+        render: Arc<dyn Fn(RenderRequest) -> RenderResult + Send + Sync>,
+    ) -> Result<Self> {
+        Self::start(options, render)
+    }
+
+    fn router(&self) -> Router {
+        Router::new()
+            .route("/", get(index_handler))
+            .route("/__events", get(events_handler))
+            .with_state(Arc::clone(&self.state))
+    }
+
+    fn trigger_render(&self) {
+        if let Some(tx) = &self.render_tx {
+            let _ = tx.send(());
+        }
+    }
+
+    fn stop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.render_tx.take();
+    }
+}
+
+fn join_worker_off_runtime(worker: JoinHandle<()>) {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(move || {
+            let _ = worker.join();
+        });
+    } else {
+        let _ = worker.join();
+    }
+}
+
+impl Drop for PreviewEngine {
+    fn drop(&mut self) {
+        self.stop();
+        if let Some(worker) = self.render_worker.take() {
+            join_worker_off_runtime(worker);
+        }
+    }
+}
+
+pub struct HostedPreview {
+    engine: PreviewEngine,
+    preview_url: String,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    _server: TokioJoinHandle<Result<()>>,
+}
+
+impl HostedPreview {
+    pub async fn start(
+        options: HostedPreviewOptions,
+        render: impl Fn(RenderRequest) -> RenderResult + Send + Sync + 'static,
+    ) -> Result<Self> {
+        let render = Arc::new(render);
+        let engine = tokio::task::spawn_blocking({
+            let options = options.clone();
+            let render = Arc::clone(&render);
+            move || PreviewEngine::start_in_current_thread(options.into(), render)
+        })
+        .await
+        .context("preview engine task")??;
+
+        let router = engine.router();
+
+        let (listener, bound_addr) =
+            bind_preview_listener(&options.host, options.port).await?;
+        let preview_url = format!("http://{bound_addr}/");
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .context("hosted preview server")
+        });
+
+        Ok(Self {
+            engine,
+            preview_url,
+            shutdown_tx: Some(shutdown_tx),
+            _server: server,
+        })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.preview_url
+    }
+
+    pub fn open_browser(&self) -> Result<()> {
+        open_url(&self.preview_url)
+    }
+
+    pub fn trigger_render(&self) {
+        self.engine.trigger_render();
+    }
+
+    pub async fn shutdown(self) {
+        let _ = tokio::task::spawn_blocking(move || drop(self))
+            .await;
+    }
+}
+
+impl Drop for HostedPreview {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
 }
 
 async fn bind_preview_listener(
@@ -81,10 +308,12 @@ async fn bind_preview_listener(
     let bound = listener
         .local_addr()
         .context("Read bound preview server address")?;
-    eprintln!(
-        "Port {preferred_port} in use, using port {} instead",
-        bound.port()
-    );
+    if preferred_port != 0 {
+        eprintln!(
+            "Port {preferred_port} in use, using port {} instead",
+            bound.port()
+        );
+    }
     Ok((listener, bound))
 }
 
@@ -93,50 +322,7 @@ pub fn run(
     render: impl Fn(RenderRequest) -> RenderResult + Send + Sync + 'static,
 ) -> Result<()> {
     let render = Arc::new(render);
-    let (notify_tx, _) = broadcast::channel(64);
-
-    let first = render(RenderRequest {
-        inputs: options.inputs.clone(),
-    });
-    let (initial_html, initial_extra, export_initial) = match first {
-        RenderResult::Ok {
-            html,
-            extra_watch_paths,
-        } => (html, extra_watch_paths, true),
-        RenderResult::Err { html } => (html, Vec::new(), false),
-    };
-
-    let state = Arc::new(AppState {
-        html: RwLock::new(initial_html),
-        version: AtomicU64::new(0),
-        notify_tx: notify_tx.clone(),
-        export_path: options.export_path.clone(),
-    });
-
-    if export_initial {
-        if let Ok(guard) = state.html.read() {
-            if let Err(err) = write_export_if_configured(state.export_path.as_deref(), &guard) {
-                eprintln!("Export error: {err:#}");
-            }
-        }
-    }
-
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let (render_tx, render_rx) = std::sync::mpsc::channel::<()>();
-
-    let mut watch_paths = options.watch_paths.clone();
-    watch_paths.extend(initial_extra);
-    let watch_state = Arc::new(Mutex::new(setup_watcher(watch_paths, render_tx.clone())?));
-    let watch_weak = Arc::downgrade(&watch_state);
-
-    let render_worker = spawn_render_worker(
-        render_rx,
-        state.clone(),
-        watch_weak,
-        options.inputs.clone(),
-        render,
-        shutdown.clone(),
-    );
+    let mut engine = PreviewEngine::start(options.clone().into(), render)?;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -145,28 +331,26 @@ pub fn run(
 
     let host = options.host.clone();
     let start_port = options.port;
+    let open_browser = options.open_browser;
+    let router = engine.router();
 
     rt.block_on(async {
-        let app = Router::new()
-            .route("/", get(index_handler))
-            .route("/__events", get(events_handler))
-            .with_state(state);
-
         let (listener, bound_addr) = bind_preview_listener(&host, start_port).await?;
         let serve_url = format!("http://{bound_addr}/");
 
         eprintln!("Preview server listening at {serve_url}");
-        let watch_count = watch_state
+        let watch_count = engine
+            .watch_state
             .lock()
             .map(|guard| guard.watched.len())
             .unwrap_or(0);
         eprintln!("Watching {watch_count} path(s) for changes");
 
-        if options.open_browser {
+        if open_browser {
             open_url(&serve_url)?;
         }
 
-        let server = axum::serve(listener, app);
+        let server = axum::serve(listener, router);
         tokio::select! {
             result = server => {
                 result.context("HTTP server error")?;
@@ -179,13 +363,7 @@ pub fn run(
         Ok::<(), anyhow::Error>(())
     })?;
 
-    shutdown.store(true, Ordering::SeqCst);
-    drop(watch_state);
-    drop(render_tx);
-    if let Err(err) = render_worker.join() {
-        eprintln!("Render worker panicked: {err:?}");
-    }
-
+    engine.stop();
     eprintln!("Preview server stopped.");
     Ok(())
 }
@@ -396,7 +574,7 @@ async fn events_handler(
     Sse::new(stream)
 }
 
-fn open_url(url: &str) -> Result<()> {
+pub fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = Command::new("open");

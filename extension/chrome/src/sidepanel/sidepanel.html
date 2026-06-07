@@ -7,50 +7,63 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="sidepanel.css">
 </head>
-<body class="min-w-[300px]">
-  <div class="flex flex-col h-screen">
+<body class="panel-body">
+  <div class="panel-root">
 
     <!-- Toolbar: URL + actions -->
-    <div class="flex items-center gap-1.5 px-2.5 py-2 bg-muted shrink-0">
-      <div id="current-url" class="flex-1 min-w-0 text-[11px] text-muted-foreground truncate">No page loaded</div>
-      <button id="btn-quick-convert" title="Quick convert (Readability)"
-        class="shrink-0 h-6 px-2 inline-flex items-center gap-1 rounded text-[10px] font-medium border border-border text-foreground hover:bg-accent cursor-pointer transition-colors">⚡ Quick</button>
-      <button id="btn-settings" title="Settings"
-        class="shrink-0 h-6 w-6 inline-flex items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer transition-colors">⚙</button>
+    <div class="panel-toolbar">
+      <div id="current-url" class="panel-url">No page loaded</div>
+      <button id="btn-quick-convert" type="button" title="Quick convert (Readability)" class="panel-btn panel-btn-outline panel-btn-compact">⚡ Quick</button>
+      <button id="btn-settings" type="button" title="Settings" class="panel-icon-btn">⚙</button>
     </div>
 
-    <!-- Hook Editor (main area, grows to fill) -->
-    <div class="flex-1 flex flex-col min-h-0">
-      <!-- Hook tab bar -->
-      <div class="flex items-center justify-between h-8 px-1.5 border-b border-border bg-background shrink-0">
-        <div class="flex h-full gap-0.5">
-          <button class="hook-tab" data-hook="clean">Clean</button>
-          <button class="hook-tab active" data-hook="extract">Extract</button>
-          <button class="hook-tab" data-hook="navigate">Navigate</button>
-          <button class="hook-tab" data-hook="stop">Stop</button>
+    <!-- Script loader -->
+    <div id="script-bar" class="script-bar">
+      <div class="script-bar-row">
+        <button id="btn-load-script" type="button" class="script-btn script-btn-primary">Load .pagemd.js</button>
+        <input id="script-file-input" type="file" accept=".pagemd.js,.js" hidden />
+        <div id="script-meta" class="script-meta hidden">
+          <span id="script-filename" class="script-filename" title="Loaded file"></span>
+          <span id="script-pattern" class="script-pattern" title="urlPattern"></span>
+          <span id="script-match-badge" class="script-badge"></span>
         </div>
-        <div class="flex items-center gap-0.5">
+        <div id="script-actions" class="script-actions hidden">
+          <button id="btn-reapply-script" type="button" class="script-btn" title="Reset editors from loaded file">Reapply</button>
+          <button id="btn-clear-script" type="button" class="script-btn script-btn-muted">Clear</button>
+        </div>
+      </div>
+      <div id="script-summary" class="script-summary hidden"></div>
+    </div>
+
+    <!-- Hook Editor -->
+    <div class="panel-main">
+      <div class="hook-tab-bar">
+        <div class="hook-tabs">
+          <button class="hook-tab" data-hook="clean">Clean<span class="hook-dot" data-for="clean"></span></button>
+          <button class="hook-tab active" data-hook="extract">Extract<span class="hook-dot" data-for="extract"></span></button>
+          <button class="hook-tab" data-hook="navigate">Navigate<span class="hook-dot" data-for="navigate"></span></button>
+          <button class="hook-tab" data-hook="stop">Stop<span class="hook-dot" data-for="stop"></span></button>
+        </div>
+        <div class="hook-tab-actions">
           <button id="btn-docs" title="Docs" class="action-icon">📖</button>
           <button id="btn-run-test" title="Run" class="action-icon">▶️</button>
         </div>
       </div>
 
-      <!-- Editor / Docs -->
-      <div class="flex-1 min-h-0 relative">
-        <div id="hook-view-editor" class="hook-view active absolute inset-0">
+      <div class="hook-content">
+        <div id="hook-view-editor" class="hook-view active">
           <textarea id="hook-clean" class="code-area" data-hook="clean" style="display:none;"
-            placeholder="(optional) Remove unwanted elements...&#10;Returns { removed: number }"></textarea>
+            placeholder="function clean() { … }&#10;Optional. Returns { removed: number }"></textarea>
           <textarea id="hook-extract" class="code-area" data-hook="extract"
-            placeholder="Extract page content...&#10;Returns { title, html } or null"></textarea>
+            placeholder="function extract() { … }&#10;Required. Returns { title, html } or null"></textarea>
           <textarea id="hook-navigate" class="code-area" data-hook="navigate" style="display:none;"
-            placeholder="(optional) Navigate to next page...&#10;Returns { success: boolean }"></textarea>
+            placeholder="function navigate() { … }&#10;Optional. Returns { success: boolean }"></textarea>
           <textarea id="hook-stop" class="code-area" data-hook="stop" style="display:none;"
-            placeholder="(optional) Decide when to stop...&#10;Receives context. Returns { shouldStop, reason? }"></textarea>
+            placeholder="function stop(context) { … }&#10;Optional. Returns { shouldStop, reason? }"></textarea>
         </div>
 
-        <div id="hook-view-docs" class="hook-view absolute inset-0 overflow-y-auto">
+        <div id="hook-view-docs" class="hook-view">
           <div class="docs-pane">
-            <!-- Workflow diagram -->
             <div class="docs-workflow">
               <span class="wf-step">Clean</span>
               <span class="wf-arrow">→</span>
@@ -64,7 +77,28 @@
               <span class="wf-step">Stop</span>
             </div>
 
-            <!-- Clean -->
+            <div class="docs-section">
+              <h4 class="docs-title">Load .pagemd.js</h4>
+              <p class="docs-hint">Use <b>Load .pagemd.js</b> to import scripts exported from PageMD Browser. Hooks appear in the Clean / Extract / Navigate / Stop tabs as editable <code>function</code> declarations.</p>
+              <pre class="docs-code">const urlPattern = "https://example.com/*";
+
+const NOISE = ["nav", "footer"];
+
+function clean() {
+  let removed = 0;
+  NOISE.forEach((sel) =&gt;
+    document.querySelectorAll(sel).forEach((el) =&gt; { el.remove(); removed++; })
+  );
+  return { removed };
+}
+
+function extract() {
+  const el = document.querySelector("article");
+  if (!el) return null;
+  return { title: document.title, html: el.innerHTML };
+}</pre>
+            </div>
+
             <div class="docs-section">
               <h4 class="docs-title">Clean <span class="docs-optional">optional</span></h4>
               <p class="docs-hint">Removes unwanted elements <b>before</b> extraction. Modifies the live DOM.<br>Returns <code>{ removed: number }</code></p>
@@ -81,7 +115,6 @@
 })()</pre>
             </div>
 
-            <!-- Extract -->
             <div class="docs-section">
               <h4 class="docs-title">Extract</h4>
               <p class="docs-hint">Extracts page content. Use <code>cloneNode</code> to avoid modifying the page.<br>Returns <code>{ title: string, html: string }</code> or <code>null</code></p>
@@ -99,7 +132,6 @@
 })()</pre>
             </div>
 
-            <!-- Navigate -->
             <div class="docs-section">
               <h4 class="docs-title">Navigate <span class="docs-optional">optional</span></h4>
               <p class="docs-hint">Clicks next page or performs navigation.<br>Returns <code>{ success: boolean }</code></p>
@@ -114,7 +146,6 @@
 })()</pre>
             </div>
 
-            <!-- Stop -->
             <div class="docs-section">
               <h4 class="docs-title">Stop <span class="docs-optional">optional</span></h4>
               <p class="docs-hint">Decides when to stop batch crawling. Receives <code>context</code> with <code>currentUrl</code>, <code>pageIndex</code>, <code>collectedUrls[]</code>, <code>collectedTitles[]</code>.<br>Returns <code>{ shouldStop: boolean, reason?: string }</code></p>
@@ -132,54 +163,49 @@
         </div>
       </div>
 
-      <!-- Test result (appears above bottom bar) -->
-      <div id="hook-test-result" class="shrink-0 px-3 py-1.5 text-[11px] font-mono bg-muted/70 border-t border-border max-h-24 overflow-auto whitespace-pre-wrap break-all" style="display:none;"></div>
+      <div id="hook-test-result" class="hook-test-result" style="display:none;"></div>
     </div>
 
     <!-- Bottom action bar -->
-    <div class="shrink-0 border-t border-border bg-background px-3 py-2">
-      <div class="flex items-center gap-1.5 mb-1.5">
-        <button id="btn-convert"
-          class="flex-1 h-8 inline-flex items-center justify-center gap-1 rounded-md text-[11px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer transition-colors">Convert Page</button>
-        <button id="btn-batch"
-          class="flex-1 h-8 inline-flex items-center justify-center gap-1 rounded-md text-[11px] font-medium border border-border bg-background text-foreground hover:bg-accent cursor-pointer transition-colors">Batch</button>
-        <button id="btn-stop-pipeline" style="display:none;"
-          class="flex-1 h-8 inline-flex items-center justify-center gap-1 rounded-md text-[11px] font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer transition-colors">Stop</button>
-        <button id="btn-save-recipe" title="Save as Recipe"
-          class="h-8 w-8 inline-flex items-center justify-center rounded-md text-sm border border-border bg-background hover:bg-accent cursor-pointer transition-colors">💾</button>
+    <div class="bottom-bar">
+      <div class="bottom-actions">
+        <button id="btn-convert" type="button" class="panel-btn panel-btn-primary">Convert Page</button>
+        <button id="btn-batch" type="button" class="panel-btn panel-btn-outline">Batch</button>
+        <button id="btn-stop-pipeline" type="button" style="display:none;" class="panel-btn panel-btn-danger">Stop</button>
+        <button id="btn-save-recipe" type="button" title="Save as Recipe" class="panel-icon-btn panel-icon-btn-lg">💾</button>
       </div>
-      <div class="flex items-center gap-3 text-[10px] text-muted-foreground">
-        <label class="flex items-center gap-1">Pages <input id="opt-max-pages" type="number" value="1000" min="1" max="10000" class="w-12 h-5 px-1 border border-input rounded text-[10px] bg-background text-foreground"></label>
-        <label class="flex items-center gap-1">Delay <input id="opt-delay-min" type="number" value="2" min="0" max="60" class="w-8 h-5 px-1 border border-input rounded text-[10px] bg-background text-foreground">–<input id="opt-delay-max" type="number" value="4" min="0" max="60" class="w-8 h-5 px-1 border border-input rounded text-[10px] bg-background text-foreground">s</label>
+      <div class="batch-options">
+        <label class="batch-option">Pages <input id="opt-max-pages" type="number" value="1000" min="1" max="10000" class="batch-input batch-input-wide"></label>
+        <label class="batch-option">Delay <input id="opt-delay-min" type="number" value="2" min="0" max="60" class="batch-input">–<input id="opt-delay-max" type="number" value="4" min="0" max="60" class="batch-input">s</label>
       </div>
     </div>
 
-    <!-- Results (collapsible) -->
-    <div id="results-section" class="shrink-0 border-t border-border bg-background" style="display:none;">
-      <div class="px-3 py-1.5 flex items-center justify-between">
-        <span class="text-[11px] font-semibold">Results <span id="result-count" class="font-normal text-muted-foreground"></span></span>
-        <div class="flex gap-0.5">
-          <button id="btn-copy-all" title="Copy all" class="res-action-btn">📋</button>
-          <button id="btn-download-zip" title="Download ZIP" class="res-action-btn">💾</button>
-          <button id="btn-clear-results" title="Clear all" class="res-action-btn">🗑</button>
+    <!-- Results -->
+    <div id="results-section" class="results-section" style="display:none;">
+      <div class="results-header">
+        <span class="results-title">Results <span id="result-count" class="results-count"></span></span>
+        <div class="results-actions">
+          <button id="btn-copy-all" type="button" title="Copy all" class="res-action-btn">📋</button>
+          <button id="btn-download-zip" type="button" title="Download ZIP" class="res-action-btn">💾</button>
+          <button id="btn-clear-results" type="button" title="Clear all" class="res-action-btn">🗑</button>
         </div>
       </div>
-      <div id="results-list" class="max-h-40 overflow-y-auto border-t border-border"></div>
+      <div id="results-list" class="results-list"></div>
     </div>
 
     <!-- Markdown Preview Overlay -->
     <div id="md-preview-overlay" class="md-preview-overlay" style="display:none;">
       <div class="md-preview-header">
-        <span class="text-[11px] font-semibold" id="md-preview-title">Preview</span>
-        <button id="md-preview-close" class="res-action-btn">✕</button>
+        <span class="md-preview-title" id="md-preview-title">Preview</span>
+        <button id="md-preview-close" type="button" class="res-action-btn">✕</button>
       </div>
       <div id="md-preview-content" class="md-preview-content"></div>
     </div>
 
-    <!-- Log (resizable) -->
-    <div id="log-section" class="shrink-0 border-t border-border" style="display:none;">
+    <!-- Log -->
+    <div id="log-section" class="log-section" style="display:none;">
       <div id="log-resize-handle" class="log-resize-handle" title="Drag to resize">
-        <span class="text-[11px] font-semibold">Log</span>
+        <span class="log-title">Log</span>
       </div>
       <div id="log-content" class="log-panel"></div>
     </div>

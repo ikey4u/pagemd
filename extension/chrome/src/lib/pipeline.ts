@@ -1,6 +1,8 @@
 import type { StopHookContext, ExtractResult, PipelineResult, PipelineState } from './types';
-import { executeHook, executeHookViaDebugger, cleanHookCode, validateHookSyntax } from './hook-executor';
+import { executeHook, executeHookViaDebugger } from './hook-executor';
 import { loadSettings } from './settings';
+import type { PagmdScript } from './pagemd-script';
+import type { HookType } from './prompt';
 
 export interface PipelineConfig {
   tabId: number;
@@ -8,6 +10,7 @@ export interface PipelineConfig {
   extractHookCode: string;
   navigateHookCode: string | null;
   stopHookCode: string | null;
+  pagmdScript?: PagmdScript | null;
   maxPages: number;
   delay: [number, number];
   maxExtractErrors: number;
@@ -56,13 +59,15 @@ export class Pipeline {
         // 2. Execute Clean Hook (if present)
         if (this.config.cleanHookCode) {
           this.config.onLog('Cleaning page...', 'info');
-          await this.executeWithFallback(this.config.cleanHookCode);
+          await this.executeWithFallback(this.config.cleanHookCode, undefined, 'clean');
         }
 
         // 3. Execute Extract Hook
         this.config.onLog(`Extracting page ${this.state.pageIndex + 1}...`, 'info');
         const extractResult = await this.executeWithFallback(
           this.config.extractHookCode,
+          undefined,
+          'extract',
         );
 
         if (!extractResult.success || !extractResult.value) {
@@ -128,6 +133,7 @@ export class Pipeline {
           const stopResult = await this.executeWithFallback(
             this.config.stopHookCode,
             stopCtx,
+            'stop',
           );
           if (stopResult.success && stopResult.value) {
             const stop = stopResult.value as { shouldStop: boolean; reason?: string };
@@ -143,6 +149,8 @@ export class Pipeline {
         this.config.onLog('Navigating to next page...', 'info');
         const navResult = await this.executeWithFallback(
           this.config.navigateHookCode!,
+          undefined,
+          'navigate',
         );
 
         if (!navResult.success || !(navResult.value as { success: boolean })?.success) {
@@ -187,12 +195,14 @@ export class Pipeline {
   private async executeWithFallback(
     code: string,
     context?: StopHookContext,
+    hookType: HookType = 'extract',
   ): Promise<{ success: true; value: unknown } | { success: false; error: string }> {
-    let result = await executeHook(this.config.tabId, code, context);
+    const pagmdScript = this.config.pagmdScript ?? null;
+    let result = await executeHook(this.config.tabId, code, context, hookType, pagmdScript);
     if (!result.success && result.error.startsWith('CSP_BLOCKED')) {
       const settings = await loadSettings();
       if (settings.debugMode) {
-        result = await executeHookViaDebugger(this.config.tabId, code, context);
+        result = await executeHookViaDebugger(this.config.tabId, code, context, hookType, pagmdScript);
       }
     }
     return result;

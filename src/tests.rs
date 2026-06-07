@@ -259,6 +259,64 @@ fn export_html_restores_workspace_script_for_preview_render() {
     assert!(!exported.contains("data-pagemd-live-preview"));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn hosted_preview_starts_inside_tokio_runtime() {
+    use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
+    use crate::app::preview::{HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
+    use crate::core::{
+        export_with_resources, prepare_resources, ConvertOptions, OutputFormat,
+    };
+
+    let dir = temp_test_dir("hosted-preview");
+    let session_path = dir.join("session.md");
+    std::fs::write(&session_path, "# Hello\n\nPreview inside runtime.\n").unwrap();
+
+    let convert_opts = ConvertOptions {
+        inputs: vec![session_path.clone()],
+        directories: Vec::new(),
+        excludes: Vec::new(),
+        title: Some("Hosted preview".to_string()),
+        icon: None,
+        math_font_size: 1.0,
+        katex_fonts: None,
+        output_format: OutputFormat::Html,
+    };
+    let resources = prepare_resources(&convert_opts).unwrap();
+    let html_opts = preview_html_opts();
+
+    let hosted = HostedPreview::start(
+        HostedPreviewOptions {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            inputs: vec![session_path.clone()],
+            watch_paths: vec![session_path.clone()],
+            export_path: None,
+        },
+        move |_request: RenderRequest| {
+            match export_with_resources(
+                &convert_opts,
+                &html_opts,
+                &resources,
+                Some(session_path.as_path()),
+            ) {
+                Ok(document) => RenderResult::Ok {
+                    html: document.html,
+                    extra_watch_paths: Vec::new(),
+                },
+                Err(err) => RenderResult::Err {
+                    html: build_preview_error_html(&err),
+                },
+            }
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(hosted.url().starts_with("http://127.0.0.1:"));
+    hosted.shutdown().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn single_file_html_includes_outline_workspace() {
     let html = build_html(

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+use crate::app::browser;
 use crate::app::convert::run_convert;
 use crate::app::preview;
 use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
@@ -40,6 +41,19 @@ enum Commands {
                       pagemd -i doc.md -o out.html"
     )]
     View(ViewArgs),
+    #[command(
+        about = "Interactive browser REPL via Chrome DevTools Protocol",
+        long_about = "Launch (or connect to) Chrome with a dedicated profile and drive the page\n\
+                      from a slash-command REPL (/goto, /eval, /undo, /snap, /md, …).\n\n\
+                      Usage:\n  \
+                      pagemd browser\n  \
+                      pagemd browser --url https://example.com\n  \
+                      pagemd browser --connect --port 9222\n  \
+                      pagemd browser --clean --url https://example.com"
+    )]
+    Browser(browser::cli::BrowserArgs),
+    #[command(name = "browser-mcp", hide = true, about = "MCP stdio bridge for pagemd browser")]
+    BrowserMcp(browser::mcp_cli::BrowserMcpArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -211,6 +225,8 @@ pub fn run() -> Result<()> {
 
     match cli.command {
         Some(Commands::View(args)) => run_view(&args),
+        Some(Commands::Browser(args)) => browser::run(args),
+        Some(Commands::BrowserMcp(args)) => browser::mcp_cli::run(args),
         None => run_convert(&cli.args),
     }
 }

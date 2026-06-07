@@ -27,9 +27,10 @@
 
 @layer base {
   body {
-    background-color: var(--color-muted);
+    background-color: var(--color-background);
     color: var(--color-foreground);
-    font-size: 13px;
+    font-size: 15px;
+    line-height: 1.5;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
   }

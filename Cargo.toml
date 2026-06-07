@@ -1,6 +1,6 @@
 [package]
 name = "pagemd"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 build = "build.rs"
 
@@ -11,7 +11,7 @@ path = "src/main.rs"
 [build-dependencies]
 anyhow = "1"
 flate2 = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 tar = "0.4"
 toml = "0.8"
@@ -24,7 +24,7 @@ base64 = "0.22"
 mermaid-rs-renderer = { version = "0.2.2", default-features = false }
 plantuml_encoding = "2.0.3"
 regex = "1.12"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 ratex-svg = { version = "0.0.15", features = ["standalone", "cli"] }
 ratex-parser = "0.0.15"
 ratex-layout = "0.0.15"
@@ -33,11 +33,18 @@ ratex-font = "0.0.15"
 anyhow = "1"
 ratex-katex-fonts = "0.1.8"
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util", "sync"] }
 notify = "8"
 notify-debouncer-mini = "0.6"
 async-stream = "0.3"
 futures = "0.3"
+futures-util = "0.3"
+tokio-tungstenite = "0.26"
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "v5"] }
+rustyline = "15"
+htmd = "0.1"
+which = "7"
 typst-as-lib = { version = "0.15.4", features = ["typst-kit-fonts", "typst-kit-embed-fonts", "packages", "reqwest"] }
 typst-svg = "0.14"
 typst = "0.14"

@@ -1,13 +1,16 @@
 import { buildPrompt, type HookType } from '../lib/prompt';
 import { cleanHookCode, validateHookSyntax, executeHook, executeHookViaDebugger } from '../lib/hook-executor';
 import { loadSettings } from '../lib/settings';
-import { findMatchingRecipe } from '../lib/recipe';
+import { findMatchingRecipe, matchUrlPattern } from '../lib/recipe';
+import { parsePagmdScript, compileHookForRun, pagmdScriptSummary, type PagmdScript } from '../lib/pagemd-script';
 import { Pipeline } from '../lib/pipeline';
 import type { PageContext, StopHookContext, ExtractResult, PipelineState } from '../lib/types';
 import MarkdownIt from 'markdown-it';
 
 let currentTabId: number | null = null;
 let cachedPageContext: PageContext | null = null;
+let loadedPagmdScript: PagmdScript | null = null;
+let loadedScriptFileName: string | null = null;
 
 // --- Utility ---
 
@@ -37,6 +40,110 @@ function log(message: string, type: 'info' | 'success' | 'error' | 'warn' = 'inf
   content.scrollTop = content.scrollHeight;
 }
 
+// --- Pagmd Script ---
+
+function getHookValue(hookType: HookType): string {
+  return (document.getElementById(`hook-${hookType}`) as HTMLTextAreaElement).value;
+}
+
+function setHookValue(hookType: HookType, value: string) {
+  (document.getElementById(`hook-${hookType}`) as HTMLTextAreaElement).value = value;
+}
+
+function syncLoadedScriptFromEditors(): PagmdScript | null {
+  if (!loadedPagmdScript) return null;
+  return {
+    ...loadedPagmdScript,
+    clean: getHookValue('clean').trim() || undefined,
+    extract: getHookValue('extract').trim() || loadedPagmdScript.extract,
+    navigate: getHookValue('navigate').trim() || undefined,
+    stop: getHookValue('stop').trim() || undefined,
+  };
+}
+
+function applyPagmdScriptToEditors(script: PagmdScript) {
+  setHookValue('clean', script.clean ?? '');
+  setHookValue('extract', script.extract);
+  setHookValue('navigate', script.navigate ?? '');
+  setHookValue('stop', script.stop ?? '');
+  updateHookTabDots();
+}
+
+function updateHookTabDots() {
+  for (const hook of ['clean', 'extract', 'navigate', 'stop'] as HookType[]) {
+    const dot = document.querySelector(`.hook-dot[data-for="${hook}"]`);
+    if (dot) dot.classList.toggle('filled', getHookValue(hook).trim().length > 0);
+  }
+}
+
+function updateScriptBarUI(currentUrl?: string) {
+  const meta = $('script-meta');
+  const actions = $('script-actions');
+  const summary = $('script-summary');
+
+  if (!loadedPagmdScript || !loadedScriptFileName) {
+    meta.classList.add('hidden');
+    actions.classList.add('hidden');
+    summary.classList.add('hidden');
+    return;
+  }
+
+  meta.classList.remove('hidden');
+  actions.classList.remove('hidden');
+  summary.classList.remove('hidden');
+
+  ($('script-filename') as HTMLElement).textContent = loadedScriptFileName;
+  ($('script-pattern') as HTMLElement).textContent = loadedPagmdScript.urlPattern;
+
+  const badge = $('script-match-badge');
+  const url = currentUrl ?? ($('current-url') as HTMLElement).textContent ?? '';
+  if (url && url !== 'No page loaded' && matchUrlPattern(url, loadedPagmdScript.urlPattern)) {
+    badge.textContent = 'Matches';
+    badge.className = 'script-badge match';
+  } else {
+    badge.textContent = 'No match';
+    badge.className = 'script-badge no-match';
+  }
+
+  summary.textContent = pagmdScriptSummary(loadedPagmdScript);
+}
+
+async function loadPagmdScriptFile(file: File) {
+  const text = await file.text();
+  const script = parsePagmdScript(text);
+  loadedPagmdScript = script;
+  loadedScriptFileName = file.name;
+  applyPagmdScriptToEditors(script);
+
+  const tab = await getCurrentTab();
+  updateScriptBarUI(tab?.url);
+  switchHookTab('extract');
+  log(`Loaded script: ${file.name} (${script.urlPattern})`, 'success');
+  showToast(`Loaded ${file.name}`);
+}
+
+function clearLoadedScript(clearEditors = true) {
+  loadedPagmdScript = null;
+  loadedScriptFileName = null;
+  if (clearEditors) {
+    for (const hook of ['clean', 'extract', 'navigate', 'stop'] as HookType[]) {
+      setHookValue(hook, '');
+    }
+    updateHookTabDots();
+  }
+  updateScriptBarUI();
+}
+
+function reapplyLoadedScript() {
+  if (!loadedPagmdScript) {
+    showToast('No script loaded');
+    return;
+  }
+  applyPagmdScriptToEditors(loadedPagmdScript);
+  showToast('Editors reset from file');
+  log('Reapplied loaded .pagemd.js', 'info');
+}
+
 // --- Tab ---
 
 async function getCurrentTab(): Promise<chrome.tabs.Tab | null> {
@@ -50,26 +157,33 @@ async function updateCurrentPage() {
     currentTabId = tab.id;
     ($('current-url') as HTMLElement).textContent = tab.url;
     cachedPageContext = null;
+    updateScriptBarUI(tab.url);
+
+    if (loadedPagmdScript) {
+      return;
+    }
 
     const recipe = await findMatchingRecipe(tab.url);
     if (recipe) {
       if (recipe.cleanHook?.script) {
-        (document.getElementById('hook-clean') as HTMLTextAreaElement).value = recipe.cleanHook.script;
+        setHookValue('clean', recipe.cleanHook.script);
       }
       if (recipe.extractHook.script) {
-        (document.getElementById('hook-extract') as HTMLTextAreaElement).value = recipe.extractHook.script;
+        setHookValue('extract', recipe.extractHook.script);
       }
       if (recipe.navigateHook?.script) {
-        (document.getElementById('hook-navigate') as HTMLTextAreaElement).value = recipe.navigateHook.script;
+        setHookValue('navigate', recipe.navigateHook.script);
       }
       if (recipe.stopHook?.script) {
-        (document.getElementById('hook-stop') as HTMLTextAreaElement).value = recipe.stopHook.script;
+        setHookValue('stop', recipe.stopHook.script);
       }
+      updateHookTabDots();
       log(`Loaded recipe: ${recipe.name}`, 'info');
     }
   } else {
     currentTabId = null;
     ($('current-url') as HTMLElement).textContent = 'No page loaded';
+    updateScriptBarUI();
   }
 }
 
@@ -304,7 +418,11 @@ async function runHook(hookType: HookType): Promise<unknown> {
   let code = cleanHookCode(textarea.value);
   if (!code) throw new Error('No hook code');
 
-  const syntaxError = await validateHookSyntax(currentTabId, code);
+  const pagmdScript = syncLoadedScriptFromEditors();
+  if (pagmdScript) loadedPagmdScript = pagmdScript;
+
+  const compiled = compileHookForRun(code, hookType, pagmdScript);
+  const syntaxError = await validateHookSyntax(currentTabId, compiled);
   if (syntaxError) throw new Error(`Syntax error: ${syntaxError}`);
 
   let contextArg: StopHookContext | undefined;
@@ -317,13 +435,13 @@ async function runHook(hookType: HookType): Promise<unknown> {
     };
   }
 
-  let result = await executeHook(currentTabId, code, contextArg);
+  let result = await executeHook(currentTabId, code, contextArg, hookType, pagmdScript);
 
   if (!result.success && result.error.startsWith('CSP_BLOCKED')) {
     const settings = await loadSettings();
     if (settings.debugMode) {
       log('CSP blocked, falling back to debugger...', 'warn');
-      result = await executeHookViaDebugger(currentTabId, code, contextArg);
+      result = await executeHookViaDebugger(currentTabId, code, contextArg, hookType, pagmdScript);
     } else {
       throw new Error('Page CSP blocks script execution. Enable Debug Mode in settings.');
     }
@@ -341,7 +459,7 @@ async function testHook(hookType: HookType) {
   function setOutput(text: string, isError = false) {
     resultBar.style.display = 'block';
     resultBar.textContent = text;
-    resultBar.style.color = isError ? '#e63946' : '#333';
+    resultBar.classList.toggle('is-error', isError);
   }
 
   setOutput('Running...');
@@ -703,12 +821,14 @@ async function startBatchExecution() {
   renderResults();
 
   const tabId = currentTabId;
+  const pagmdScript = syncLoadedScriptFromEditors();
   activePipeline = new Pipeline({
     tabId,
     cleanHookCode: cleanCode,
     extractHookCode: extractCode,
     navigateHookCode: navigateCode,
     stopHookCode: stopCode,
+    pagmdScript,
     maxPages,
     delay: [delayMin, delayMax],
     maxExtractErrors: 3,
@@ -820,6 +940,37 @@ function initLogResize() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   initLogResize();
+
+  for (const hook of ['clean', 'extract', 'navigate', 'stop'] as HookType[]) {
+    document.getElementById(`hook-${hook}`)?.addEventListener('input', updateHookTabDots);
+  }
+
+  $('btn-load-script').addEventListener('click', () => {
+    ($('script-file-input') as HTMLInputElement).click();
+  });
+
+  $('script-file-input').addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      await loadPagmdScriptFile(file);
+    } catch (err) {
+      showToast(`Load failed: ${err}`);
+      log(`Script load failed: ${err}`, 'error');
+    }
+  });
+
+  $('btn-clear-script').addEventListener('click', async () => {
+    clearLoadedScript(true);
+    await updateCurrentPage();
+    showToast('Script cleared');
+    log('Cleared loaded script', 'info');
+  });
+
+  $('btn-reapply-script').addEventListener('click', reapplyLoadedScript);
+
   // Hook tab switching
   document.querySelectorAll('.hook-tab').forEach(tab => {
     tab.addEventListener('click', () => {
