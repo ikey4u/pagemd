@@ -54,3 +54,7 @@ toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 dirs = "6"
 rust-embed = "8"
+# pagemd does not use time directly; it is a transitive dep of typst-library / syntect.
+# time 0.3.47 conflicts with typst-library 0.14 blanket From impls (E0119),
+# so pin the version until typst fixes it; remove this line once resolved.
+time = "=0.3.46"
