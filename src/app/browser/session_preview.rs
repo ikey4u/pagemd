@@ -33,12 +33,7 @@ impl SessionPreview {
         slot: &'a mut Option<SessionPreview>,
         session_md: &SessionMarkdown,
     ) -> Result<&'a SessionPreview> {
-        Self::ensure_at_path(
-            slot,
-            session_md.file_path(),
-            "PageMD session",
-        )
-        .await
+        Self::ensure_at_path(slot, session_md.file_path(), "PageMD session").await
     }
 
     pub async fn ensure_at_path<'a>(

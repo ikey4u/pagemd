@@ -263,9 +263,7 @@ fn export_html_restores_workspace_script_for_preview_render() {
 async fn hosted_preview_starts_inside_tokio_runtime() {
     use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
     use crate::app::preview::{HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
-    use crate::core::{
-        export_with_resources, prepare_resources, ConvertOptions, OutputFormat,
-    };
+    use crate::core::{export_with_resources, prepare_resources, ConvertOptions, OutputFormat};
 
     let dir = temp_test_dir("hosted-preview");
     let session_path = dir.join("session.md");
@@ -292,21 +290,19 @@ async fn hosted_preview_starts_inside_tokio_runtime() {
             watch_paths: vec![session_path.clone()],
             export_path: None,
         },
-        move |_request: RenderRequest| {
-            match export_with_resources(
-                &convert_opts,
-                &html_opts,
-                &resources,
-                Some(session_path.as_path()),
-            ) {
-                Ok(document) => RenderResult::Ok {
-                    html: document.html,
-                    extra_watch_paths: Vec::new(),
-                },
-                Err(err) => RenderResult::Err {
-                    html: build_preview_error_html(&err),
-                },
-            }
+        move |_request: RenderRequest| match export_with_resources(
+            &convert_opts,
+            &html_opts,
+            &resources,
+            Some(session_path.as_path()),
+        ) {
+            Ok(document) => RenderResult::Ok {
+                html: document.html,
+                extra_watch_paths: Vec::new(),
+            },
+            Err(err) => RenderResult::Err {
+                html: build_preview_error_html(&err),
+            },
         },
     )
     .await
@@ -597,6 +593,16 @@ fn diagram_html_code_block_renders_raw_html() {
     assert!(html.contains("rounded-xl bg-sky-50 p-4"));
     assert!(html.contains("Graph node"));
     assert!(!html.contains("language-diagram"));
+}
+
+#[test]
+fn diagram_html_svg_marker_end_fragment_urls_are_preserved() {
+    let html = render_html(
+        "```diagram html\n<svg viewBox=\"0 0 200 50\"><defs><marker id=\"arr\"><path d=\"M0,0 L10,5 L0,10 Z\"/></marker></defs><path d=\"M 10 25 L 180 25\" fill=\"none\" stroke=\"#d97706\" marker-end=\"url(#arr)\"/></svg>\n```\n",
+    );
+    assert_eq!(diagram_html_count(&html), 1);
+    assert!(html.contains("marker-end=\"url(#arr)\""));
+    assert!(!html.contains("marker-end=\"url(\"#arr\")\""));
 }
 
 #[test]

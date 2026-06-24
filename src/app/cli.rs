@@ -52,7 +52,11 @@ enum Commands {
                       pagemd browser --clean --url https://example.com"
     )]
     Browser(browser::cli::BrowserArgs),
-    #[command(name = "browser-mcp", hide = true, about = "MCP stdio bridge for pagemd browser")]
+    #[command(
+        name = "browser-mcp",
+        hide = true,
+        about = "MCP stdio bridge for pagemd browser"
+    )]
     BrowserMcp(browser::mcp_cli::BrowserMcpArgs),
 }
 

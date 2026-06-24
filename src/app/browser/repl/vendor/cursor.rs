@@ -173,10 +173,7 @@ impl CursorAgentSession {
             });
         }
 
-        let stdout = child
-            .stdout
-            .take()
-            .context("agent stdout pipe missing")?;
+        let stdout = child.stdout.take().context("agent stdout pipe missing")?;
         {
             let mut guard = self
                 .running

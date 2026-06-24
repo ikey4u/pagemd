@@ -32,8 +32,8 @@ impl BrowserRuntime {
 
     pub fn read(workspace: &Path) -> Result<Self> {
         let path = Self::path(workspace);
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         serde_json::from_str(&text).context("parse browser runtime.json")
     }
 

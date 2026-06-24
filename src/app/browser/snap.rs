@@ -69,7 +69,10 @@ pub async fn capture_html(session: &CdpSession, preferred_url: Option<&str>) -> 
     Ok(html)
 }
 
-pub async fn capture_body_html(session: &CdpSession, preferred_url: Option<&str>) -> Result<String> {
+pub async fn capture_body_html(
+    session: &CdpSession,
+    preferred_url: Option<&str>,
+) -> Result<String> {
     session.attach_to_best_tab(preferred_url).await?;
     let value = session
         .evaluate("document.body ? document.body.innerHTML : ''", false)

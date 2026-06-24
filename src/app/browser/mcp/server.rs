@@ -35,10 +35,7 @@ pub fn serve_stdio(workspace: &Path) -> Result<()> {
 }
 
 fn dispatch(client: &BridgeClient, request: &Value) -> Result<Value> {
-    let method = request
-        .get("method")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = request.get("params").cloned().unwrap_or(Value::Null);
 
     match method {

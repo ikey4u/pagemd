@@ -69,9 +69,7 @@ impl CdpSession {
     pub async fn attach_to_best_tab(&self, preferred: Option<&str>) -> Result<String> {
         let current = self.current_url().await.unwrap_or_default();
         if Self::is_usable_page_url(&current) {
-            let preferred_ok = preferred
-                .map(|p| urls_match(&current, p))
-                .unwrap_or(true);
+            let preferred_ok = preferred.map(|p| urls_match(&current, p)).unwrap_or(true);
             if preferred_ok {
                 return Ok(current);
             }
@@ -92,7 +90,10 @@ impl CdpSession {
         }
 
         self.reconnect(best.clone()).await?;
-        Ok(self.current_url().await.unwrap_or_else(|_| best.url.clone()))
+        Ok(self
+            .current_url()
+            .await
+            .unwrap_or_else(|_| best.url.clone()))
     }
 
     fn is_usable_page_url(url: &str) -> bool {
@@ -112,7 +113,8 @@ impl CdpSession {
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        self.call_with_timeout(method, params, Duration::from_secs(30)).await
+        self.call_with_timeout(method, params, Duration::from_secs(30))
+            .await
     }
 
     pub async fn call_with_timeout(
@@ -175,7 +177,8 @@ impl CdpSession {
     pub async fn navigate(&self, url: &str) -> Result<()> {
         self.call("Page.navigate", json!({ "url": url })).await?;
         self.wait_for_load(Duration::from_secs(30)).await?;
-        *self.attached_url.lock().await = self.current_url().await.unwrap_or_else(|_| url.to_owned());
+        *self.attached_url.lock().await =
+            self.current_url().await.unwrap_or_else(|_| url.to_owned());
         Ok(())
     }
 
@@ -254,7 +257,9 @@ pub fn format_js_exception(details: &Value) -> String {
     details.to_string()
 }
 
-async fn open_connection(ws_url: &str) -> Result<(mpsc::UnboundedSender<IoCommand>, Arc<AtomicU64>)> {
+async fn open_connection(
+    ws_url: &str,
+) -> Result<(mpsc::UnboundedSender<IoCommand>, Arc<AtomicU64>)> {
     let (ws_stream, _) = connect_async(ws_url)
         .await
         .with_context(|| format!("connect CDP websocket {ws_url}"))?;
@@ -296,11 +301,7 @@ async fn open_connection(ws_url: &str) -> Result<(mpsc::UnboundedSender<IoComman
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                IoCommand::Send {
-                    id,
-                    payload,
-                    reply,
-                } => {
+                IoCommand::Send { id, payload, reply } => {
                     pending.lock().await.insert(id, reply);
                     if write.send(Message::Text(payload.into())).await.is_err() {
                         let mut map = pending.lock().await;

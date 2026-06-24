@@ -164,15 +164,18 @@ pub fn find_chrome(explicit: Option<&Path>) -> Result<PathBuf> {
         }
     }
 
-    for name in ["google-chrome", "google-chrome-stable", "chromium", "chrome"] {
+    for name in [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chrome",
+    ] {
         if let Ok(path) = which::which(name) {
             return Ok(path);
         }
     }
 
-    bail!(
-        "Could not find Chrome. Install Chrome or pass --chrome-path /path/to/chrome"
-    );
+    bail!("Could not find Chrome. Install Chrome or pass --chrome-path /path/to/chrome");
 }
 
 pub fn spawn_chrome(args: &BrowserArgs) -> Result<ChromeProcess> {

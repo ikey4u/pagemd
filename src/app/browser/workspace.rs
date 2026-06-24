@@ -22,7 +22,11 @@ pub fn ensure_mcp_config(workspace: &Path) -> Result<()> {
         json!({})
     };
 
-    if !doc.get("mcpServers").map(|v| v.is_object()).unwrap_or(false) {
+    if !doc
+        .get("mcpServers")
+        .map(|v| v.is_object())
+        .unwrap_or(false)
+    {
         doc["mcpServers"] = json!({});
     }
     doc["mcpServers"]["pagemd-browser"] = entry;

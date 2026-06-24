@@ -93,8 +93,8 @@ impl SessionMarkdown {
         if !path.is_file() {
             return Ok(None);
         }
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         if text.trim().is_empty() {
             return Ok(None);
         }
@@ -118,7 +118,8 @@ impl SessionMarkdown {
         if let Some(parent) = html_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&html_path, &html).with_context(|| format!("write {}", html_path.display()))?;
+        std::fs::write(&html_path, &html)
+            .with_context(|| format!("write {}", html_path.display()))?;
         std::fs::write(&md_path, &md).with_context(|| format!("write {}", md_path.display()))?;
         Ok(())
     }
@@ -162,14 +163,12 @@ impl SessionMarkdown {
         if !path.is_file() {
             return Ok(None);
         }
-        let markdown = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let markdown =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         if markdown.trim().is_empty() {
             return Ok(None);
         }
-        let meta = self
-            .read_meta_for_active()
-            .unwrap_or_default();
+        let meta = self.read_meta_for_active().unwrap_or_default();
         let snap = SessionMdSnapshot {
             markdown,
             page_url: meta.page_url,
@@ -250,7 +249,8 @@ impl SessionMarkdown {
             title: title.to_string(),
         };
         let text = serde_json::to_string_pretty(&meta)?;
-        std::fs::write(&path, format!("{text}\n")).with_context(|| format!("write {}", path.display()))?;
+        std::fs::write(&path, format!("{text}\n"))
+            .with_context(|| format!("write {}", path.display()))?;
         Ok(())
     }
 }
@@ -321,7 +321,10 @@ mod tests {
         let workspace = temp_workspace("isolated");
         let session_md = SessionMarkdown::new(&workspace);
 
-        session_md.bind_to_url("https://example.com/a").await.unwrap();
+        session_md
+            .bind_to_url("https://example.com/a")
+            .await
+            .unwrap();
         session_md
             .persist(&SessionMdSnapshot {
                 markdown: "# page a\n".to_string(),
@@ -330,7 +333,10 @@ mod tests {
             })
             .unwrap();
 
-        session_md.bind_to_url("https://example.com/b").await.unwrap();
+        session_md
+            .bind_to_url("https://example.com/b")
+            .await
+            .unwrap();
         session_md
             .persist(&SessionMdSnapshot {
                 markdown: "# page b\n".to_string(),
@@ -339,10 +345,16 @@ mod tests {
             })
             .unwrap();
 
-        session_md.bind_to_url("https://example.com/a").await.unwrap();
+        session_md
+            .bind_to_url("https://example.com/a")
+            .await
+            .unwrap();
         assert_eq!(session_md.snapshot().await.markdown, "# page a\n");
 
-        session_md.bind_to_url("https://example.com/b").await.unwrap();
+        session_md
+            .bind_to_url("https://example.com/b")
+            .await
+            .unwrap();
         assert_eq!(session_md.snapshot().await.markdown, "# page b\n");
 
         let key_a = session_key("https://example.com/a");
@@ -357,7 +369,10 @@ mod tests {
     async fn bind_is_noop_for_same_url_with_fragment() {
         let workspace = temp_workspace("fragment");
         let session_md = SessionMarkdown::new(&workspace);
-        session_md.bind_to_url("https://example.com/a").await.unwrap();
+        session_md
+            .bind_to_url("https://example.com/a")
+            .await
+            .unwrap();
         session_md
             .persist(&SessionMdSnapshot {
                 markdown: "# same\n".to_string(),
@@ -379,7 +394,10 @@ mod tests {
         let workspace = temp_workspace("reload");
         {
             let session_md = SessionMarkdown::new(&workspace);
-            session_md.bind_to_url("https://example.com/x").await.unwrap();
+            session_md
+                .bind_to_url("https://example.com/x")
+                .await
+                .unwrap();
             session_md
                 .persist(&SessionMdSnapshot {
                     markdown: "# doc\n".to_string(),

@@ -10,7 +10,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
 
 use super::cdp::CdpSession;
@@ -216,9 +216,9 @@ async fn html(
         if body_only {
             sandbox::capture_body_html(&state.session).await
         } else {
-            sandbox::capture_body_html(&state.session).await.map(|body| {
-                format!("<!DOCTYPE html><html><head></head><body>{body}</body></html>")
-            })
+            sandbox::capture_body_html(&state.session)
+                .await
+                .map(|body| format!("<!DOCTYPE html><html><head></head><body>{body}</body></html>"))
         }
     } else {
         let hint = state.preferred_url.as_deref();
@@ -553,13 +553,10 @@ async fn markdown_session(
         Ok(v) => v,
         Err(err) => return tool_error(err),
     };
-    if state
-        .session_md
-        .bind_to_page(&state.session)
-        .await
-        .is_err()
-    {
-        return tool_error(anyhow::anyhow!("failed to bind session Markdown to current page"));
+    if state.session_md.bind_to_page(&state.session).await.is_err() {
+        return tool_error(anyhow::anyhow!(
+            "failed to bind session Markdown to current page"
+        ));
     }
     let snap = state.session_md.snapshot().await;
     if snap.markdown.trim().is_empty() {

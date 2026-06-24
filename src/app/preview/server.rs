@@ -230,8 +230,7 @@ impl HostedPreview {
 
         let router = engine.router();
 
-        let (listener, bound_addr) =
-            bind_preview_listener(&options.host, options.port).await?;
+        let (listener, bound_addr) = bind_preview_listener(&options.host, options.port).await?;
         let preview_url = format!("http://{bound_addr}/");
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -265,8 +264,7 @@ impl HostedPreview {
     }
 
     pub async fn shutdown(self) {
-        let _ = tokio::task::spawn_blocking(move || drop(self))
-            .await;
+        let _ = tokio::task::spawn_blocking(move || drop(self)).await;
     }
 }
 

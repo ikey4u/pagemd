@@ -79,7 +79,10 @@ pub async fn run_clean_dom(session: &CdpSession, extra_selectors: &[String]) -> 
         .await
 }
 
-pub async fn run_clean_dom_sandbox(session: &CdpSession, extra_selectors: &[String]) -> Result<Value> {
+pub async fn run_clean_dom_sandbox(
+    session: &CdpSession,
+    extra_selectors: &[String],
+) -> Result<Value> {
     let mut selectors: Vec<&str> = DEFAULT_CLEAN_SELECTORS.to_vec();
     for s in extra_selectors {
         if !s.trim().is_empty() {

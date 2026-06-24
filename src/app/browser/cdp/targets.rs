@@ -11,11 +11,15 @@ pub struct PageTarget {
 }
 
 pub async fn list_page_targets(port: u16) -> Result<Vec<PageTarget>> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
+    let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
     let list_url = format!("http://127.0.0.1:{port}/json/list");
-    let text = client.get(&list_url).send().await?.error_for_status()?.text().await?;
+    let text = client
+        .get(&list_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
     let targets: Vec<Value> = serde_json::from_str(&text)?;
 
     let mut pages = Vec::new();
@@ -23,10 +27,7 @@ pub async fn list_page_targets(port: u16) -> Result<Vec<PageTarget>> {
         if target.get("type").and_then(|v| v.as_str()) != Some("page") {
             continue;
         }
-        let Some(ws_url) = target
-            .get("webSocketDebuggerUrl")
-            .and_then(|v| v.as_str())
-        else {
+        let Some(ws_url) = target.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) else {
             continue;
         };
         pages.push(PageTarget {

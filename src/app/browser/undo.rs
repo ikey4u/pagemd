@@ -46,14 +46,22 @@ impl UndoStack {
         self.entries.clear();
     }
 
-    pub async fn capture_baseline(&mut self, session: &CdpSession, target: DomTarget) -> Result<()> {
+    pub async fn capture_baseline(
+        &mut self,
+        session: &CdpSession,
+        target: DomTarget,
+    ) -> Result<()> {
         if self.baseline.is_none() {
             self.baseline = Some(capture_entry(session, target).await?);
         }
         Ok(())
     }
 
-    pub async fn push_before_mutate(&mut self, session: &CdpSession, target: DomTarget) -> Result<()> {
+    pub async fn push_before_mutate(
+        &mut self,
+        session: &CdpSession,
+        target: DomTarget,
+    ) -> Result<()> {
         self.capture_baseline(session, target).await?;
         let entry = capture_entry(session, target).await?;
         self.entries.push(entry);
@@ -64,11 +72,12 @@ impl UndoStack {
     }
 
     /// Fast size probe — avoids transferring megabytes of HTML when undo would be too slow.
-    pub async fn estimate_body_html_chars(session: &CdpSession, target: DomTarget) -> Result<usize> {
+    pub async fn estimate_body_html_chars(
+        session: &CdpSession,
+        target: DomTarget,
+    ) -> Result<usize> {
         let expr = match target {
-            DomTarget::Live => {
-                r#"(() => document.body?.innerHTML?.length ?? 0)()"#
-            }
+            DomTarget::Live => r#"(() => document.body?.innerHTML?.length ?? 0)()"#,
             DomTarget::Sandbox => {
                 r#"(() => window.__PAGEMD_SANDBOX_DOC__?.body?.innerHTML?.length ?? 0)()"#
             }

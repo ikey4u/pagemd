@@ -9,20 +9,20 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use serde_json::Value;
 
+use self::vendor::CursorRelay;
 use super::bridge::BrowserBridge;
-use super::cli::BrowserArgs;
 use super::cdp::CdpSession;
-use super::session_preview::{self, SessionPreview};
+use super::cli::BrowserArgs;
 use super::export::build_export_prompt;
 use super::pretty::PRETTY_PROMPT;
 use super::runtime::BrowserRuntime;
 use super::sandbox;
 use super::session_md::SessionMarkdown;
+use super::session_preview::{self, SessionPreview};
 use super::snap::{self, format_snap};
 use super::tools::format_eval_result;
 use super::undo::{DomTarget, UndoStack};
 use super::workspace::ensure_mcp_config;
-use self::vendor::CursorRelay;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -196,9 +196,7 @@ pub async fn run(
 }
 
 enum SlashOutcome {
-    Continue {
-        refresh_status: bool,
-    },
+    Continue { refresh_status: bool },
     Quit,
     SetAiForward(bool),
 }
@@ -450,16 +448,8 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             let Some(v) = ctx.vendor else {
                 bail!("no AI backend; /pretty requires Cursor agent");
             };
-            sandbox::begin(
-                ctx.session,
-                ctx.session_md,
-                ctx.sandbox_enabled,
-                ctx.undo,
-            )
-            .await?;
-            eprintln!(
-                "Sandbox active — visible tab unchanged; agent cleans hidden DOM copy."
-            );
+            sandbox::begin(ctx.session, ctx.session_md, ctx.sandbox_enabled, ctx.undo).await?;
+            eprintln!("Sandbox active — visible tab unchanged; agent cleans hidden DOM copy.");
             eprintln!("[agent] page cleanup… (stream below; /stop to cancel)");
             io::stderr().flush()?;
             v.send_user_line(PRETTY_PROMPT).await?;
@@ -509,7 +499,10 @@ async fn handle_pmd(rest: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutcom
         }
 
         println!("Original preview: {}", preview.url());
-        println!("Original file: {}", ctx.session_md.original_md_path().display());
+        println!(
+            "Original file: {}",
+            ctx.session_md.original_md_path().display()
+        );
         if let Some(md) = ctx.session_md.load_original_markdown()? {
             println!(
                 "({} chars — unmodified page baseline; compare with /pmd for cleaned output)",
@@ -524,19 +517,13 @@ async fn handle_pmd(rest: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutcom
     if !open_only {
         if live {
             eprintln!("Extracting Markdown from live DOM…");
-            ctx.session_md
-                .capture_from_live(ctx.session, None)
-                .await?;
+            ctx.session_md.capture_from_live(ctx.session, None).await?;
         } else if sandbox::is_enabled(ctx.sandbox_enabled) {
             eprintln!("Refreshing session Markdown from sandbox DOM…");
-            ctx.session_md
-                .capture_from_sandbox(ctx.session)
-                .await?;
+            ctx.session_md.capture_from_sandbox(ctx.session).await?;
         } else if ctx.session_md.load_from_disk().await?.is_none() {
             eprintln!("No session Markdown for this URL yet; extracting from live DOM…");
-            ctx.session_md
-                .capture_from_live(ctx.session, None)
-                .await?;
+            ctx.session_md.capture_from_live(ctx.session, None).await?;
         }
     }
 
@@ -584,9 +571,7 @@ fn print_terminal_preview(text: &str, max_chars: usize, save_hint: &str) {
         return;
     }
     let preview: String = text.chars().take(max_chars).collect();
-    println!(
-        "{preview}…\n[preview truncated, {char_count} chars total; use {save_hint}]"
-    );
+    println!("{preview}…\n[preview truncated, {char_count} chars total; use {save_hint}]");
 }
 
 fn repl_prepare_next_prompt() {
@@ -708,7 +693,9 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
     println!("  /snap                 Page summary (URL, title, outline)");
     if ai {
         println!("  /snap send            Snap + forward context to Cursor agent");
-        println!("  /stop                 Interrupt in-flight agent turn (same as Ctrl+C during agent)");
+        println!(
+            "  /stop                 Interrupt in-flight agent turn (same as Ctrl+C during agent)"
+        );
         println!("  /manual  /ai          Disable / enable natural-language forwarding");
         println!("  /provider             Show AI backend");
     }

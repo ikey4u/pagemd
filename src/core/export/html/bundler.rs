@@ -154,10 +154,17 @@ fn replace_attr_resources(input: &str, pattern: &'static str, base_dir: &Path) -
         .into_owned()
 }
 
+fn is_fragment_reference(value: &str) -> bool {
+    value.trim().starts_with('#')
+}
+
 fn inline_css_urls(input: &str, base_dir: &Path) -> String {
     let double = regex(r#"(?is)url\(\s*\"([^\"]*)\"\s*\)"#)
         .replace_all(input, |caps: &Captures<'_>| {
             let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            if is_fragment_reference(value) {
+                return caps[0].to_string();
+            }
             let embedded = match resource_to_data_uri(value, base_dir) {
                 Ok(value) => value,
                 Err(_) => embedded_resource_error_data_uri(value),
@@ -168,6 +175,9 @@ fn inline_css_urls(input: &str, base_dir: &Path) -> String {
     let single = regex(r#"(?is)url\(\s*'([^']*)'\s*\)"#)
         .replace_all(&double, |caps: &Captures<'_>| {
             let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            if is_fragment_reference(value) {
+                return caps[0].to_string();
+            }
             let embedded = match resource_to_data_uri(value, base_dir) {
                 Ok(value) => value,
                 Err(_) => embedded_resource_error_data_uri(value),
@@ -178,6 +188,9 @@ fn inline_css_urls(input: &str, base_dir: &Path) -> String {
     regex(r#"(?is)url\(\s*([^\s\)'\"]+)\s*\)"#)
         .replace_all(&single, |caps: &Captures<'_>| {
             let value = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+            if is_fragment_reference(value) {
+                return caps[0].to_string();
+            }
             let embedded = match resource_to_data_uri(value, base_dir) {
                 Ok(value) => value,
                 Err(_) => embedded_resource_error_data_uri(value),
@@ -209,4 +222,38 @@ pub(crate) fn inline_raw_html_resources(raw: &str, base_dir: &Path) -> String {
         r#"(?is)(<link\b[^>]*?\shref\s*=\s*')([^']*)(')"#,
         base_dir,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn css_url_fragment_references_are_left_unchanged() {
+        let input = r#"<path marker-end="url(#arr)" marker-start="url(#start)"/>"#;
+        let output = inline_css_urls(input, Path::new("."));
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn css_url_file_references_are_still_rewritten() {
+        let dir = std::env::temp_dir().join(format!(
+            "pagemd-bundler-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("icon.svg"),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+        )
+        .unwrap();
+        let input = r#"<style>.x { background: url(icon.svg); }</style>"#;
+        let output = inline_css_urls(input, &dir);
+        assert!(output.contains("data:image/svg+xml;base64,"));
+        assert!(!output.contains("url(icon.svg)"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

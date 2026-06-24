@@ -15,9 +15,8 @@ pub struct BridgeClient {
 
 impl BridgeClient {
     pub fn from_workspace(workspace: &Path) -> Result<Self> {
-        let runtime = BrowserRuntime::read(workspace).context(
-            "pagemd browser session not running (start `pagemd browser` first)",
-        )?;
+        let runtime = BrowserRuntime::read(workspace)
+            .context("pagemd browser session not running (start `pagemd browser` first)")?;
         Ok(Self {
             base: runtime.bridge_url,
             token: runtime.token,
@@ -71,7 +70,9 @@ impl BridgeClient {
         if let Some(body) = body {
             req = req.json(&body);
         }
-        let resp = req.send().with_context(|| format!("bridge request {url}"))?;
+        let resp = req
+            .send()
+            .with_context(|| format!("bridge request {url}"))?;
         let status = resp.status();
         let value: Value = resp.json().context("parse bridge JSON")?;
         if !status.is_success() {
@@ -297,7 +298,9 @@ pub fn call_tool(client: &BridgeClient, name: &str, args: &Value) -> Result<Stri
         ),
         "browser_get_url" => client.get_text("/v1/url"),
         "browser_get_title" => client.get_text("/v1/title"),
-        "browser_save_script" => crate::app::browser::script::save_script_tool(client.export_dir(), args),
+        "browser_save_script" => {
+            crate::app::browser::script::save_script_tool(client.export_dir(), args)
+        }
         other => anyhow::bail!("unknown tool: {other}"),
     }
 }

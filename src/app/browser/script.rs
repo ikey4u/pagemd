@@ -96,7 +96,10 @@ function clean() { let removed = 0; document.querySelectorAll("nav").forEach(n =
 function extract() { return { title: document.title, html: document.body.innerHTML }; }
 "#;
         validate_pagemd_script(ok).unwrap();
-        assert!(validate_pagemd_script("function extract() { return { title: 'a', html: 'b' }; }").is_err());
+        assert!(
+            validate_pagemd_script("function extract() { return { title: 'a', html: 'b' }; }")
+                .is_err()
+        );
     }
 
     #[test]
