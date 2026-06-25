@@ -127,7 +127,148 @@ fn internal_math_fence(content: &str) -> String {
     out
 }
 
+/// Fix CommonMark emphasis flanking rules for CJK punctuation.
+///
+/// Problem: pulldown-cmark follows CommonMark strictly:
+///   - `**` is left-flanking only if: when followed by Unicode punctuation (Ps/Pi),
+///     the char before `**` must be whitespace or punctuation.
+///   - `**` is right-flanking only if: when preceded by Unicode punctuation (Pe/Pf),
+///     the char after `**` must be whitespace or punctuation.
+///
+/// CJK ideographs (category Lo) adjacent to `**` with Ps/Pe on the other side fail.
+///
+/// Fix: inject ZWSP (U+200B, category Cf — neither punctuation nor whitespace) on the
+/// INNER side of `**` so the delimiter's adjacent char is no longer Ps/Pe. The ZWSP is
+/// later stripped from all parsed events in `render_markdown_with_depth`, so it never
+/// appears in final output.
+///
+/// - Opening: 是**「x → 是**\u{200B}「x  (char after ** becomes Cf, not Ps → flanking OK)
+/// - Closing: x」**后 → x」\u{200B}**后  (char before ** becomes Cf, not Pe → flanking OK)
+pub(crate) fn fix_emphasis_cjk_punctuation(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let len = chars.len();
+    let mut result = String::with_capacity(source.len());
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '*' {
+            let delim_start = i;
+            while i < len && chars[i] == '*' {
+                i += 1;
+            }
+            let delim_end = i;
+            let delim_len = delim_end - delim_start;
+
+            if delim_len >= 1 && delim_len <= 3 {
+                let before = if delim_start > 0 {
+                    Some(chars[delim_start - 1])
+                } else {
+                    None
+                };
+                let after = if delim_end < len {
+                    Some(chars[delim_end])
+                } else {
+                    None
+                };
+
+                let before_is_cjk = before.map_or(false, is_cjk_letter);
+                let after_is_open = after.map_or(false, is_open_punctuation);
+                let after_is_cjk = after.map_or(false, is_cjk_letter);
+                let before_is_close = before.map_or(false, is_close_punctuation);
+
+                // Closing fix: Close_Punct ** CJK_Letter → ZWSP before **
+                if before_is_close && after_is_cjk {
+                    result.push('\u{200B}');
+                }
+
+                for _ in 0..delim_len {
+                    result.push('*');
+                }
+
+                // Opening fix: CJK_Letter ** Open_Punct → ZWSP after **
+                if before_is_cjk && after_is_open {
+                    result.push('\u{200B}');
+                }
+            } else {
+                for _ in 0..delim_len {
+                    result.push('*');
+                }
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// CJK ideographs (Lo) — the characters that trigger the flanking issue when adjacent to `**`.
+fn is_cjk_letter(ch: char) -> bool {
+    matches!(ch,
+        '\u{3400}'..='\u{4DBF}'     // CJK Unified Ext A
+        | '\u{4E00}'..='\u{9FFF}'   // CJK Unified
+        | '\u{F900}'..='\u{FAFF}'   // CJK Compatibility
+        | '\u{20000}'..='\u{2A6DF}' // Ext B
+        | '\u{2A700}'..='\u{2B73F}' // Ext C
+        | '\u{2B740}'..='\u{2B81F}' // Ext D
+        | '\u{2B820}'..='\u{2CEAF}' // Ext E
+        | '\u{2CEB0}'..='\u{2EBEF}' // Ext F
+        | '\u{30000}'..='\u{3134F}' // Ext G
+        | '\u{3040}'..='\u{309F}'   // Hiragana
+        | '\u{30A0}'..='\u{30FF}'   // Katakana
+        | '\u{AC00}'..='\u{D7AF}'   // Hangul Syllables
+    )
+}
+
+/// Unicode open punctuation (Ps/Pi) that triggers the flanking issue.
+fn is_open_punctuation(ch: char) -> bool {
+    matches!(
+        ch,
+        '「' | '『'
+            | '（'
+            | '【'
+            | '〔'
+            | '〈'
+            | '《'
+            | '〖'
+            | '〘'
+            | '〚'
+            | '"'
+            | '\''
+            | '⟨'
+            | '⟪'
+            | '('
+            | '['
+            | '{'
+    )
+}
+
+/// Unicode close punctuation (Pe/Pf) that triggers the flanking issue.
+fn is_close_punctuation(ch: char) -> bool {
+    matches!(
+        ch,
+        '」' | '』'
+            | '）'
+            | '】'
+            | '〕'
+            | '〉'
+            | '》'
+            | '〗'
+            | '〙'
+            | '〛'
+            | '"'
+            | '\''
+            | '⟩'
+            | '⟫'
+            | ')'
+            | ']'
+            | '}'
+    )
+}
+
 pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
+    let source = fix_emphasis_cjk_punctuation(source);
     let lines: Vec<&str> = source.lines().collect();
     let mut out = String::new();
     let mut i = 0usize;
@@ -249,4 +390,143 @@ pub(crate) fn parse_internal_callout_info(info: &str) -> Option<(String, String)
     let kind = parts.next()?.to_string();
     let title = parts.next().unwrap_or("").trim().to_string();
     Some((kind, title))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fix_emphasis_cjk_punctuation;
+
+    /// Helper: apply fix then parse with pulldown-cmark, strip ZWSP, return HTML.
+    fn render_emphasis(input: &str) -> String {
+        use pulldown_cmark::{html, Event, Options, Parser};
+
+        let fixed = fix_emphasis_cjk_punctuation(input);
+        let parser = Parser::new_ext(&fixed, Options::empty());
+        let events: Vec<Event> = parser
+            .map(|ev| match ev {
+                Event::Text(ref t) if t.contains('\u{200B}') => {
+                    Event::Text(t.replace('\u{200B}', "").into())
+                }
+                Event::Code(ref t) if t.contains('\u{200B}') => {
+                    Event::Code(t.replace('\u{200B}', "").into())
+                }
+                other => other,
+            })
+            .collect();
+        let mut html_out = String::new();
+        html::push_html(&mut html_out, events.into_iter());
+        html_out
+    }
+
+    #[test]
+    fn cjk_emphasis_with_corner_brackets() {
+        // 是**「陷入无法恢复的状态」**—— should produce <strong>
+        let html = render_emphasis("是**「陷入无法恢复的状态」**——\n");
+        assert!(
+            html.contains("<strong>「陷入无法恢复的状态」</strong>"),
+            "expected bold with corner brackets, got: {html}"
+        );
+    }
+
+    #[test]
+    fn cjk_emphasis_with_fullwidth_parens() {
+        let html = render_emphasis("是**（重要）**后\n");
+        assert!(
+            html.contains("<strong>（重要）</strong>"),
+            "expected bold with fullwidth parens, got: {html}"
+        );
+    }
+
+    #[test]
+    fn cjk_emphasis_with_angle_brackets() {
+        let html = render_emphasis("是**《标题》**后\n");
+        assert!(
+            html.contains("<strong>《标题》</strong>"),
+            "expected bold with angle brackets, got: {html}"
+        );
+    }
+
+    #[test]
+    fn cjk_emphasis_with_square_brackets() {
+        let html = render_emphasis("是**【注意】**后\n");
+        assert!(
+            html.contains("<strong>【注意】</strong>"),
+            "expected bold with square brackets, got: {html}"
+        );
+    }
+
+    #[test]
+    fn normal_cjk_emphasis_unaffected() {
+        // No open/close punct inside — should work without fix too
+        let html = render_emphasis("这是**加粗**文本\n");
+        assert!(
+            html.contains("<strong>加粗</strong>"),
+            "normal CJK bold broken: {html}"
+        );
+    }
+
+    #[test]
+    fn ascii_emphasis_unaffected() {
+        let html = render_emphasis("This is **bold** text\n");
+        assert!(
+            html.contains("<strong>bold</strong>"),
+            "ASCII bold broken: {html}"
+        );
+    }
+
+    #[test]
+    fn code_span_not_affected() {
+        let html = render_emphasis("`是**「不加粗」**后`\n");
+        assert!(
+            html.contains("<code>是**「不加粗」**后</code>"),
+            "code span should preserve raw text, got: {html}"
+        );
+    }
+
+    #[test]
+    fn no_zwsp_in_output() {
+        let html = render_emphasis("是**「测试」**后\n");
+        assert!(
+            !html.contains('\u{200B}'),
+            "ZWSP leaked into output: {html}"
+        );
+    }
+
+    #[test]
+    fn unmatched_stars_stay_literal() {
+        let html = render_emphasis("是**「只有开头\n");
+        assert!(
+            !html.contains("<strong>"),
+            "unmatched ** should not produce bold: {html}"
+        );
+    }
+
+    #[test]
+    fn digit_before_stars_not_triggered() {
+        // '0' is not CJK letter — fix should NOT activate
+        let html = render_emphasis("100**（税）**元\n");
+        assert!(
+            !html.contains("<strong>"),
+            "digit before ** should not trigger fix: {html}"
+        );
+    }
+
+    #[test]
+    fn punctuation_before_stars_already_works() {
+        // ，is fullwidth comma (Po) — flanking rule already satisfied without fix
+        let html = render_emphasis("，**默认即装上熵增守卫**：\n");
+        assert!(
+            html.contains("<strong>默认即装上熵增守卫</strong>"),
+            "punct-before case broken: {html}"
+        );
+    }
+
+    #[test]
+    fn nested_emphasis_inside_cjk_brackets() {
+        let html = render_emphasis("是**「*斜体*」**后\n");
+        assert!(
+            html.contains("<strong>") && html.contains("<em>斜体</em>"),
+            "nested emphasis broken: {html}"
+        );
+    }
 }

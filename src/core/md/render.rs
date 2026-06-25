@@ -213,7 +213,26 @@ pub(crate) fn render_markdown_with_depth(
     opts.insert(Options::ENABLE_FOOTNOTES);
 
     let parser = MdParser::new_ext(&source, opts);
-    let events: Vec<Event> = parser.collect();
+    // Strip ZWSP (U+200B) injected by fix_emphasis_cjk_punctuation from all text content.
+    // The ZWSP was only needed to satisfy pulldown-cmark's flanking rules during parsing;
+    // it must not appear in final output.
+    let events: Vec<Event> = parser
+        .map(|event| match event {
+            Event::Text(ref t) if t.contains('\u{200B}') => {
+                Event::Text(t.replace('\u{200B}', "").into())
+            }
+            Event::Code(ref t) if t.contains('\u{200B}') => {
+                Event::Code(t.replace('\u{200B}', "").into())
+            }
+            Event::InlineMath(ref t) if t.contains('\u{200B}') => {
+                Event::InlineMath(t.replace('\u{200B}', "").into())
+            }
+            Event::DisplayMath(ref t) if t.contains('\u{200B}') => {
+                Event::DisplayMath(t.replace('\u{200B}', "").into())
+            }
+            other => other,
+        })
+        .collect();
 
     let mut html = String::new();
     let mut title = String::new();
