@@ -1,5 +1,6 @@
 pub(crate) mod bundler;
 pub(crate) mod favicon;
+pub(crate) mod footnotes;
 pub(crate) mod nav_tree;
 pub(crate) mod page;
 pub(crate) mod styles;

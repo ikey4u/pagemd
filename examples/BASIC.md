@@ -37,10 +37,63 @@ This paragraph includes **strong text**, *emphasis*, `inline code`, a [link](htt
 | Math | `$x+y$` | Center | Ready | 94 | Inline math works inside table cells: $x+y$. |
 | Callouts | `> [!NOTE]` | Center | Ready | 92 | Use callouts outside tables for richer block content. |
 | Diagrams | `mermaid` / `plantuml` / `typst` / `diagram html` | Center | Ready | 90 | Diagram blocks are rendered as embedded graphics or styled HTML. |
+| Footnotes | `[^id]` | Center | Ready | 95 | Hover a superscript to preview; see **Footnotes** section below. |
 
-Here is a footnote reference.[^demo]
+## Footnotes
 
-[^demo]: This is a footnote rendered by PageMD.
+PageMD resolves footnotes at **section** scope: references and definitions can live in different blocks (paragraph, callout, table, list). Hover a superscript to preview the note; move the pointer into the popup to select or copy text.
+
+### Basic references
+
+Single reference in a paragraph.[^basic-one]
+
+[^basic-one]: Simple footnote definition on the next line.
+
+Two references in one paragraph: first[^pair-a], then[^pair-b].
+
+[^pair-a]: First of a pair.
+[^pair-b]: Second of a pair.
+
+The same label may appear more than once in the text[^repeat] — including here[^repeat] — and both link to one definition.
+
+[^repeat]: One definition shared by multiple references.
+
+### Rich footnote bodies
+
+Footnotes can contain **bold**, *emphasis*, `inline code`, and [links](https://example.com).[^rich-body]
+
+[^rich-body]: Example with **bold**, *emphasis*, `code`, and [a link](https://example.com).
+
+Multiline bodies use a four-space indent on continuation lines:[^multi-line]
+
+[^multi-line]: First line of a longer note.
+    Second line continues here.
+    Third line as well.
+
+### Footnotes in lists, tables, and blockquotes
+
+- Unordered list item with a footnote[^list-fn].
+- Second item references the same note again[^list-fn].
+
+[^list-fn]: Footnote referenced from a list item.
+
+| Location | Example |
+| --- | --- |
+| Table cell | Inline math $E=mc^2$ and a footnote[^table-fn] in one cell. |
+
+[^table-fn]: Definition for a table-cell reference.
+
+> Plain blockquote (not a callout) with a footnote[^quote-fn].
+
+[^quote-fn]: Definition for a regular blockquote.
+
+### Grouped and unreferenced definitions
+
+Paragraph referencing two notes[^group-a][^group-b] with definitions listed together below.
+
+[^group-a]: First definition in a consecutive block.
+[^group-b]: Second definition immediately after the first.
+[^group-orphan]: This line has **no reference** anywhere in the document — it should still appear as a standalone footnote.
 
 ## Code Highlighting
 
@@ -219,11 +272,62 @@ The `diagram html` fence renders raw HTML with the Tailwind utility bundle embed
 
 ## Admonitions and Callouts
 
+### Callouts without footnotes
+
 > [!NOTE] GitHub-style callout
 > This callout supports **Markdown** content and inline math like $x + y$.
 
 > [!TIP]
 > Use `cargo run -- view --input examples/BASIC.md` to render and preview this document quickly.
+
+### Footnotes inside callouts
+
+Each block below exercises a different AI / author pattern. Definitions may sit **inside** the callout (`>` on every line), **after** the callout (no `>`), or **between** other definitions.
+
+> [!QUOTE] Trailing definition (no `>` after the quote)
+> The reference[^callout-trailing] is inside the callout; the definition follows the closing quote line without blockquote markers.
+
+[^callout-trailing]: Typical AI output — definition immediately after the callout block.
+
+> [!NOTE] Inline definition (inside the quote)
+> Both the reference[^callout-inline] and its definition can use `>` on every line.
+> [^callout-inline]: Definition on a continued `>` line inside the same callout.
+
+> [!QUOTE] Table in callout + partial row prefix
+> | Item | Note |
+> | --- | --- |
+> | Widget A | Footnote[^table-note] in this cell. |
+
+[^table-note]: Only the header row uses `>` — remaining table rows and this definition follow without blockquote prefixes (common AI pattern).
+
+> [!NOTE] Multiple references, definitions out of order
+> See[^multi-a] and[^multi-b] in one callout; definitions below may include an unrelated line between them.
+
+[^multi-a]: First definition.
+[^unused-note]: Unreferenced line between two related definitions — should still render on its own.
+[^multi-b]: Second definition (label order in source need not match reference order).
+
+:::tip Fenced admonition (`:::`)
+Reference inside a fenced admonition[^fenced-note]. Definition after the closing `:::`.
+:::
+
+[^fenced-note]: Definition trailing a `:::tip` block.
+
+!!! note "Indented admonition (`!!!`)"
+    Indented admonition body with a footnote[^indented-note]. Definition follows the indented block.
+
+[^indented-note]: Definition after an `!!!` admonition.
+
+> [!WARNING] First of two callouts
+> Separate callout with its own footnote[^callout-a].
+
+> [!WARNING] Second of two callouts
+> Another callout with a different footnote[^callout-b].
+
+[^callout-a]: Definition for the first warning callout.
+[^callout-b]: Definition for the second warning callout.
+
+### Callouts without footnotes (continued)
 
 :::warning Fenced admonition
 This fenced admonition is converted into a styled callout block.

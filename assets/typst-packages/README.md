@@ -1,6 +1,6 @@
 # Built-in Typst packages (source builds)
 
-End users: see **Typst embedding** in `pagemd --help`.
+End users: Typst fenced blocks are supported at render time; package details live in `manifest.toml` and `build.rs`.
 
 | Import | Use |
 |--------|-----|

@@ -973,11 +973,145 @@ img {
 }
 
 .footnote {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
   font-size: 0.875rem;
   color: var(--color-muted);
   border-top: 1px solid var(--color-border);
   margin-top: 0.35rem;
   padding-top: 0.35rem;
+}
+
+.footnote-marker {
+  flex-shrink: 0;
+  color: var(--color-link);
+  font-weight: 600;
+}
+
+.footnote-content {
+  min-width: 0;
+}
+
+.footnote-content > :first-child {
+  margin-top: 0;
+}
+
+.footnote-content > :last-child {
+  margin-bottom: 0;
+}
+
+.footnote-ref {
+  line-height: 1;
+  vertical-align: super;
+  font-size: 0.78em;
+}
+
+.footnote-ref-link {
+  display: inline;
+  padding: 0 0.1em;
+  color: var(--color-link);
+  font-weight: 600;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, var(--color-link) 60%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  border-radius: 2px;
+  transition: color 0.15s ease, background-color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.footnote-ref-link:hover,
+.footnote-ref-link:focus-visible {
+  color: var(--color-link-hover);
+  background: color-mix(in srgb, var(--color-link) 8%, transparent);
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-link-hover);
+  outline: none;
+}
+
+.footnote-hint {
+  --footnote-hint-arrow-left: 50%;
+  position: fixed;
+  z-index: 10000;
+  max-width: min(22rem, calc(100vw - 1.5rem));
+  padding: 0.7rem 0.9rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--color-text);
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--color-border) 88%, var(--color-link));
+  border-radius: 10px;
+  box-shadow:
+    0 10px 28px rgba(15, 23, 42, 0.12),
+    0 2px 8px rgba(15, 23, 42, 0.06);
+  pointer-events: none;
+  user-select: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.footnote-hint.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+}
+
+.footnote-hint::before {
+  content: "";
+  position: absolute;
+  left: var(--footnote-hint-arrow-left);
+  width: 10px;
+  height: 10px;
+  background: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--color-border) 88%, var(--color-link));
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.footnote-hint.is-above::before {
+  bottom: -6px;
+  border-top: none;
+  border-left: none;
+}
+
+.footnote-hint.is-visible.is-above::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -12px;
+  height: 12px;
+}
+
+.footnote-hint.is-below::before {
+  top: -6px;
+  border-bottom: none;
+  border-right: none;
+}
+
+.footnote-hint.is-visible.is-below::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -12px;
+  height: 12px;
+}
+
+.footnote-hint p {
+  margin: 0;
+}
+
+.footnote-hint code {
+  font-size: 0.85em;
+}
+
+.footnote-hint a {
+  color: var(--color-link);
 }
 
 input[type="checkbox"] {

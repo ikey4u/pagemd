@@ -15,66 +15,100 @@ use super::package::{self, PackageSpec};
 
 const MANIFEST: &str = include_str!("../../../../assets/typst-packages/manifest.toml");
 
-/// Top-level `pagemd --help` text. Typst package ids must stay in sync with `manifest.toml`.
-pub const PAGEMD_LONG_ABOUT: &str = "\
+/// Top-level `pagemd --help` text.
+pub const PAGEMD_LONG_ABOUT: &str = concat!(
+    "\
 Convert Markdown to a SingleFile-style HTML document (default mode).
 
 Usage:
   pagemd -i INPUT.md -o OUTPUT.html
-  pagemd --input a.md --input b.md --output doc.html
+  pagemd -i a.md -i b.md -o doc.html
+  pagemd -d docs/ -o doc.html
+  pagemd -d src/ --exclude drafts/** node_modules
 
 Use `pagemd view --help` for live preview with hot reload.
+Use `pagemd browser --help` for the Chrome REPL workflow.
 
-HTML diagram embedding
-──────────────────────
+Supported features
+─────────────────────────────────
 
-Embed styled HTML/SVG diagrams in the output: use a Markdown fenced code block \
-with language info \"diagram html\".
+Core Markdown:
+  Headings, paragraphs, emphasis, strikethrough, links, images, horizontal rules,
+  ordered/unordered/task lists, tables, blockquotes, footnotes ([^id] with [^id]: body),
+  and fenced code blocks with syntax highlighting (syntect).
 
-Example:
+Math:
+  Inline: $E=mc^2$
+  Display: a paragraph that is only $$...$$ on one line, or a fenced block:
+
+  ```math
+  \\int_0^1 x^2\\,dx = \\frac{1}{3}
+  ```
+  Alias fence language: latex
+
+Diagrams — prefer these for AI-generated visuals:
+
+  ```mermaid
+  flowchart LR
+    A[Input] --> B[PageMD] --> C[HTML]
+  ```
+  Fence languages: mermaid, mmd
+
+  ```plantuml
+  @startuml
+  Alice -> Bob: hello
+  @enduml
+  ```
+  Fence languages: plantuml, puml, uml
 
   ```diagram html
   <div class=\"rounded-3xl border border-slate-200 bg-white p-6\">
     <svg viewBox=\"0 0 640 240\" class=\"w-full\" role=\"img\" aria-label=\"Architecture\">
-      <!-- Draw nodes, connectors, and labels here. -->
+      <!-- nodes, connectors, labels -->
     </svg>
   </div>
   ```
+  Raw HTML/SVG inside a diagram container. Tailwind utility classes work via an
+  embedded @tailwindcss/browser runtime (included only when a document uses this fence).
+  Best choice for architecture, UI mockups, and precise layouts — give explicit SVG/HTML.
 
-`diagram html` blocks are inserted as raw HTML inside a diagram container. Local and \
-remote resources referenced by common HTML attributes or CSS url(...) values are \
-inlined when possible, like other raw HTML resources in PageMD.
+Callouts / admonitions:
+  GitHub-style blockquote marker:
+    > [!NOTE] Optional title
+    > Body supports **Markdown** and inline math.
 
-Tailwind utility classes are supported by an embedded Tailwind browser runtime \
-(@tailwindcss/browser@4.3.0). It is fetched at PageMD build time, embedded into the pagemd \
-binary with include_bytes!, and emitted into generated HTML only when a document \
-contains a `diagram html` block. The released pagemd binary does not call the \
-Tailwind CLI, npx, or any other external tool at render time.
+  Fenced admonition:
+    :::tip Optional title
+    Body text
+    :::
 
-Typst embedding
-───────────────
+  Indented admonition:
+    !!! warning \"Title\"
+        Body text
 
-Embed Typst diagrams in HTML: use a Markdown fenced code block with language \"typst\"; \
-PageMD compiles it to inline SVG in the output.
+  Kinds (and common aliases): note, info, tip, warning, danger, important, caution,
+  question, success, failure, bug, example, quote, abstract; also hint, faq, error, …
 
-Built-in @preview packages (embedded in pagemd, work offline):
+Multi-file input:
+  --input FILE (repeatable) and/or --dir DIR (recursive scan for .md/.markdown).
+  Multiple files merge into one HTML document with a file-tree sidebar and per-file outline.
+  --exclude PATTERN skips paths while scanning (name, glob, or drafts/** style).
 
-  @preview/cetz:0.3.2       drawing / charts (CeTZ)
-  @preview/fletcher:0.5.8   flowcharts / arrows
-  @preview/codelst:2.0.2    code listings
+Resources:
+  Local images and assets referenced from Markdown or raw HTML are inlined when possible.
+  Remote http(s) URLs in img/src/href/poster and CSS url(...) are fetched and embedded
+  as data URIs when conversion succeeds.
 
-Use those exact versions in #import lines in your Typst source.
+Browser output:
+  Self-contained HTML with embedded CSS. Footnote references show a hover hint with the
+  note body. Use --title, --icon (2-char tab label), and --font-size for math scaling.
 
-Other @preview packages are downloaded on first render. They are stored as:
+Example document
+────────────────
 
-  <cache-root>/preview/<name>/<version>/...
-
-Default <cache-root> (when PAGEMD_TYPST_CACHE is unset):
-  Linux     ~/.cache/pagemd/typst/packages
-  macOS     ~/Library/Caches/pagemd/typst/packages
-  Windows   %LOCALAPPDATA%\\pagemd\\typst\\packages  (or the platform cache dir from dirs)
-
-Set PAGEMD_TYPST_CACHE to a custom <cache-root>; preview/<name>/<version>/ is still used inside it.";
+",
+    include_str!("../../../../examples/BASIC.md"),
+);
 
 #[derive(RustEmbed)]
 #[folder = "assets/typst-packages/preview/"]
@@ -176,16 +210,5 @@ mod tests {
         assert!(BundledTypstPreview::get("cetz/0.3.2/typst.toml").is_some());
         assert!(BundledTypstPreview::get("fletcher/0.5.8/typst.toml").is_some());
         assert!(BundledTypstPreview::get("codelst/2.0.2/typst.toml").is_some());
-    }
-
-    #[test]
-    fn bundled_help_lists_packages() {
-        for spec in bundled_specs() {
-            let id = format!("@preview/{}:{}", spec.name, spec.version);
-            assert!(
-                PAGEMD_LONG_ABOUT.contains(&id),
-                "PAGEMD_LONG_ABOUT missing {id}"
-            );
-        }
     }
 }

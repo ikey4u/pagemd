@@ -1,4 +1,5 @@
 mod callouts;
+mod footnotes;
 mod preprocess;
 mod render;
 

@@ -15,6 +15,10 @@ use crate::core::ext::diagram::{
 use crate::core::ext::math::latex_to_svg;
 use crate::core::ext::typst;
 use crate::core::md::callouts::{render_callout, CalloutRenderContext};
+use crate::core::md::footnotes::{
+    footnote_def_html, footnote_ref_html, footnote_slot_label, split_footnote_text,
+    FootnoteRegistry, FootnoteTextSegment,
+};
 use crate::core::md::preprocess::{parse_internal_callout_info, preprocess_markdown_extensions};
 use crate::core::model::{HeadingOutline, RenderedSection};
 use crate::core::util::unique_heading_id;
@@ -32,7 +36,6 @@ fn push_plain_text(buf: &mut String, event: &Event<'_>) {
         Event::Code(code) => buf.push_str(code),
         Event::InlineMath(math) => buf.push_str(math),
         Event::DisplayMath(math) => buf.push_str(math),
-        Event::FootnoteReference(label) => buf.push_str(label),
         Event::SoftBreak | Event::HardBreak => buf.push(' '),
         _ => {}
     }
@@ -114,6 +117,49 @@ fn is_invalid_inline_math_candidate(expr: &str) -> bool {
     )
 }
 
+fn append_rich_text(buf: &mut String, text: &str, math_font_size: f64, font_dir: &str) {
+    for segment in split_footnote_text(text) {
+        match segment {
+            FootnoteTextSegment::Plain(plain) => {
+                append_inline_math_html(buf, plain, math_font_size, font_dir);
+            }
+            FootnoteTextSegment::Reference(label) => {
+                buf.push_str(&footnote_ref_html(label));
+            }
+        }
+    }
+}
+
+fn render_footnote_body_markup(body: &str) -> String {
+    use pulldown_cmark::html;
+
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TABLES);
+    let parser = MdParser::new_ext(body.trim(), opts);
+    let mut out = String::new();
+    html::push_html(&mut out, parser);
+    out.trim().to_string()
+}
+
+fn render_footnote_slot(label: &str, footnotes: &FootnoteRegistry) -> String {
+    let Some(body) = footnotes.definition(label) else {
+        return String::new();
+    };
+    let body_html = render_footnote_body_markup(body);
+    footnote_def_html(label, &body_html)
+}
+
+fn try_render_footnote_html(raw: &str, footnotes: &FootnoteRegistry) -> Option<String> {
+    let label = footnote_slot_label(raw)?;
+    let rendered = render_footnote_slot(&label, footnotes);
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered)
+    }
+}
+
 fn append_inline_math_html(buf: &mut String, text: &str, math_font_size: f64, font_dir: &str) {
     let bytes = text.as_bytes();
     let mut plain_start = 0usize;
@@ -193,7 +239,7 @@ pub(crate) fn render_markdown(
     ss: &SyntaxSet,
     ts: &ThemeSet,
 ) -> Result<RenderedSection> {
-    render_markdown_with_depth(source, base_dir, math_font_size, font_dir, ss, ts, 0)
+    render_markdown_with_depth(source, base_dir, math_font_size, font_dir, ss, ts, None, 0)
 }
 
 pub(crate) fn render_markdown_with_depth(
@@ -203,16 +249,28 @@ pub(crate) fn render_markdown_with_depth(
     font_dir: &str,
     ss: &SyntaxSet,
     ts: &ThemeSet,
+    footnotes: Option<&FootnoteRegistry>,
     depth: usize,
 ) -> Result<RenderedSection> {
-    let source = preprocess_markdown_extensions(source);
+    let preprocessed = preprocess_markdown_extensions(source);
+    let owned_registry;
+    let footnotes = match footnotes {
+        Some(registry) => registry,
+        None => {
+            owned_registry = FootnoteRegistry::from_markdown(&preprocessed);
+            &owned_registry
+        }
+    };
+    let mut parse_source = preprocessed;
+    footnotes.prepare_parse_unit(&mut parse_source);
+
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_FOOTNOTES);
 
-    let parser = MdParser::new_ext(&source, opts);
+    let parser = MdParser::new_ext(&parse_source, opts);
     // Strip ZWSP (U+200B) injected by fix_emphasis_cjk_punctuation from all text content.
     // The ZWSP was only needed to satisfy pulldown-cmark's flanking rules during parsing;
     // it must not appear in final output.
@@ -267,8 +325,20 @@ pub(crate) fn render_markdown_with_depth(
     let mut paragraph_html: Option<String> = None;
     let mut paragraph_plain: Option<String> = None;
     let mut paragraph_is_plain = true;
+    let mut skip_footnote_definition_depth = 0usize;
 
     for event in &events {
+        if skip_footnote_definition_depth > 0 {
+            match event {
+                Event::Start(Tag::FootnoteDefinition(_)) => skip_footnote_definition_depth += 1,
+                Event::End(TagEnd::FootnoteDefinition) => {
+                    skip_footnote_definition_depth -= 1;
+                }
+                _ => {}
+            }
+            continue;
+        }
+
         match &mut ctx {
             Context::CodeBlock { lang, buf } => match event {
                 Event::Text(text) => buf.push_str(text),
@@ -334,6 +404,7 @@ pub(crate) fn render_markdown_with_depth(
                                         font_dir,
                                         ss,
                                         ts,
+                                        footnotes,
                                         depth,
                                     },
                                 ) {
@@ -375,9 +446,7 @@ pub(crate) fn render_markdown_with_depth(
                     }
                 } else {
                     match event {
-                        Event::Text(text) => {
-                            append_inline_math_html(buf, text, math_font_size, font_dir)
-                        }
+                        Event::Text(text) => append_rich_text(buf, text, math_font_size, font_dir),
                         Event::Code(code) => {
                             buf.push_str("<code>");
                             buf.push_str(&html_escape(code));
@@ -428,6 +497,9 @@ pub(crate) fn render_markdown_with_depth(
                                 buf.push_str(&svg);
                                 buf.push_str("</span>");
                             }
+                        }
+                        Event::FootnoteReference(label) => {
+                            buf.push_str(&footnote_ref_html(label));
                         }
                         Event::Html(raw) => buf.push_str(&inline_raw_html_resources(raw, base_dir)),
                         Event::InlineHtml(raw) => {
@@ -577,15 +649,23 @@ pub(crate) fn render_markdown_with_depth(
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html)
-                        .push_str(&inline_raw_html_resources(raw, base_dir));
+                    if let Some(rendered) = try_render_footnote_html(raw, footnotes) {
+                        current_target(&mut html, &mut paragraph_html).push_str(&rendered);
+                    } else {
+                        current_target(&mut html, &mut paragraph_html)
+                            .push_str(&inline_raw_html_resources(raw, base_dir));
+                    }
                 }
                 Event::InlineHtml(raw) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html)
-                        .push_str(&inline_raw_html_resources(raw, base_dir));
+                    if let Some(rendered) = try_render_footnote_html(raw, footnotes) {
+                        current_target(&mut html, &mut paragraph_html).push_str(&rendered);
+                    } else {
+                        current_target(&mut html, &mut paragraph_html)
+                            .push_str(&inline_raw_html_resources(raw, base_dir));
+                    }
                 }
 
                 Event::Start(Tag::Paragraph) => {
@@ -731,7 +811,7 @@ pub(crate) fn render_markdown_with_depth(
                     if let Some(plain) = paragraph_plain.as_mut() {
                         plain.push_str(text);
                     }
-                    append_inline_math_html(
+                    append_rich_text(
                         current_target(&mut html, &mut paragraph_html),
                         text,
                         math_font_size,
@@ -770,24 +850,17 @@ pub(crate) fn render_markdown_with_depth(
                     }
                 }
 
-                Event::Start(Tag::FootnoteDefinition(label)) => {
-                    html.push_str(&format!(
-                        "<div class=\"footnote\" id=\"fn-{}\"><sup>{}</sup> ",
-                        html_escape(label),
-                        html_escape(label)
-                    ));
-                }
-                Event::End(TagEnd::FootnoteDefinition) => html.push_str("</div>\n"),
                 Event::FootnoteReference(label) => {
                     if let Some(plain) = paragraph_plain.as_mut() {
                         plain.push_str(label);
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str(&format!(
-                        "<sup><a href=\"#fn-{}\">{}</a></sup>",
-                        html_escape(label),
-                        html_escape(label)
-                    ));
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str(&footnote_ref_html(label));
+                }
+
+                Event::Start(Tag::FootnoteDefinition(_)) => {
+                    skip_footnote_definition_depth += 1;
                 }
 
                 _ => {}

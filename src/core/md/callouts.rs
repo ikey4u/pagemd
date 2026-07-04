@@ -4,6 +4,7 @@ use anyhow::Result;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+use crate::core::md::footnotes::FootnoteRegistry;
 use crate::core::md::preprocess::callout_label;
 use crate::core::md::render::render_markdown_with_depth;
 use crate::core::util::html_escape;
@@ -14,6 +15,7 @@ pub(crate) struct CalloutRenderContext<'a> {
     pub font_dir: &'a str,
     pub ss: &'a SyntaxSet,
     pub ts: &'a ThemeSet,
+    pub footnotes: &'a FootnoteRegistry,
     pub depth: usize,
 }
 
@@ -33,6 +35,7 @@ pub(crate) fn render_callout(
             ctx.font_dir,
             ctx.ss,
             ctx.ts,
+            Some(ctx.footnotes),
             ctx.depth + 1,
         )?
         .html

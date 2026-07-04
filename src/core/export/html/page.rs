@@ -58,6 +58,7 @@ pub(crate) fn build_html(
 }
 
 const DIAGRAM_HTML_MARKER: &str = "class=\"diagram-html-display\"";
+const FOOTNOTE_MARKER: &str = crate::core::export::html::footnotes::FOOTNOTE_MARKER;
 const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/diagram-html-tailwind-browser.js"
@@ -219,6 +220,15 @@ pub(crate) fn build_html_with_nav(
         String::new()
     };
 
+    let footnote_script = if body_sections
+        .iter()
+        .any(|section| section.html.contains(FOOTNOTE_MARKER))
+    {
+        super::footnotes::footnote_script_tag()
+    } else {
+        String::new()
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -238,6 +248,7 @@ pub(crate) fn build_html_with_nav(
 {body_html}
 {script_html}{layout_close}
 </div>
+{footnote_script}
 </body>
 </html>"#,
         title = html_escape(title),
@@ -250,6 +261,7 @@ pub(crate) fn build_html_with_nav(
         script_html = script_html,
         layout_close = layout_close,
         container_class = container_class,
+        footnote_script = footnote_script,
     )
 }
 

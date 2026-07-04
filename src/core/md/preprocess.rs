@@ -98,14 +98,33 @@ fn max_backtick_run(text: &str) -> usize {
     max_run
 }
 
+pub(crate) fn code_fence_length(texts: &[&str]) -> usize {
+    let max_run = texts
+        .iter()
+        .map(|text| max_backtick_run(text))
+        .max()
+        .unwrap_or(0);
+    if max_run >= 3 {
+        max_run + 1
+    } else {
+        3
+    }
+}
+
+fn fence_safe_text(text: &str) -> String {
+    text.replace('`', "'")
+}
+
 fn internal_callout_fence(kind: &str, title: &str, content: &str) -> String {
-    let fence = "`".repeat(max_backtick_run(content).max(3) + 1);
-    let title_suffix = if title.is_empty() {
+    let safe_title = fence_safe_text(title);
+    let title_suffix = if safe_title.is_empty() {
         String::new()
     } else {
-        format!(" {title}")
+        format!(" {safe_title}")
     };
-    let mut out = format!("{fence}pagemd-callout {kind}{title_suffix}\n");
+    let header = format!("pagemd-callout {kind}{title_suffix}");
+    let fence = "`".repeat(code_fence_length(&[content, &header]));
+    let mut out = format!("{fence}{header}\n");
     out.push_str(content);
     if !content.ends_with('\n') {
         out.push('\n');
@@ -116,7 +135,7 @@ fn internal_callout_fence(kind: &str, title: &str, content: &str) -> String {
 }
 
 fn internal_math_fence(content: &str) -> String {
-    let fence = "`".repeat(max_backtick_run(content).max(3) + 1);
+    let fence = "`".repeat(code_fence_length(&[content]));
     let mut out = format!("{fence}math\n");
     out.push_str(content);
     if !content.ends_with('\n') {
@@ -125,6 +144,77 @@ fn internal_math_fence(content: &str) -> String {
     out.push_str(&fence);
     out.push('\n');
     out
+}
+
+fn looks_like_table_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.is_empty() && trimmed.contains('|')
+}
+
+fn next_non_empty_line<'a>(lines: &'a [&str], start: usize) -> Option<(usize, &'a str)> {
+    let mut index = start;
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        if !trimmed.is_empty() {
+            return Some((index, trimmed));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn content_includes_table(content: &str) -> bool {
+    content.lines().any(looks_like_table_line)
+}
+
+fn should_absorb_blank_inside_callout_table(content: &str, lines: &[&str], index: usize) -> bool {
+    if !content_includes_table(content) {
+        return false;
+    }
+    let Some((_, next)) = next_non_empty_line(lines, index + 1) else {
+        return false;
+    };
+    looks_like_table_line(next)
+}
+
+fn attach_trailing_callout_structure(content: &mut String, lines: &[&str], i: &mut usize) {
+    while *i < lines.len() {
+        if lines[*i].trim().is_empty()
+            && should_absorb_blank_inside_callout_table(content, lines, *i)
+        {
+            content.push('\n');
+            *i += 1;
+        } else if content_includes_table(content) && looks_like_table_line(lines[*i]) {
+            content.push_str(lines[*i].trim());
+            content.push('\n');
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+}
+
+fn collect_blockquote_callout_content(lines: &[&str], i: &mut usize) -> String {
+    let mut content = String::new();
+    while *i < lines.len() {
+        if let Some(line) = strip_blockquote_marker(lines[*i]) {
+            content.push_str(line);
+            content.push('\n');
+            *i += 1;
+        } else if lines[*i].trim().is_empty()
+            && should_absorb_blank_inside_callout_table(&content, lines, *i)
+        {
+            content.push('\n');
+            *i += 1;
+        } else if content_includes_table(&content) && looks_like_table_line(lines[*i]) {
+            content.push_str(lines[*i].trim());
+            content.push('\n');
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+    content
 }
 
 /// Fix CommonMark emphasis flanking rules for CJK punctuation.
@@ -277,16 +367,8 @@ pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
         if let Some(first) = strip_blockquote_marker(lines[i]) {
             if let Some((kind, title)) = parse_callout_marker(first) {
                 i += 1;
-                let mut content = String::new();
-                while i < lines.len() {
-                    if let Some(line) = strip_blockquote_marker(lines[i]) {
-                        content.push_str(line);
-                        content.push('\n');
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
+                let mut content = collect_blockquote_callout_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
                 out.push_str(&internal_callout_fence(&kind, &title, &content));
                 continue;
             }
@@ -339,6 +421,7 @@ pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
                 if i < lines.len() {
                     i += 1;
                 }
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
                 out.push_str(&internal_callout_fence(&kind, &title, &content));
                 continue;
             }
@@ -369,6 +452,7 @@ pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
                         break;
                     }
                 }
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
                 out.push_str(&internal_callout_fence(&kind, &title, &content));
                 continue;
             }
@@ -394,7 +478,7 @@ pub(crate) fn parse_internal_callout_info(info: &str) -> Option<(String, String)
 
 #[cfg(test)]
 mod tests {
-    use super::fix_emphasis_cjk_punctuation;
+    use super::{fix_emphasis_cjk_punctuation, preprocess_markdown_extensions};
 
     /// Helper: apply fix then parse with pulldown-cmark, strip ZWSP, return HTML.
     fn render_emphasis(input: &str) -> String {
@@ -416,6 +500,15 @@ mod tests {
         let mut html_out = String::new();
         html::push_html(&mut html_out, events.into_iter());
         html_out
+    }
+
+    #[test]
+    fn callout_absorbs_table_rows_without_blockquote_prefix() {
+        let input = "> [!NOTE] Title\n> | Col | Ref |\n| --- | --- |\n| A | Item[^tbl]. |\n\n[^tbl]: Footnote.\n";
+        let out = preprocess_markdown_extensions(input);
+        assert!(out.contains("| --- | --- |"));
+        assert!(out.contains("Item[^tbl]."));
+        assert!(out.contains("[^tbl]: Footnote."));
     }
 
     #[test]

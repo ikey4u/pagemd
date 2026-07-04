@@ -28,6 +28,9 @@
     if (typeof window.PageMDInitWorkspace === "function") {
       window.PageMDInitWorkspace();
     }
+    if (typeof window.PageMDInitFootnotes === "function") {
+      window.PageMDInitFootnotes(document);
+    }
     window.scrollTo(0, scrollY);
     return true;
   }
