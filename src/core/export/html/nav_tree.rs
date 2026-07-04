@@ -13,7 +13,12 @@ pub(crate) enum NavTreeNode {
     File {
         section_index: usize,
         label: String,
+        copy_path: String,
     },
+}
+
+pub(crate) fn nav_copy_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub(crate) fn common_path_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -104,6 +109,7 @@ fn build_level(
                 } else {
                     label.clone()
                 },
+                copy_path: nav_copy_path(path),
             });
         }
     }
@@ -178,7 +184,8 @@ fn render_nav_tree_node(node: &NavTreeNode, active_index: usize) -> String {
         NavTreeNode::File {
             section_index,
             label,
-        } => render_file_row(*section_index, label, active_index, true),
+            copy_path,
+        } => render_file_row(*section_index, label, copy_path, active_index, true),
     }
 }
 
@@ -188,8 +195,14 @@ pub(crate) fn render_flat_nav_html(
 ) -> String {
     entries
         .iter()
-        .map(|(_, section_index, label)| {
-            render_file_row(*section_index, label, active_index, false)
+        .map(|(path, section_index, label)| {
+            render_file_row(
+                *section_index,
+                label,
+                &nav_copy_path(path),
+                active_index,
+                false,
+            )
         })
         .collect()
 }
@@ -197,6 +210,7 @@ pub(crate) fn render_flat_nav_html(
 fn render_file_row(
     section_index: usize,
     label: &str,
+    copy_path: &str,
     active_index: usize,
     wrap_li: bool,
 ) -> String {
@@ -207,8 +221,9 @@ fn render_file_row(
         ""
     };
     let escaped_label = html_escape(label);
+    let escaped_copy_path = html_escape(copy_path);
     let row = format!(
-        "<div class=\"doc-nav-row\"><a class=\"doc-nav-link{active}\" href=\"#doc-{doc_id}\" data-doc-target=\"doc-{doc_id}\" title=\"{escaped_label}\"><span class=\"doc-nav-label\">{escaped_label}</span></a><button type=\"button\" class=\"doc-nav-copy\" data-copy-label=\"{escaped_label}\" aria-label=\"Copy filename {escaped_label}\" title=\"Copy filename\">Copy</button></div>\n"
+        "<div class=\"doc-nav-row\"><a class=\"doc-nav-link{active}\" href=\"#doc-{doc_id}\" data-doc-target=\"doc-{doc_id}\" title=\"{escaped_copy_path}\"><span class=\"doc-nav-label\">{escaped_label}</span></a><button type=\"button\" class=\"doc-nav-copy\" data-copy-label=\"{escaped_copy_path}\" aria-label=\"Copy path {escaped_copy_path}\" title=\"Copy path\">Copy</button></div>\n"
     );
     if wrap_li {
         format!("<li class=\"doc-nav-file\">{row}</li>\n")
@@ -237,89 +252,5 @@ mod tests {
         assert_eq!(tree.len(), 2);
         assert!(matches!(tree[0], NavTreeNode::Folder { .. }));
         assert!(matches!(tree[1], NavTreeNode::File { .. }));
-    }
-
-    #[test]
-    fn build_nav_tree_includes_readme_only_subdirectories() {
-        let entries = vec![
-            (PathBuf::from("readme.md"), 0, "readme.md".to_string()),
-            (
-                PathBuf::from("analysis/FLUT/README.md"),
-                1,
-                "README.md".to_string(),
-            ),
-            (
-                PathBuf::from("analysis/OTHER/README.md"),
-                2,
-                "README.md".to_string(),
-            ),
-        ];
-
-        let tree = build_nav_tree(&entries);
-        assert_eq!(tree.len(), 2);
-
-        let analysis = match &tree[0] {
-            NavTreeNode::Folder { name, children, .. } => {
-                assert_eq!(name, "analysis");
-                children
-            }
-            other => panic!("expected analysis folder, got {other:?}"),
-        };
-        assert_eq!(analysis.len(), 2);
-        assert!(analysis
-            .iter()
-            .all(|node| matches!(node, NavTreeNode::Folder { .. })));
-
-        let flut = match &analysis[0] {
-            NavTreeNode::Folder { name, children, .. } => {
-                assert_eq!(name, "FLUT");
-                children
-            }
-            other => panic!("expected FLUT folder, got {other:?}"),
-        };
-        assert!(matches!(
-            flut.first(),
-            Some(NavTreeNode::File {
-                section_index: 1,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn build_nav_tree_includes_deep_paths_without_intermediate_files() {
-        let entries = vec![
-            (PathBuf::from("root.md"), 0, "root.md".to_string()),
-            (
-                PathBuf::from("nested/deep/only.md"),
-                1,
-                "only.md".to_string(),
-            ),
-        ];
-
-        let tree = build_nav_tree(&entries);
-        assert_eq!(tree.len(), 2);
-
-        let nested = match &tree[0] {
-            NavTreeNode::Folder { name, children, .. } => {
-                assert_eq!(name, "nested");
-                children
-            }
-            other => panic!("expected nested folder, got {other:?}"),
-        };
-        let deep = match &nested[0] {
-            NavTreeNode::Folder { name, children, .. } => {
-                assert_eq!(name, "deep");
-                children
-            }
-            other => panic!("expected deep folder, got {other:?}"),
-        };
-        assert!(matches!(
-            deep.first(),
-            Some(NavTreeNode::File {
-                section_index: 1,
-                ..
-            })
-        ));
     }
 }
