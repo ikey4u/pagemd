@@ -114,27 +114,29 @@ fn build_level(
         format!("{prefix}/")
     };
 
+    let mut child_folders = BTreeMap::<String, ()>::new();
     for key in grouped.keys() {
-        if key == prefix {
-            continue;
-        }
-        if !key.starts_with(&folder_prefix) {
+        if key == prefix || !key.starts_with(&folder_prefix) {
             continue;
         }
         let remainder = &key[folder_prefix.len()..];
-        if remainder.contains('/') {
+        if remainder.is_empty() {
             continue;
         }
+        let folder_name = remainder.split('/').next().unwrap_or(remainder);
+        child_folders.insert(folder_name.to_string(), ());
+    }
 
+    for folder_name in child_folders.keys() {
         let folder_id = if prefix.is_empty() {
-            remainder.to_string()
+            folder_name.clone()
         } else {
-            format!("{prefix}/{remainder}")
+            format!("{prefix}/{folder_name}")
         };
 
         nodes.push(NavTreeNode::Folder {
             id: folder_id.clone(),
-            name: remainder.to_string(),
+            name: folder_name.clone(),
             children: build_level(grouped, &folder_id),
         });
     }
@@ -235,5 +237,89 @@ mod tests {
         assert_eq!(tree.len(), 2);
         assert!(matches!(tree[0], NavTreeNode::Folder { .. }));
         assert!(matches!(tree[1], NavTreeNode::File { .. }));
+    }
+
+    #[test]
+    fn build_nav_tree_includes_readme_only_subdirectories() {
+        let entries = vec![
+            (PathBuf::from("readme.md"), 0, "readme.md".to_string()),
+            (
+                PathBuf::from("analysis/FLUT/README.md"),
+                1,
+                "README.md".to_string(),
+            ),
+            (
+                PathBuf::from("analysis/OTHER/README.md"),
+                2,
+                "README.md".to_string(),
+            ),
+        ];
+
+        let tree = build_nav_tree(&entries);
+        assert_eq!(tree.len(), 2);
+
+        let analysis = match &tree[0] {
+            NavTreeNode::Folder { name, children, .. } => {
+                assert_eq!(name, "analysis");
+                children
+            }
+            other => panic!("expected analysis folder, got {other:?}"),
+        };
+        assert_eq!(analysis.len(), 2);
+        assert!(analysis
+            .iter()
+            .all(|node| matches!(node, NavTreeNode::Folder { .. })));
+
+        let flut = match &analysis[0] {
+            NavTreeNode::Folder { name, children, .. } => {
+                assert_eq!(name, "FLUT");
+                children
+            }
+            other => panic!("expected FLUT folder, got {other:?}"),
+        };
+        assert!(matches!(
+            flut.first(),
+            Some(NavTreeNode::File {
+                section_index: 1,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn build_nav_tree_includes_deep_paths_without_intermediate_files() {
+        let entries = vec![
+            (PathBuf::from("root.md"), 0, "root.md".to_string()),
+            (
+                PathBuf::from("nested/deep/only.md"),
+                1,
+                "only.md".to_string(),
+            ),
+        ];
+
+        let tree = build_nav_tree(&entries);
+        assert_eq!(tree.len(), 2);
+
+        let nested = match &tree[0] {
+            NavTreeNode::Folder { name, children, .. } => {
+                assert_eq!(name, "nested");
+                children
+            }
+            other => panic!("expected nested folder, got {other:?}"),
+        };
+        let deep = match &nested[0] {
+            NavTreeNode::Folder { name, children, .. } => {
+                assert_eq!(name, "deep");
+                children
+            }
+            other => panic!("expected deep folder, got {other:?}"),
+        };
+        assert!(matches!(
+            deep.first(),
+            Some(NavTreeNode::File {
+                section_index: 1,
+                ..
+            })
+        ));
     }
 }
