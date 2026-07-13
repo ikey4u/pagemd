@@ -48,29 +48,60 @@
     workspace.style.setProperty("--" + name, rounded + "px");
     storageSet(name, String(rounded));
   }
+  function syncToggleState(selector, visible) {
+    document.querySelectorAll(selector).forEach(function (toggle) {
+      toggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      toggle.classList.toggle("is-active", visible);
+    });
+  }
   function setOutlineVisible(workspace, visible) {
     workspace.classList.toggle("outline-hidden", !visible);
     storageSet("outlineVisible", visible ? "1" : "0");
-    document.querySelectorAll("[data-outline-toggle]").forEach(function (toggle) {
-      toggle.setAttribute("aria-expanded", visible ? "true" : "false");
-      if (toggle.classList.contains("doc-outline-toggle-panel")) {
-        toggle.textContent = visible ? "Hide" : "Outline";
-      } else {
-        toggle.textContent = visible ? "Hide outline" : "Outline";
-      }
-    });
+    syncToggleState("[data-outline-toggle]", visible);
   }
   function setNavVisible(workspace, visible) {
     workspace.classList.toggle("nav-hidden", !visible);
     storageSet("navVisible", visible ? "1" : "0");
-    document.querySelectorAll("[data-nav-toggle]").forEach(function (toggle) {
-      toggle.setAttribute("aria-expanded", visible ? "true" : "false");
-      if (toggle.classList.contains("doc-nav-toggle-panel")) {
-        toggle.textContent = visible ? "Hide" : "Files";
-      } else {
-        toggle.textContent = visible ? "Hide files" : "Files";
-      }
-    });
+    syncToggleState("[data-nav-toggle]", visible);
+  }
+  function setTheme(theme) {
+    var next = theme === "dark" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    storageSet("theme", next);
+    var toggle = document.querySelector("[data-theme-toggle]");
+    if (toggle) {
+      var dark = next === "dark";
+      toggle.setAttribute("aria-pressed", dark ? "true" : "false");
+      toggle.setAttribute(
+        "aria-label",
+        dark ? "Switch to light theme" : "Switch to dark theme"
+      );
+      toggle.setAttribute("title", dark ? "Light" : "Dark");
+      toggle.classList.toggle("is-active", dark);
+    }
+  }
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "dark" || attr === "light") {
+      return attr;
+    }
+    var stored = storageGet("theme");
+    if (stored === "dark" || stored === "light") {
+      return stored;
+    }
+    return "light";
+  }
+  function toggleTheme() {
+    setTheme(currentTheme() === "dark" ? "light" : "dark");
+  }
+  function updateDocTitle(activePanel) {
+    var titleEl = document.querySelector("[data-doc-title]");
+    if (!titleEl || !activePanel) {
+      return;
+    }
+    var title = activePanel.getAttribute("data-panel-title") || "";
+    titleEl.textContent = title;
+    titleEl.setAttribute("title", title);
   }
   function panelForId(id) {
     var panels = document.querySelectorAll("[data-doc-panel]");
@@ -112,6 +143,7 @@
       expandFolderAncestors(activeLink);
     }
     storageSet("activeDoc", activePanel.id);
+    updateDocTitle(activePanel);
     updateOutlineActive();
   }
   function updateOutlineActive() {
@@ -158,6 +190,7 @@
       expandFolderAncestors(activeLink);
     }
     storageSet("activeDoc", activePanel.id);
+    updateDocTitle(activePanel);
   }
   function scrollToHeading(id, panelId) {
     var activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
@@ -226,6 +259,7 @@
     setOutlineVisible(workspace, storageGet("outlineVisible") === "1");
     // Files nav defaults to visible; only hide when explicitly stored as "0".
     setNavVisible(workspace, storageGet("navVisible") !== "0");
+    setTheme(currentTheme());
     restoreFolderStates();
     activateDocumentFromHash();
   }
@@ -276,6 +310,15 @@
 
   document.addEventListener("click", function (event) {
     if (event.defaultPrevented) {
+      return;
+    }
+
+    var themeToggle = event.target && event.target.closest
+      ? event.target.closest("[data-theme-toggle]")
+      : null;
+    if (themeToggle) {
+      event.preventDefault();
+      toggleTheme();
       return;
     }
 
@@ -387,6 +430,15 @@
 
   window.addEventListener("hashchange", activateDocumentFromHash);
   window.addEventListener("scroll", updateOutlineActive, { passive: true });
+  document.addEventListener(
+    "scroll",
+    function (event) {
+      if (event.target && event.target.classList && event.target.classList.contains("doc-main")) {
+        updateOutlineActive();
+      }
+    },
+    { passive: true, capture: true }
+  );
 
   initWorkspace();
 })();

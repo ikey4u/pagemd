@@ -338,12 +338,18 @@ fn single_file_html_includes_outline_workspace() {
 
     assert!(html.contains("doc-workspace-single"));
     assert!(html.contains("data-doc-workspace"));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("data-doc-title"));
+    assert!(html.contains("data-theme-toggle"));
+    assert!(html.contains("doc-theme-icon-moon"));
     assert!(html.contains("data-pagemd-workspace"));
     assert!(html.contains("id=\"doc-1\" data-doc-panel"));
     assert!(html.contains("data-outline-toggle"));
+    assert!(html.contains("aria-label=\"Outline\""));
     assert!(html.contains("data-heading-target=\"intro\""));
     assert!(html.contains("data-heading-target=\"details\""));
     assert!(!html.contains("class=\"doc-sidebar doc-pane\""));
+    assert!(!html.contains("aria-label=\"Files\""));
 }
 
 #[test]
@@ -359,7 +365,7 @@ fn single_file_without_headings_uses_plain_container() {
     );
 
     assert!(!html.contains("data-doc-workspace"));
-    assert!(!html.contains("data-outline-toggle"));
+    assert!(!html.contains("data-pagemd-workspace"));
     assert!(html.contains("<p>No headings here.</p>"));
 }
 
@@ -397,8 +403,10 @@ fn multi_file_html_includes_standalone_sidebar() {
     assert!(html.contains("data-pagemd-workspace"));
     assert!(html.contains("class=\"doc-sidebar doc-pane\""));
     assert!(html.contains("data-nav-toggle"));
-    assert!(html.contains("doc-nav-toggle-main"));
-    assert!(html.contains("doc-sidebar-top"));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("data-doc-title"));
+    assert!(html.contains("data-theme-toggle"));
+    assert!(html.contains("doc-theme-icon-moon"));
     assert!(html.contains("data-doc-target=\"doc-1\""));
     assert!(html.contains("class=\"doc-nav-label\""));
     assert!(html.contains("class=\"doc-nav-copy\""));
@@ -441,10 +449,14 @@ fn multi_file_tree_sidebar_renders_folders() {
     assert!(html.contains("data-nav-folder=\"guide\""));
     assert!(html.contains("class=\"doc-nav-folder-toggle\""));
     assert!(html.contains("data-nav-toggle"));
+    assert!(html.contains("doc-topbar"));
     assert!(html.contains("folder:"));
     assert!(html.contains("restoreFolderStates"));
     assert!(html.contains("setNavVisible"));
     assert!(html.contains("navVisible"));
+    assert!(html.contains("updateDocTitle"));
+    assert!(html.contains("setTheme"));
+    assert!(html.contains("data-theme-toggle"));
 }
 
 #[test]
