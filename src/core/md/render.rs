@@ -22,7 +22,7 @@ use crate::core::md::footnotes::{
 use crate::core::md::preprocess::{parse_internal_callout_info, preprocess_markdown_extensions};
 use crate::core::model::{HeadingOutline, RenderedSection};
 use crate::core::util::unique_heading_id;
-use crate::core::util::{eprint_fence_render_error, html_escape, strip_html_tags};
+use crate::core::util::{eprint_fence_render_error, html_escape};
 
 struct PendingImage {
     src: String,
@@ -312,7 +312,11 @@ pub(crate) fn render_markdown_with_depth(
         },
         Heading {
             level: u32,
-            buf: String,
+            /// Escaped HTML content for the `<hN>` body.
+            html: String,
+            /// Unescaped visible text for outline / title / heading ids.
+            /// Never derived from HTML — updated from markdown events in parallel.
+            plain: String,
             image: Option<PendingImage>,
         },
         Image(PendingImage),
@@ -429,12 +433,18 @@ pub(crate) fn render_markdown_with_depth(
                 _ => {}
             },
 
-            Context::Heading { level, buf, image } => {
+            Context::Heading {
+                level,
+                html: heading_html,
+                plain: heading_plain,
+                image,
+            } => {
                 if let Some(pending) = image {
                     match event {
                         Event::End(TagEnd::Image) => {
+                            heading_plain.push_str(&pending.alt_buf);
                             let alt = html_escape(&pending.alt_buf);
-                            buf.push_str(&format!(
+                            heading_html.push_str(&format!(
                                 "<img src=\"{}\" alt=\"{}\"{}>",
                                 pending.src.as_str(),
                                 alt,
@@ -446,18 +456,22 @@ pub(crate) fn render_markdown_with_depth(
                     }
                 } else {
                     match event {
-                        Event::Text(text) => append_rich_text(buf, text, math_font_size, font_dir),
-                        Event::Code(code) => {
-                            buf.push_str("<code>");
-                            buf.push_str(&html_escape(code));
-                            buf.push_str("</code>");
+                        Event::Text(text) => {
+                            heading_plain.push_str(text);
+                            append_rich_text(heading_html, text, math_font_size, font_dir);
                         }
-                        Event::Start(Tag::Emphasis) => buf.push_str("<em>"),
-                        Event::End(TagEnd::Emphasis) => buf.push_str("</em>"),
-                        Event::Start(Tag::Strong) => buf.push_str("<strong>"),
-                        Event::End(TagEnd::Strong) => buf.push_str("</strong>"),
-                        Event::Start(Tag::Strikethrough) => buf.push_str("<del>"),
-                        Event::End(TagEnd::Strikethrough) => buf.push_str("</del>"),
+                        Event::Code(code) => {
+                            heading_plain.push_str(code);
+                            heading_html.push_str("<code>");
+                            heading_html.push_str(&html_escape(code));
+                            heading_html.push_str("</code>");
+                        }
+                        Event::Start(Tag::Emphasis) => heading_html.push_str("<em>"),
+                        Event::End(TagEnd::Emphasis) => heading_html.push_str("</em>"),
+                        Event::Start(Tag::Strong) => heading_html.push_str("<strong>"),
+                        Event::End(TagEnd::Strong) => heading_html.push_str("</strong>"),
+                        Event::Start(Tag::Strikethrough) => heading_html.push_str("<del>"),
+                        Event::End(TagEnd::Strikethrough) => heading_html.push_str("</del>"),
                         Event::Start(Tag::Link {
                             dest_url,
                             title: link_title,
@@ -468,12 +482,12 @@ pub(crate) fn render_markdown_with_depth(
                             } else {
                                 format!(" title=\"{}\"", html_escape(link_title))
                             };
-                            buf.push_str(&format!(
+                            heading_html.push_str(&format!(
                                 "<a href=\"{}\"{title_attr}>",
                                 html_escape(dest_url)
                             ));
                         }
-                        Event::End(TagEnd::Link) => buf.push_str("</a>"),
+                        Event::End(TagEnd::Link) => heading_html.push_str("</a>"),
                         Event::Start(Tag::Image {
                             dest_url,
                             title: img_title,
@@ -492,24 +506,31 @@ pub(crate) fn render_markdown_with_depth(
                             });
                         }
                         Event::InlineMath(math) => {
+                            heading_plain.push_str(math);
                             if let Ok(svg) = latex_to_svg(math, false, math_font_size, font_dir) {
-                                buf.push_str("<span class=\"math-inline\">");
-                                buf.push_str(&svg);
-                                buf.push_str("</span>");
+                                heading_html.push_str("<span class=\"math-inline\">");
+                                heading_html.push_str(&svg);
+                                heading_html.push_str("</span>");
                             }
                         }
                         Event::FootnoteReference(label) => {
-                            buf.push_str(&footnote_ref_html(label));
+                            heading_plain.push_str(label);
+                            heading_html.push_str(&footnote_ref_html(label));
                         }
-                        Event::Html(raw) => buf.push_str(&inline_raw_html_resources(raw, base_dir)),
+                        Event::Html(raw) => {
+                            heading_html.push_str(&inline_raw_html_resources(raw, base_dir))
+                        }
                         Event::InlineHtml(raw) => {
-                            buf.push_str(&inline_raw_html_resources(raw, base_dir))
+                            heading_html.push_str(&inline_raw_html_resources(raw, base_dir))
                         }
-                        Event::SoftBreak => buf.push(' '),
-                        Event::HardBreak => buf.push(' '),
+                        Event::SoftBreak | Event::HardBreak => {
+                            heading_plain.push(' ');
+                            heading_html.push(' ');
+                        }
                         Event::End(TagEnd::Heading(_)) => {
                             let lvl = *level;
-                            let plain = strip_html_tags(buf);
+                            let plain = std::mem::take(heading_plain);
+                            let body = std::mem::take(heading_html);
                             let id = unique_heading_id(&plain, &mut heading_ids);
                             if first_heading && lvl == 1 {
                                 title = plain.clone();
@@ -520,7 +541,7 @@ pub(crate) fn render_markdown_with_depth(
                                 id: id.clone(),
                                 text: plain,
                             });
-                            html.push_str(&format!("<h{lvl} id=\"{id}\">{buf}</h{lvl}>\n"));
+                            html.push_str(&format!("<h{lvl} id=\"{id}\">{body}</h{lvl}>\n"));
                             ctx = Context::Normal;
                         }
                         _ => {}
@@ -557,7 +578,8 @@ pub(crate) fn render_markdown_with_depth(
                 Event::Start(Tag::Heading { level, .. }) => {
                     ctx = Context::Heading {
                         level: *level as u32,
-                        buf: String::new(),
+                        html: String::new(),
+                        plain: String::new(),
                         image: None,
                     };
                 }

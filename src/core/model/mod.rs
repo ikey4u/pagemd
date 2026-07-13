@@ -4,6 +4,8 @@ use std::path::PathBuf;
 pub(crate) struct HeadingOutline {
     pub level: u32,
     pub id: String,
+    /// Visible heading text from markdown events (not HTML).
+    /// Callers that embed this into HTML must escape it themselves.
     pub text: String,
 }
 

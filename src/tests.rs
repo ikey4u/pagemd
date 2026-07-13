@@ -442,6 +442,31 @@ fn multi_file_tree_sidebar_renders_folders() {
 }
 
 #[test]
+fn outline_uses_markdown_plain_text_not_html_roundtrip() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let section = render_markdown(
+        "## 3.4 send -> RunHandle & `Async`\n",
+        Path::new("."),
+        16.0,
+        "",
+        &ss,
+        &ts,
+    )
+    .unwrap();
+
+    assert_eq!(section.outline.len(), 1);
+    assert_eq!(section.outline[0].text, "3.4 send -> RunHandle & Async");
+    assert!(!section.outline[0].id.contains("gt"));
+
+    let html = build_html("doc", &[section], "PG");
+    // Escaped exactly once when embedded into outline HTML.
+    assert!(html.contains(">3.4 send -&gt; RunHandle &amp; Async</a>"));
+    assert!(!html.contains("-&amp;gt;"));
+    assert!(!html.contains("&amp;amp;"));
+}
+
+#[test]
 fn duplicate_heading_ids_are_unique_for_outline_links() {
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
