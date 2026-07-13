@@ -329,6 +329,7 @@ pub(crate) fn render_markdown_with_depth(
     let mut paragraph_html: Option<String> = None;
     let mut paragraph_plain: Option<String> = None;
     let mut paragraph_is_plain = true;
+    let mut blockquote_depth = 0usize;
     let mut skip_footnote_definition_depth = 0usize;
 
     for event in &events {
@@ -717,8 +718,14 @@ pub(crate) fn render_markdown_with_depth(
                     paragraph_is_plain = true;
                 }
 
-                Event::Start(Tag::BlockQuote(_)) => html.push_str("<blockquote>\n"),
-                Event::End(TagEnd::BlockQuote(_)) => html.push_str("</blockquote>\n"),
+                Event::Start(Tag::BlockQuote(_)) => {
+                    blockquote_depth += 1;
+                    html.push_str("<blockquote>\n");
+                }
+                Event::End(TagEnd::BlockQuote(_)) => {
+                    blockquote_depth = blockquote_depth.saturating_sub(1);
+                    html.push_str("</blockquote>\n");
+                }
 
                 Event::Start(Tag::List(None)) => html.push_str("<ul>\n"),
                 Event::End(TagEnd::List(false)) => html.push_str("</ul>\n"),
@@ -844,6 +851,16 @@ pub(crate) fn render_markdown_with_depth(
                 Event::SoftBreak => {
                     if let Some(plain) = paragraph_plain.as_mut() {
                         plain.push('\n');
+                    }
+                    // CommonMark soft breaks collapse to spaces in HTML; inside
+                    // blockquotes consecutive `>` lines are almost always meant
+                    // as visible line breaks (same expectation as GFM breaks).
+                    if blockquote_depth > 0 {
+                        if paragraph_html.is_some() {
+                            paragraph_is_plain = false;
+                        }
+                        current_target(&mut html, &mut paragraph_html).push_str("<br>\n");
+                    } else if paragraph_html.is_some() {
                         current_target(&mut html, &mut paragraph_html).push('\n');
                     } else {
                         html.push('\n');

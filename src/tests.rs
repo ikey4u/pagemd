@@ -543,6 +543,22 @@ fn currency_sentence_with_cjk_text_stays_plain() {
 }
 
 #[test]
+fn blockquote_soft_breaks_become_line_breaks() {
+    let html = render_html("> **alpha**: one\n> **beta**: two\n");
+    assert!(html.contains("<blockquote>"));
+    assert!(
+        html.contains("<strong>alpha</strong>: one<br>\n<strong>beta</strong>: two"),
+        "blockquote consecutive lines should keep a visible break: {html}"
+    );
+
+    let paragraph = render_html("hello\nworld");
+    assert!(
+        !paragraph.contains("<br>"),
+        "normal paragraph soft breaks should not become <br>: {paragraph}"
+    );
+}
+
+#[test]
 fn currency_and_bold_currency_do_not_merge_into_math() {
     let html = render_html("但合并营业利润因 $738M 减值几乎归零；OCF **$710M**");
     assert!(html.contains("$738M"));
