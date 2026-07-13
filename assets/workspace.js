@@ -60,6 +60,18 @@
       }
     });
   }
+  function setNavVisible(workspace, visible) {
+    workspace.classList.toggle("nav-hidden", !visible);
+    storageSet("navVisible", visible ? "1" : "0");
+    document.querySelectorAll("[data-nav-toggle]").forEach(function (toggle) {
+      toggle.setAttribute("aria-expanded", visible ? "true" : "false");
+      if (toggle.classList.contains("doc-nav-toggle-panel")) {
+        toggle.textContent = visible ? "Hide" : "Files";
+      } else {
+        toggle.textContent = visible ? "Hide files" : "Files";
+      }
+    });
+  }
   function panelForId(id) {
     var panels = document.querySelectorAll("[data-doc-panel]");
     var current = document.querySelector("[data-doc-panel].is-active");
@@ -212,6 +224,8 @@
     setWorkspaceWidth(workspace, "leftWidth", clamp(loadNumber("leftWidth", leftBounds.fallback), leftBounds.min, leftBounds.max));
     setWorkspaceWidth(workspace, "rightWidth", clamp(loadNumber("rightWidth", rightBounds.fallback), rightBounds.min, rightBounds.max));
     setOutlineVisible(workspace, storageGet("outlineVisible") === "1");
+    // Files nav defaults to visible; only hide when explicitly stored as "0".
+    setNavVisible(workspace, storageGet("navVisible") !== "0");
     restoreFolderStates();
     activateDocumentFromHash();
   }
@@ -319,12 +333,21 @@
     }
 
     var workspace = document.querySelector("[data-doc-workspace]");
-    var toggle = event.target && event.target.closest
+    var outlineToggle = event.target && event.target.closest
       ? event.target.closest("[data-outline-toggle]")
       : null;
-    if (toggle && workspace) {
+    if (outlineToggle && workspace) {
       event.preventDefault();
       setOutlineVisible(workspace, workspace.classList.contains("outline-hidden"));
+      return;
+    }
+
+    var navToggle = event.target && event.target.closest
+      ? event.target.closest("[data-nav-toggle]")
+      : null;
+    if (navToggle && workspace) {
+      event.preventDefault();
+      setNavVisible(workspace, workspace.classList.contains("nav-hidden"));
     }
   });
 
@@ -347,6 +370,7 @@
     function onMove(moveEvent) {
       if (kind === "left") {
         setWorkspaceWidth(workspace, "leftWidth", clamp(startLeft + moveEvent.clientX - startX, leftBounds.min, leftBounds.max));
+        setNavVisible(workspace, true);
       } else {
         setWorkspaceWidth(workspace, "rightWidth", clamp(startRight + startX - moveEvent.clientX, rightBounds.min, rightBounds.max));
         setOutlineVisible(workspace, true);

@@ -119,7 +119,12 @@ fn build_file_sidebar(
     };
 
     format!(
-        "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\"><nav class=\"doc-nav\">\n{nav_items}</nav>\n</aside>\n<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n"
+        "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\">\n\
+<div class=\"doc-sidebar-top\"><div class=\"doc-pane-header\">Files</div>\
+<button type=\"button\" class=\"doc-nav-toggle doc-nav-toggle-panel\" data-nav-toggle aria-label=\"Hide files\">Hide</button></div>\n\
+<div class=\"doc-sidebar-body\"><nav class=\"doc-nav\">\n{nav_items}</nav></div>\n\
+</aside>\n\
+<div class=\"doc-resizer doc-resizer-left\" role=\"separator\" aria-label=\"Resize file navigation\" data-resizer=\"left\"></div>\n"
     )
 }
 
@@ -146,11 +151,17 @@ fn build_workspace_layout(
     } else {
         String::new()
     };
+    let nav_toggle_main = if use_file_sidebar {
+        "<button type=\"button\" class=\"doc-nav-toggle doc-nav-toggle-main\" data-nav-toggle>Files</button>\n"
+    } else {
+        ""
+    };
     (
         format!("<div class=\"{workspace_class}\" data-doc-workspace>\n"),
         "</div>\n".to_string(),
         format!(
-            "{file_sidebar}<main class=\"doc-main\">\n<button type=\"button\" class=\"doc-outline-toggle doc-outline-toggle-main\" data-outline-toggle>Outline</button>\n"
+            "{file_sidebar}<main class=\"doc-main\">\n{nav_toggle_main}\
+<button type=\"button\" class=\"doc-outline-toggle doc-outline-toggle-main\" data-outline-toggle>Outline</button>\n"
         ),
         format!(
             "</main>\n<div class=\"doc-resizer doc-resizer-right\" role=\"separator\" aria-label=\"Resize outline\" data-resizer=\"right\"></div>\n<aside class=\"doc-outline doc-pane\" aria-label=\"Markdown outline\">\n<div class=\"doc-outline-top\"><div class=\"doc-pane-header\">Outline</div><button type=\"button\" class=\"doc-outline-toggle doc-outline-toggle-panel\" data-outline-toggle aria-label=\"Hide outline\">Hide</button></div>\n<div class=\"doc-outline-body\">\n{outline_nav}</div></aside>\n{workspace_script}"

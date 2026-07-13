@@ -396,6 +396,9 @@ fn multi_file_html_includes_standalone_sidebar() {
     assert!(html.contains("data-doc-workspace"));
     assert!(html.contains("data-pagemd-workspace"));
     assert!(html.contains("class=\"doc-sidebar doc-pane\""));
+    assert!(html.contains("data-nav-toggle"));
+    assert!(html.contains("doc-nav-toggle-main"));
+    assert!(html.contains("doc-sidebar-top"));
     assert!(html.contains("data-doc-target=\"doc-1\""));
     assert!(html.contains("class=\"doc-nav-label\""));
     assert!(html.contains("class=\"doc-nav-copy\""));
@@ -437,8 +440,11 @@ fn multi_file_tree_sidebar_renders_folders() {
     assert!(html.contains("class=\"doc-nav-tree\""));
     assert!(html.contains("data-nav-folder=\"guide\""));
     assert!(html.contains("class=\"doc-nav-folder-toggle\""));
+    assert!(html.contains("data-nav-toggle"));
     assert!(html.contains("folder:"));
     assert!(html.contains("restoreFolderStates"));
+    assert!(html.contains("setNavVisible"));
+    assert!(html.contains("navVisible"));
 }
 
 #[test]
