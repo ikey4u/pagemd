@@ -4,8 +4,36 @@
   }
   window.PageMDLivePreviewInstalled = true;
 
+  function readScrollState() {
+    var main = document.querySelector(".doc-main");
+    var sidebar = document.querySelector(".doc-sidebar");
+    var outline = document.querySelector(".doc-outline");
+    return {
+      windowY: window.scrollY || 0,
+      main: main ? main.scrollTop : 0,
+      sidebar: sidebar ? sidebar.scrollTop : 0,
+      outline: outline ? outline.scrollTop : 0,
+    };
+  }
+
+  function restoreScrollState(state) {
+    var main = document.querySelector(".doc-main");
+    var sidebar = document.querySelector(".doc-sidebar");
+    var outline = document.querySelector(".doc-outline");
+    if (main) {
+      main.scrollTop = state.main;
+    }
+    if (sidebar) {
+      sidebar.scrollTop = state.sidebar;
+    }
+    if (outline) {
+      outline.scrollTop = state.outline;
+    }
+    window.scrollTo(0, state.windowY);
+  }
+
   function swapContent(html) {
-    var scrollY = window.scrollY;
+    var scrollState = readScrollState();
     var doc = new DOMParser().parseFromString(html, "text/html");
     var fresh = doc.querySelector(".container");
     var current = document.querySelector(".container");
@@ -31,7 +59,7 @@
     if (typeof window.PageMDInitFootnotes === "function") {
       window.PageMDInitFootnotes(document);
     }
-    window.scrollTo(0, scrollY);
+    restoreScrollState(scrollState);
     return true;
   }
 

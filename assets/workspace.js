@@ -151,10 +151,15 @@
     if (!activePanel) {
       return;
     }
+    var main = document.querySelector(".doc-main");
+    var topOffset = 48;
+    if (main) {
+      topOffset = main.getBoundingClientRect().top + 28;
+    }
     var headings = activePanel.querySelectorAll("h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]");
     var current = headings[0] || null;
     headings.forEach(function (heading) {
-      if (heading.getBoundingClientRect().top <= 140) {
+      if (heading.getBoundingClientRect().top <= topOffset) {
         current = heading;
       }
     });
@@ -247,6 +252,22 @@
     }
   }
 
+  var mainScrollEl = null;
+  function onMainScroll() {
+    updateOutlineActive();
+  }
+  function bindMainScroll() {
+    var main = document.querySelector(".doc-main");
+    if (mainScrollEl && mainScrollEl !== main) {
+      mainScrollEl.removeEventListener("scroll", onMainScroll);
+      mainScrollEl = null;
+    }
+    if (main && mainScrollEl !== main) {
+      main.addEventListener("scroll", onMainScroll, { passive: true });
+      mainScrollEl = main;
+    }
+  }
+
   function initWorkspace() {
     var workspace = document.querySelector("[data-doc-workspace]");
     if (!workspace) {
@@ -262,6 +283,8 @@
     setTheme(currentTheme());
     restoreFolderStates();
     activateDocumentFromHash();
+    bindMainScroll();
+    updateOutlineActive();
   }
 
   window.PageMDInitWorkspace = initWorkspace;
@@ -429,16 +452,9 @@
   });
 
   window.addEventListener("hashchange", activateDocumentFromHash);
+  // Window scroll is a fallback for non-workspace layouts; the real
+  // document scroller is `.doc-main`, rebound in initWorkspace().
   window.addEventListener("scroll", updateOutlineActive, { passive: true });
-  document.addEventListener(
-    "scroll",
-    function (event) {
-      if (event.target && event.target.classList && event.target.classList.contains("doc-main")) {
-        updateOutlineActive();
-      }
-    },
-    { passive: true, capture: true }
-  );
 
   initWorkspace();
 })();
