@@ -357,8 +357,51 @@ fn is_close_punctuation(ch: char) -> bool {
     )
 }
 
+/// Strip a leading YAML frontmatter block (`---` … `---`) so it is not rendered.
+///
+/// Invalid YAML is ignored with a warning; the block is still stripped.
+pub(crate) fn strip_yaml_frontmatter(source: &str) -> String {
+    let body = source.strip_prefix('\u{FEFF}').unwrap_or(source);
+    let lines: Vec<&str> = body.lines().collect();
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return source.to_string();
+    }
+
+    let mut close_idx = None;
+    for (idx, line) in lines.iter().enumerate().skip(1) {
+        if line.trim() == "---" {
+            close_idx = Some(idx);
+            break;
+        }
+    }
+    let Some(close_idx) = close_idx else {
+        return source.to_string();
+    };
+
+    let yaml = lines[1..close_idx].join("\n");
+    if !yaml.trim().is_empty() {
+        match serde_yaml::from_str::<serde_yaml::Value>(&yaml) {
+            Ok(serde_yaml::Value::Mapping(_)) => {}
+            Ok(_) => {
+                // A leading thematic break followed by a later `---` is not frontmatter.
+                return source.to_string();
+            }
+            Err(err) => {
+                eprintln!("Warning: ignoring invalid YAML frontmatter: {err}");
+            }
+        }
+    }
+
+    let mut out = lines[close_idx + 1..].join("\n");
+    if body.ends_with('\n') && (out.is_empty() || !out.ends_with('\n')) {
+        out.push('\n');
+    }
+    out
+}
+
 pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
-    let source = fix_emphasis_cjk_punctuation(source);
+    let source = strip_yaml_frontmatter(source);
+    let source = fix_emphasis_cjk_punctuation(&source);
     let lines: Vec<&str> = source.lines().collect();
     let mut out = String::new();
     let mut i = 0usize;
@@ -478,7 +521,51 @@ pub(crate) fn parse_internal_callout_info(info: &str) -> Option<(String, String)
 
 #[cfg(test)]
 mod tests {
-    use super::{fix_emphasis_cjk_punctuation, preprocess_markdown_extensions};
+    use super::{
+        fix_emphasis_cjk_punctuation, preprocess_markdown_extensions, strip_yaml_frontmatter,
+    };
+
+    #[test]
+    fn yaml_frontmatter_is_stripped_before_render() {
+        let input = "---\nposition: 2\npath: /docs/intro\ntitle: Hello\n---\n\n# Body\n";
+        let out = strip_yaml_frontmatter(input);
+        assert!(!out.contains("position:"));
+        assert!(!out.contains("path:"));
+        assert!(out.contains("# Body"));
+
+        let pre = preprocess_markdown_extensions(input);
+        assert!(!pre.contains("position:"));
+        assert!(pre.contains("# Body"));
+    }
+
+    #[test]
+    fn invalid_yaml_frontmatter_is_stripped_with_warning_path() {
+        let input = "---\ntitle: [unterminated\n---\n\nVisible\n";
+        let out = strip_yaml_frontmatter(input);
+        assert!(!out.contains("title:"));
+        assert!(out.contains("Visible"));
+    }
+
+    #[test]
+    fn content_starting_with_thematic_break_is_kept() {
+        let input = "---\n\n# Not frontmatter\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn thematic_break_with_later_rule_is_not_treated_as_frontmatter() {
+        let input = "---\n\n# Title\n\n---\n\nAfter\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn empty_yaml_frontmatter_is_stripped() {
+        let input = "---\n---\n\n# Body\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, "\n# Body\n");
+    }
 
     /// Helper: apply fix then parse with pulldown-cmark, strip ZWSP, return HTML.
     fn render_emphasis(input: &str) -> String {

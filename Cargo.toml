@@ -52,6 +52,7 @@ flate2 = "1"
 tar = "0.4"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 dirs = "6"
 rust-embed = "8"
 # pagemd does not use time directly; it is a transitive dep of typst-library / syntect.
