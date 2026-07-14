@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 
 use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
 use crate::app::preview::{
-    collect_initial_watch_paths, discover_watch_paths, HostedPreview, HostedPreviewOptions,
+    collect_initial_watch_paths, collect_render_watch_paths, HostedPreview, HostedPreviewOptions,
     RenderRequest, RenderResult,
 };
 use crate::core::{
@@ -131,12 +131,10 @@ fn render_session(ctx: &SessionRenderContext) -> RenderResult {
         Some(ctx.session_path.as_path()),
     ) {
         Ok(document) => {
-            let extra_watch_paths = match resolve_inputs(&ctx.convert_opts)
-                .and_then(|resolved| discover_watch_paths(&resolved.files))
-            {
-                Ok(paths) => paths,
+            let extra_watch_paths = match resolve_inputs(&ctx.convert_opts) {
+                Ok(resolved) => collect_render_watch_paths(&resolved.files, &resolved.directories),
                 Err(err) => {
-                    eprintln!("Resource watch discovery warning: {err:#}");
+                    eprintln!("Watch path refresh warning: {err:#}");
                     Vec::new()
                 }
             };

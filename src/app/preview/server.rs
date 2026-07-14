@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs;
 use std::io;
@@ -70,7 +70,8 @@ struct AppState {
 
 struct WatchState {
     debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
-    watched: HashSet<PathBuf>,
+    /// Canonical path → whether the active watch is recursive.
+    watched: HashMap<PathBuf, bool>,
 }
 
 struct PreviewEngineOptions {
@@ -370,8 +371,6 @@ fn setup_watcher(
     paths: Vec<PathBuf>,
     render_tx: std::sync::mpsc::Sender<()>,
 ) -> Result<WatchState> {
-    let watched = HashSet::new();
-
     let debouncer = new_debouncer(
         Duration::from_millis(300),
         move |result: DebounceEventResult| {
@@ -385,13 +384,11 @@ fn setup_watcher(
     )
     .context("Failed to create file watcher")?;
 
-    let mut state = WatchState { debouncer, watched };
-
-    for path in paths {
-        let recursive = path.is_dir();
-        register_watch(&mut state, &path, recursive)?;
-    }
-
+    let mut state = WatchState {
+        debouncer,
+        watched: HashMap::new(),
+    };
+    sync_watches(&mut state, &paths)?;
     Ok(state)
 }
 
@@ -404,11 +401,25 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
     if !canonical.exists() {
         return Ok(());
     }
-    if !state.watched.insert(canonical.clone()) {
-        return Ok(());
+
+    let want_recursive = recursive && canonical.is_dir();
+    if let Some(&already_recursive) = state.watched.get(&canonical) {
+        if already_recursive || !want_recursive {
+            return Ok(());
+        }
+        // File watches also attach their parent as NonRecursive. If that parent is
+        // later registered as a scan root, upgrade so nested create/delete events
+        // are delivered.
+        if let Err(err) = state.debouncer.watcher().unwatch(&canonical) {
+            eprintln!(
+                "  watch upgrade unwatch warning for {}: {err}",
+                canonical.display()
+            );
+        }
+        state.watched.remove(&canonical);
     }
 
-    let mode = if canonical.is_dir() && recursive {
+    let mode = if want_recursive {
         RecursiveMode::Recursive
     } else {
         RecursiveMode::NonRecursive
@@ -419,10 +430,13 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
         .watcher()
         .watch(&canonical, mode)
         .with_context(|| format!("Cannot watch {}", canonical.display()))?;
+    state.watched.insert(canonical.clone(), want_recursive);
 
-    eprintln!("  watch {}", canonical.display());
+    let mode_label = if want_recursive { "recursive" } else { "path" };
+    eprintln!("  watch [{mode_label}] {}", canonical.display());
 
     // When watching a file, also watch its parent (shallow) for new sibling assets.
+    // If the parent is already recursive (scan root), this is a no-op.
     if canonical.is_file() {
         if let Some(parent) = canonical.parent() {
             if !parent.as_os_str().is_empty() {
@@ -434,9 +448,26 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
     Ok(())
 }
 
-fn register_extra_watches(state: &mut WatchState, paths: &[PathBuf]) -> Result<()> {
-    for path in paths {
+fn sync_watches(state: &mut WatchState, paths: &[PathBuf]) -> Result<()> {
+    // Register directories first so recursive mode wins before file parents attach.
+    let (dirs, files): (Vec<&PathBuf>, Vec<&PathBuf>) =
+        paths.iter().partition(|path| path.is_dir());
+    for path in dirs {
+        register_watch(state, path, true)?;
+    }
+    for path in files {
         register_watch(state, path, false)?;
+    }
+
+    let stale: Vec<PathBuf> = state
+        .watched
+        .keys()
+        .filter(|path| !path.exists())
+        .cloned()
+        .collect();
+    for path in stale {
+        let _ = state.debouncer.watcher().unwatch(&path);
+        state.watched.remove(&path);
     }
     Ok(())
 }
@@ -481,8 +512,7 @@ fn spawn_render_worker(
                     commit_html(&state, html, true);
                     if let Some(watch_state) = watch_state.upgrade() {
                         if let Ok(mut guard) = watch_state.lock() {
-                            if let Err(err) = register_extra_watches(&mut guard, &extra_watch_paths)
-                            {
+                            if let Err(err) = sync_watches(&mut guard, &extra_watch_paths) {
                                 eprintln!("Watch registration error: {err:#}");
                             }
                         }
@@ -601,4 +631,42 @@ pub fn open_url(url: &str) -> Result<()> {
         anyhow::bail!("Failed to open {url}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pagemd-{name}-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn file_parent_watch_can_upgrade_to_recursive_scan_root() {
+        let root = temp_dir("watch-upgrade");
+        let file = root.join("a.md");
+        fs::write(&file, "# A\n").unwrap();
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        // Register the file first (same order as the old bug: parent becomes NonRecursive).
+        let mut state = setup_watcher(vec![file.clone()], tx).unwrap();
+        let root = root.canonicalize().unwrap();
+        assert_eq!(state.watched.get(&root), Some(&false));
+
+        sync_watches(&mut state, &[root.clone(), file]).unwrap();
+        assert_eq!(
+            state.watched.get(&root),
+            Some(&true),
+            "scan root must upgrade to recursive so nested create/delete events arrive"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

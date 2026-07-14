@@ -135,3 +135,68 @@ pub fn discover_watch_paths(inputs: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> 
     }
     Ok(discover_from_sources(&sources))
 }
+
+/// Watch set after a successful render: current inputs, scan roots, and local assets.
+///
+/// Scan roots must be included so nested create/delete events keep triggering reloads.
+pub fn collect_render_watch_paths(files: &[PathBuf], directories: &[PathBuf]) -> Vec<PathBuf> {
+    let mut paths = HashSet::new();
+
+    for input in files {
+        paths.insert(input.canonicalize().unwrap_or_else(|_| input.clone()));
+    }
+    for dir in directories {
+        paths.insert(dir.canonicalize().unwrap_or_else(|_| dir.clone()));
+    }
+
+    match discover_watch_paths(files) {
+        Ok(discovered) => {
+            for path in discovered {
+                paths.insert(path);
+            }
+        }
+        Err(err) => {
+            eprintln!("Resource watch discovery warning: {err:#}");
+        }
+    }
+
+    paths.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pagemd-{name}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn render_watch_paths_include_scan_roots_and_inputs() {
+        let root = temp_dir("render-watch");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("doc.md");
+        std::fs::write(&file, "# Doc\n\n![img](./pic.png)\n").unwrap();
+        let asset = nested.join("pic.png");
+        std::fs::write(&asset, b"png").unwrap();
+
+        let watches = collect_render_watch_paths(&[file.clone()], &[root.clone()]);
+        let root = root.canonicalize().unwrap();
+        let file = file.canonicalize().unwrap();
+        let asset = asset.canonicalize().unwrap();
+
+        assert!(watches.iter().any(|path| path == &root));
+        assert!(watches.iter().any(|path| path == &file));
+        assert!(watches.iter().any(|path| path == &asset));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

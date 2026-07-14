@@ -180,8 +180,13 @@ fn run_view(args: &ViewArgs) -> Result<()> {
         })
         .collect::<Result<_>>()?;
 
-    let mut watch_paths = preview::collect_initial_watch_paths(&resolved.files, &sources);
-    watch_paths.extend(resolved.directories.clone());
+    // Prefer scan roots first so they are registered recursively before file
+    // watches attach their parents as non-recursive.
+    let mut watch_paths = resolved.directories.clone();
+    watch_paths.extend(preview::collect_initial_watch_paths(
+        &resolved.files,
+        &sources,
+    ));
 
     preview::run(
         preview::ViewOptions {
@@ -200,12 +205,12 @@ fn run_view(args: &ViewArgs) -> Result<()> {
         ) {
             Ok(document) => {
                 let _current_preview_inputs = request.inputs;
-                let extra_watch_paths = match resolve_inputs(&convert_opts)
-                    .and_then(|resolved| preview::discover_watch_paths(&resolved.files))
-                {
-                    Ok(paths) => paths,
+                let extra_watch_paths = match resolve_inputs(&convert_opts) {
+                    Ok(resolved) => {
+                        preview::collect_render_watch_paths(&resolved.files, &resolved.directories)
+                    }
                     Err(err) => {
-                        eprintln!("Resource watch discovery warning: {err:#}");
+                        eprintln!("Watch path refresh warning: {err:#}");
                         Vec::new()
                     }
                 };
