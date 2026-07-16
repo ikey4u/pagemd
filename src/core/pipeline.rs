@@ -6,6 +6,7 @@ use anyhow::{bail, Context, Result};
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+use crate::core::export::html::favicon::default_icon_label_from_text;
 use crate::core::export::html::resolve_icon_label;
 use crate::core::export::html::section_label;
 use crate::core::export::{self, HtmlExportOptions, OutputFormat};
@@ -13,15 +14,15 @@ use crate::core::ext::math::find_katex_fonts;
 use crate::core::md::render_markdown;
 use crate::core::model::{Document, Section};
 use crate::core::util::exclude::ExcludeMatcher;
-use crate::core::ConvertOptions;
+use crate::core::{ConvertOptions, RenderOptions};
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedInputs {
+pub struct ResolvedInputs {
     pub files: Vec<PathBuf>,
     pub directories: Vec<PathBuf>,
 }
 
-pub(crate) struct RenderResources {
+pub struct RenderResources {
     pub ss: SyntaxSet,
     pub ts: ThemeSet,
     pub font_dir: String,
@@ -90,7 +91,7 @@ fn nearest_scan_root(path: &Path, directories: &[PathBuf]) -> PathBuf {
         })
 }
 
-pub(crate) fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
+pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     if opts.inputs.is_empty() && opts.directories.is_empty() {
         bail!("Missing required input. Pass --input <FILE> or --dir <DIR>.");
     }
@@ -147,7 +148,7 @@ pub(crate) fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     Ok(ResolvedInputs { files, directories })
 }
 
-pub(crate) fn prepare_resources(opts: &ConvertOptions) -> Result<RenderResources> {
+pub fn prepare_resources(opts: &ConvertOptions) -> Result<RenderResources> {
     let font_dir = find_katex_fonts(opts.katex_fonts.as_deref())?;
     Ok(RenderResources {
         ss: SyntaxSet::load_defaults_newlines(),
@@ -219,7 +220,7 @@ fn build_document(
     })
 }
 
-pub(crate) fn export_to_file(
+pub fn export_to_file(
     opts: &ConvertOptions,
     html_opts: &HtmlExportOptions,
     output: &Path,
@@ -232,7 +233,7 @@ pub(crate) fn export_to_file(
     Ok(result)
 }
 
-pub(crate) fn export_with_resources(
+pub fn export_with_resources(
     opts: &ConvertOptions,
     html_opts: &HtmlExportOptions,
     resources: &RenderResources,
@@ -241,4 +242,56 @@ pub(crate) fn export_with_resources(
 ) -> Result<export::ExportOutput> {
     let doc = build_document(opts, title_hint, resources, input_files)?;
     export::export_document(&doc, OutputFormat::Html, html_opts)
+}
+
+/// Render an in-memory Markdown string with the same pipeline as file conversion.
+pub fn export_source(source: &str, opts: &RenderOptions) -> Result<export::ExportOutput> {
+    let convert_opts = ConvertOptions {
+        title: opts.title.clone(),
+        icon: opts.icon.clone(),
+        math_font_size: opts.math_font_size,
+        katex_fonts: opts.katex_fonts.clone(),
+        client_mermaid: opts.client_mermaid,
+        ..ConvertOptions::default()
+    };
+    let resources = prepare_resources(&convert_opts)?;
+
+    let section = render_markdown(
+        source,
+        &opts.base_dir,
+        opts.math_font_size,
+        &resources.font_dir,
+        &resources.ss,
+        &resources.ts,
+        opts.client_mermaid,
+    )
+    .context("Failed to render Markdown source")?;
+
+    let mut doc_title = opts.title.clone().unwrap_or_default();
+    if doc_title.is_empty() {
+        doc_title = if section.title.is_empty() {
+            "Document".to_string()
+        } else {
+            section.title.clone()
+        };
+    }
+
+    let icon_label = opts
+        .icon
+        .clone()
+        .unwrap_or_else(|| default_icon_label_from_text(&doc_title));
+
+    let doc = Document {
+        title: doc_title,
+        icon_label,
+        nav_labels: vec![if section.title.is_empty() {
+            "Document".to_string()
+        } else {
+            section.title.clone()
+        }],
+        sections: vec![section],
+        input_paths: Vec::new(),
+    };
+
+    export::export_document(&doc, OutputFormat::Html, &opts.html)
 }

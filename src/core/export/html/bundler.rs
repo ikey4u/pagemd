@@ -42,11 +42,11 @@ fn extension_from_reference(src: &str) -> &str {
     clean.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("")
 }
 
-pub(crate) fn data_uri_from_bytes(mime: &str, bytes: &[u8]) -> String {
+pub fn data_uri_from_bytes(mime: &str, bytes: &[u8]) -> String {
     format!("data:{};base64,{}", mime, B64.encode(bytes))
 }
 
-pub(crate) fn fetch_remote_resource(url: &str) -> Result<(Vec<u8>, String)> {
+pub fn fetch_remote_resource(url: &str) -> Result<(Vec<u8>, String)> {
     let response = http_client()
         .get(url)
         .send()
@@ -105,7 +105,7 @@ fn embedded_resource_error_data_uri(src: &str) -> String {
     data_uri_from_bytes("image/svg+xml", svg.as_bytes())
 }
 
-pub(crate) fn image_to_data_uri(src: &str, base_dir: &Path) -> String {
+pub fn image_to_data_uri(src: &str, base_dir: &Path) -> String {
     match resource_to_data_uri(src, base_dir) {
         Ok(value) => value,
         Err(_) => embedded_resource_error_data_uri(src),
@@ -200,7 +200,7 @@ fn inline_css_urls(input: &str, base_dir: &Path) -> String {
         .into_owned()
 }
 
-pub(crate) fn inline_raw_html_resources(raw: &str, base_dir: &Path) -> String {
+pub fn inline_raw_html_resources(raw: &str, base_dir: &Path) -> String {
     let rewritten = inline_css_urls(raw, base_dir);
     let rewritten = replace_attr_resources(
         &rewritten,

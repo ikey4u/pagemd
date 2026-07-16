@@ -9,7 +9,7 @@ use crate::core::md::preprocess::callout_label;
 use crate::core::md::render::render_markdown_with_depth;
 use crate::core::util::html_escape;
 
-pub(crate) struct CalloutRenderContext<'a> {
+pub struct CalloutRenderContext<'a> {
     pub base_dir: &'a Path,
     pub math_font_size: f64,
     pub font_dir: &'a str,
@@ -20,7 +20,7 @@ pub(crate) struct CalloutRenderContext<'a> {
     pub client_mermaid: bool,
 }
 
-pub(crate) fn render_callout(
+pub fn render_callout(
     kind: &str,
     title: &str,
     content: &str,

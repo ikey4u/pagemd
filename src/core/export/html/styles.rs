@@ -1,4 +1,4 @@
-pub(crate) const CSS: &str = r#"
+pub const CSS: &str = r#"
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;

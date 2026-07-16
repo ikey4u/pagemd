@@ -10,7 +10,7 @@ use crate::core::util::{html_escape, script_escape};
 
 use super::styles::CSS;
 
-pub(crate) fn section_label(path: &Path) -> String {
+pub fn section_label(path: &Path) -> String {
     path.file_name()
         .and_then(|s| s.to_str())
         .map(str::to_string)
@@ -49,7 +49,7 @@ fn build_outline_nav(body_sections: &[RenderedSection]) -> String {
         .collect()
 }
 
-pub(crate) fn build_html(
+pub fn build_html(
     title: &str,
     body_sections: &[RenderedSection],
     icon_label: &str,
@@ -278,7 +278,7 @@ fn build_workspace_layout(
     )
 }
 
-pub(crate) fn build_html_with_nav(
+pub fn build_html_with_nav(
     title: &str,
     body_sections: &[RenderedSection],
     icon_label: &str,
@@ -411,13 +411,24 @@ pub(crate) fn build_html_with_nav(
     )
 }
 
-pub(crate) struct HtmlExportOptions {
+#[derive(Debug, Clone)]
+pub struct HtmlExportOptions {
     pub embed_workspace_script: bool,
     /// Serve official mermaid.js for client-side diagram rendering (view mode).
     pub client_mermaid_runtime: bool,
 }
 
-pub(crate) fn render_document_html(
+impl Default for HtmlExportOptions {
+    fn default() -> Self {
+        Self {
+            // Match CLI convert / SingleFile export defaults.
+            embed_workspace_script: true,
+            client_mermaid_runtime: false,
+        }
+    }
+}
+
+pub fn render_document_html(
     doc: &crate::core::model::Document,
     opts: &HtmlExportOptions,
 ) -> String {

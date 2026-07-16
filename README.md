@@ -2,7 +2,15 @@
 
 ## Introduction
 
-PageMD is a Rust command-line tool that converts Markdown into a SingleFile-style HTML document. It is designed for readable, portable documents with embedded styling, resources, syntax highlighting, diagrams, math rendering, and callout blocks.
+PageMD converts Markdown into a SingleFile-style HTML document. It is designed for readable, portable documents with embedded styling, resources, syntax highlighting, diagrams, math rendering, and callout blocks.
+
+Use it as a **Rust library** or via the `pagemd` CLI — both share the same rendering engine.
+
+```rust
+use pagemd::{render_to_html, RenderOptions};
+
+let html = render_to_html("# Hello", &RenderOptions::default())?;
+```
 
 Browser extension documentation is available at `extension/README.md`.
 

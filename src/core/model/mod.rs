@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 #[derive(Clone)]
-pub(crate) struct HeadingOutline {
+pub struct HeadingOutline {
     pub level: u32,
     pub id: String,
     /// Visible heading text from markdown events (not HTML).
@@ -9,13 +9,13 @@ pub(crate) struct HeadingOutline {
     pub text: String,
 }
 
-pub(crate) struct Section {
+pub struct Section {
     pub title: String,
     pub html: String,
     pub outline: Vec<HeadingOutline>,
 }
 
-pub(crate) struct Document {
+pub struct Document {
     pub title: String,
     pub icon_label: String,
     pub sections: Vec<Section>,
@@ -24,4 +24,4 @@ pub(crate) struct Document {
 }
 
 // Compatibility aliases for tests and transitional code.
-pub(crate) type RenderedSection = Section;
+pub type RenderedSection = Section;

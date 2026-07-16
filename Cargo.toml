@@ -1,8 +1,16 @@
 [package]
 name = "pagemd"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 build = "build.rs"
+description = "Convert Markdown into a self-contained, styled HTML document"
+readme = "README.md"
+keywords = ["markdown", "html", "singlefile", "renderer"]
+categories = ["command-line-utilities", "text-processing"]
+
+[lib]
+name = "pagemd"
+path = "src/lib.rs"
 
 [[bin]]
 name = "pagemd"

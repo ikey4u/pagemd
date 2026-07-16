@@ -1,11 +1,11 @@
-pub(crate) mod exclude;
+pub mod exclude;
 
 use std::sync::OnceLock;
 
 use regex::Regex;
 
 /// Log fenced-block render failures to stderr (convert and `pagemd view` both use this path).
-pub(crate) fn eprint_fence_render_error(
+pub fn eprint_fence_render_error(
     kind: &str,
     err: &(impl std::fmt::Display + ?Sized),
     source: &str,
@@ -21,7 +21,7 @@ pub(crate) fn eprint_fence_render_error(
         eprintln!();
     }
 }
-pub(crate) fn html_escape(s: &str) -> String {
+pub fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -29,10 +29,10 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-pub(crate) fn script_escape(script: &str) -> String {
+pub fn script_escape(script: &str) -> String {
     script.replace("</script", "<\\/script")
 }
-pub(crate) fn regex(pattern: &'static str) -> &'static Regex {
+pub fn regex(pattern: &'static str) -> &'static Regex {
     static CACHE: OnceLock<
         std::sync::Mutex<std::collections::HashMap<&'static str, &'static Regex>>,
     > = OnceLock::new();
@@ -53,7 +53,7 @@ pub(crate) fn regex(pattern: &'static str) -> &'static Regex {
     compiled
 }
 
-pub(crate) fn slugify(text: &str) -> String {
+pub fn slugify(text: &str) -> String {
     text.to_lowercase()
         .chars()
         .map(|c| {
@@ -70,7 +70,7 @@ pub(crate) fn slugify(text: &str) -> String {
         .join("-")
 }
 
-pub(crate) fn unique_heading_id(
+pub fn unique_heading_id(
     text: &str,
     heading_ids: &mut std::collections::HashMap<String, usize>,
 ) -> String {

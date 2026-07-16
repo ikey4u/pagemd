@@ -29,7 +29,7 @@ fn normalize_plantuml_source(code: &str) -> String {
     }
 }
 
-pub(crate) fn render_plantuml(code: &str) -> Result<String> {
+pub fn render_plantuml(code: &str) -> Result<String> {
     let source = normalize_plantuml_source(code);
     let encoded = encode_plantuml_deflate(&source)
         .map_err(|err| anyhow::anyhow!("Failed to encode PlantUML diagram: {:?}", err))?;
@@ -49,7 +49,7 @@ pub(crate) fn render_plantuml(code: &str) -> Result<String> {
     }
 }
 
-pub(crate) fn plantuml_error_html(code: &str) -> String {
+pub fn plantuml_error_html(code: &str) -> String {
     format!(
         "<div class=\"plantuml-display plantuml-error\"><strong>PlantUML render failed</strong><pre><code>{}</code></pre></div>\n",
         html_escape(code)

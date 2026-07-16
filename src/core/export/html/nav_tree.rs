@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::core::util::html_escape;
 
 #[derive(Debug, Clone)]
-pub(crate) enum NavTreeNode {
+pub enum NavTreeNode {
     Folder {
         id: String,
         name: String,
@@ -17,11 +17,11 @@ pub(crate) enum NavTreeNode {
     },
 }
 
-pub(crate) fn nav_copy_path(path: &Path) -> String {
+pub fn nav_copy_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-pub(crate) fn common_path_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
+pub fn common_path_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
     if paths.is_empty() {
         return None;
     }
@@ -57,7 +57,7 @@ pub(crate) fn common_path_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
     Some(prefix)
 }
 
-pub(crate) fn relativize_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
+pub fn relativize_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     canonical_path
@@ -66,13 +66,13 @@ pub(crate) fn relativize_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-pub(crate) fn nav_entries_have_tree(entries: &[(PathBuf, usize, String)]) -> bool {
+pub fn nav_entries_have_tree(entries: &[(PathBuf, usize, String)]) -> bool {
     entries
         .iter()
         .any(|(path, _, _)| path.components().count() > 1)
 }
 
-pub(crate) fn build_nav_tree(entries: &[(PathBuf, usize, String)]) -> Vec<NavTreeNode> {
+pub fn build_nav_tree(entries: &[(PathBuf, usize, String)]) -> Vec<NavTreeNode> {
     let mut grouped: BTreeMap<String, Vec<(PathBuf, usize, String)>> = BTreeMap::new();
 
     for (path, section_index, label) in entries {
@@ -158,7 +158,7 @@ fn node_sort_key(node: &NavTreeNode) -> (u8, String) {
     }
 }
 
-pub(crate) fn render_nav_tree_html(nodes: &[NavTreeNode], active_index: usize) -> String {
+pub fn render_nav_tree_html(nodes: &[NavTreeNode], active_index: usize) -> String {
     if nodes.is_empty() {
         return String::new();
     }
@@ -189,7 +189,7 @@ fn render_nav_tree_node(node: &NavTreeNode, active_index: usize) -> String {
     }
 }
 
-pub(crate) fn render_flat_nav_html(
+pub fn render_flat_nav_html(
     entries: &[(PathBuf, usize, String)],
     active_index: usize,
 ) -> String {

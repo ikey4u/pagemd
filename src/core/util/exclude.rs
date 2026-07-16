@@ -1,12 +1,12 @@
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone)]
-pub(crate) struct ExcludeMatcher {
+pub struct ExcludeMatcher {
     patterns: Vec<String>,
 }
 
 impl ExcludeMatcher {
-    pub(crate) fn new(patterns: &[String]) -> Self {
+    pub fn new(patterns: &[String]) -> Self {
         Self {
             patterns: patterns
                 .iter()
@@ -16,11 +16,11 @@ impl ExcludeMatcher {
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
 
-    pub(crate) fn should_skip_dir(&self, dir_path: &Path, scan_root: &Path) -> bool {
+    pub fn should_skip_dir(&self, dir_path: &Path, scan_root: &Path) -> bool {
         if self.patterns.is_empty() {
             return false;
         }
@@ -28,7 +28,7 @@ impl ExcludeMatcher {
         self.matches_path(&rel, true)
     }
 
-    pub(crate) fn should_skip_file(&self, file_path: &Path, scan_root: &Path) -> bool {
+    pub fn should_skip_file(&self, file_path: &Path, scan_root: &Path) -> bool {
         if self.patterns.is_empty() {
             return false;
         }

@@ -2,13 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::core::ConvertOptions;
 
-/// Default favicon label from the input path (first two alphanumeric chars of the stem, uppercase).
-pub(crate) fn default_icon_label_from_path(path: &Path) -> String {
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    let chars: Vec<char> = stem
+/// Default favicon label from free text (first two alphanumeric chars, uppercase).
+pub fn default_icon_label_from_text(text: &str) -> String {
+    let chars: Vec<char> = text
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .take(2)
@@ -23,7 +19,16 @@ pub(crate) fn default_icon_label_from_path(path: &Path) -> String {
     }
 }
 
-pub(crate) fn resolve_icon_label(opts: &ConvertOptions, resolved_inputs: &[PathBuf]) -> String {
+/// Default favicon label from the input path (first two alphanumeric chars of the stem, uppercase).
+pub fn default_icon_label_from_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    default_icon_label_from_text(stem)
+}
+
+pub fn resolve_icon_label(opts: &ConvertOptions, resolved_inputs: &[PathBuf]) -> String {
     if let Some(icon) = &opts.icon {
         return icon.clone();
     }
@@ -42,7 +47,7 @@ fn hash_icon_label(label: &str) -> u32 {
 }
 
 /// Deterministic saturated background from icon text (HSL: hue from hash, fixed S/L).
-pub(crate) fn icon_background_rgb(label: &str) -> (u8, u8, u8) {
+pub fn icon_background_rgb(label: &str) -> (u8, u8, u8) {
     let hue = f64::from(hash_icon_label(label) % 360);
     hsl_to_rgb(hue, 0.62, 0.48)
 }
@@ -77,14 +82,14 @@ fn srgb_channel(c: u8) -> f64 {
 }
 
 /// WCAG 2.x relative luminance.
-pub(crate) fn relative_luminance(rgb: (u8, u8, u8)) -> f64 {
+pub fn relative_luminance(rgb: (u8, u8, u8)) -> f64 {
     let r = srgb_channel(rgb.0);
     let g = srgb_channel(rgb.1);
     let b = srgb_channel(rgb.2);
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-pub(crate) fn contrast_ratio(lighter: f64, darker: f64) -> f64 {
+pub fn contrast_ratio(lighter: f64, darker: f64) -> f64 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
@@ -102,7 +107,7 @@ fn icon_foreground_rgb(background: (u8, u8, u8)) -> (u8, u8, u8) {
     }
 }
 
-pub(crate) fn icon_colors(label: &str) -> ((u8, u8, u8), (u8, u8, u8)) {
+pub fn icon_colors(label: &str) -> ((u8, u8, u8), (u8, u8, u8)) {
     let bg = icon_background_rgb(label);
     let fg = icon_foreground_rgb(bg);
     (bg, fg)
@@ -130,7 +135,7 @@ fn encode_svg_for_data_uri(svg: &str) -> String {
         .collect()
 }
 
-pub(crate) fn favicon_link_tag(label: &str) -> String {
+pub fn favicon_link_tag(label: &str) -> String {
     let label = label.to_ascii_uppercase();
     let ((br, bg, bb), (fr, fg, fb)) = icon_colors(&label);
     const ICON_RX: u32 = 7;

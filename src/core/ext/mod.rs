@@ -1,3 +1,3 @@
-pub(crate) mod diagram;
-pub(crate) mod math;
-pub(crate) mod typst;
+pub mod diagram;
+pub mod math;
+pub mod typst;

@@ -66,7 +66,7 @@ fn ensure_katex_font_cache() -> Result<PathBuf> {
     Ok(dir)
 }
 
-pub(crate) fn find_katex_fonts(hint: Option<&Path>) -> Result<String> {
+pub fn find_katex_fonts(hint: Option<&Path>) -> Result<String> {
     if let Some(p) = hint {
         if p.join("KaTeX_Main-Regular.ttf").exists() {
             return Ok(p.to_string_lossy().into_owned());
@@ -78,7 +78,7 @@ pub(crate) fn find_katex_fonts(hint: Option<&Path>) -> Result<String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
-pub(crate) fn latex_to_svg(
+pub fn latex_to_svg(
     expr: &str,
     display: bool,
     font_size: f64,

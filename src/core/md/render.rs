@@ -231,7 +231,7 @@ fn render_display_math_paragraph(
     Some(format!("<div class=\"math-display\">{svg}</div>"))
 }
 
-pub(crate) fn render_markdown(
+pub fn render_markdown(
     source: &str,
     base_dir: &Path,
     math_font_size: f64,
@@ -253,7 +253,7 @@ pub(crate) fn render_markdown(
     )
 }
 
-pub(crate) fn render_markdown_with_depth(
+pub fn render_markdown_with_depth(
     source: &str,
     base_dir: &Path,
     math_font_size: f64,

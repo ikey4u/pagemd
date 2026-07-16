@@ -18,7 +18,7 @@ fn canonical_callout_kind(kind: &str) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn callout_label(kind: &str) -> &'static str {
+pub fn callout_label(kind: &str) -> &'static str {
     match kind {
         "note" => "Note",
         "abstract" => "Abstract",
@@ -98,7 +98,7 @@ fn max_backtick_run(text: &str) -> usize {
     max_run
 }
 
-pub(crate) fn code_fence_length(texts: &[&str]) -> usize {
+pub fn code_fence_length(texts: &[&str]) -> usize {
     let max_run = texts
         .iter()
         .map(|text| max_backtick_run(text))
@@ -234,7 +234,7 @@ fn collect_blockquote_callout_content(lines: &[&str], i: &mut usize) -> String {
 ///
 /// - Opening: 是**「x → 是**\u{200B}「x  (char after ** becomes Cf, not Ps → flanking OK)
 /// - Closing: x」**后 → x」\u{200B}**后  (char before ** becomes Cf, not Pe → flanking OK)
-pub(crate) fn fix_emphasis_cjk_punctuation(source: &str) -> String {
+pub fn fix_emphasis_cjk_punctuation(source: &str) -> String {
     let chars: Vec<char> = source.chars().collect();
     let len = chars.len();
     let mut result = String::with_capacity(source.len());
@@ -360,7 +360,7 @@ fn is_close_punctuation(ch: char) -> bool {
 /// Strip a leading YAML frontmatter block (`---` … `---`) so it is not rendered.
 ///
 /// Invalid YAML is ignored with a warning; the block is still stripped.
-pub(crate) fn strip_yaml_frontmatter(source: &str) -> String {
+pub fn strip_yaml_frontmatter(source: &str) -> String {
     let body = source.strip_prefix('\u{FEFF}').unwrap_or(source);
     let lines: Vec<&str> = body.lines().collect();
     if lines.first().map(|line| line.trim()) != Some("---") {
@@ -399,7 +399,7 @@ pub(crate) fn strip_yaml_frontmatter(source: &str) -> String {
     out
 }
 
-pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
+pub fn preprocess_markdown_extensions(source: &str) -> String {
     let source = strip_yaml_frontmatter(source);
     let source = fix_emphasis_cjk_punctuation(&source);
     let lines: Vec<&str> = source.lines().collect();
@@ -509,7 +509,7 @@ pub(crate) fn preprocess_markdown_extensions(source: &str) -> String {
     out
 }
 
-pub(crate) fn parse_internal_callout_info(info: &str) -> Option<(String, String)> {
+pub fn parse_internal_callout_info(info: &str) -> Option<(String, String)> {
     let mut parts = info.trim().splitn(3, char::is_whitespace);
     if parts.next()? != "pagemd-callout" {
         return None;

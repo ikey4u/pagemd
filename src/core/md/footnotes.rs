@@ -14,12 +14,12 @@ use crate::core::util::html_escape;
 
 const FN_SLOT_MARKER: &str = "data-pagemd-fn-slot=\"";
 
-pub(crate) struct FootnoteRegistry {
+pub struct FootnoteRegistry {
     definitions: HashMap<String, String>,
 }
 
 impl FootnoteRegistry {
-    pub(crate) fn from_markdown(source: &str) -> Self {
+    pub fn from_markdown(source: &str) -> Self {
         let mut definitions = HashMap::new();
         let lines: Vec<&str> = source.lines().collect();
         let mut index = 0usize;
@@ -48,7 +48,7 @@ impl FootnoteRegistry {
         Self { definitions }
     }
 
-    pub(crate) fn definition(&self, label: &str) -> Option<&str> {
+    pub fn definition(&self, label: &str) -> Option<&str> {
         self.definitions.get(label).map(String::as_str)
     }
 
@@ -58,7 +58,7 @@ impl FootnoteRegistry {
     ///
     /// Lines inside fenced code blocks are left untouched; callout bodies apply
     /// footnote preparation during their own nested parse.
-    pub(crate) fn prepare_parse_unit(&self, source: &mut String) {
+    pub fn prepare_parse_unit(&self, source: &mut String) {
         let referenced = referenced_labels(source);
         let lines: Vec<&str> = source.lines().collect();
         let mut out = String::new();
@@ -145,7 +145,7 @@ fn is_fence_closer(line: &str, open_len: usize) -> bool {
     trimmed.chars().skip(open_len).all(char::is_whitespace)
 }
 
-pub(crate) fn referenced_labels(content: &str) -> HashSet<String> {
+pub fn referenced_labels(content: &str) -> HashSet<String> {
     let mut labels = HashSet::new();
     let bytes = content.as_bytes();
     let mut index = 0usize;
@@ -191,37 +191,37 @@ fn is_definition_continuation(line: &str) -> bool {
     line.starts_with("    ") || line.starts_with('\t')
 }
 
-pub(crate) fn footnote_ref_html(label: &str) -> String {
+pub fn footnote_ref_html(label: &str) -> String {
     let escaped = html_escape(label);
     format!(
         "<sup class=\"footnote-ref\"><a href=\"#fn-{escaped}\" class=\"footnote-ref-link\">{escaped}</a></sup>"
     )
 }
 
-pub(crate) fn footnote_slot_html(label: &str) -> String {
+pub fn footnote_slot_html(label: &str) -> String {
     format!("<div {FN_SLOT_MARKER}{}\"></div>\n", html_escape(label))
 }
 
-pub(crate) fn footnote_def_html(label: &str, body_html: &str) -> String {
+pub fn footnote_def_html(label: &str, body_html: &str) -> String {
     let escaped = html_escape(label);
     format!(
         "<div class=\"footnote\" id=\"fn-{escaped}\"><span class=\"footnote-marker\"><sup>{escaped}</sup></span><span class=\"footnote-content\">{body_html}</span></div>\n"
     )
 }
 
-pub(crate) fn footnote_slot_label(raw_html: &str) -> Option<String> {
+pub fn footnote_slot_label(raw_html: &str) -> Option<String> {
     let start = raw_html.find(FN_SLOT_MARKER)? + FN_SLOT_MARKER.len();
     let rest = &raw_html[start..];
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
 }
 
-pub(crate) enum FootnoteTextSegment<'a> {
+pub enum FootnoteTextSegment<'a> {
     Plain(&'a str),
     Reference(&'a str),
 }
 
-pub(crate) fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
+pub fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
     let mut segments = Vec::new();
     let bytes = text.as_bytes();
     let mut plain_start = 0usize;

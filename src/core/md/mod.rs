@@ -3,4 +3,4 @@ mod footnotes;
 mod preprocess;
 mod render;
 
-pub(crate) use render::render_markdown;
+pub use render::render_markdown;

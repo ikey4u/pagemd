@@ -32,7 +32,7 @@ fn mermaid_site_config() -> MermaidConfig {
 }
 
 /// Headless render (merman) used by CLI / static convert.
-pub(crate) fn render_mermaid(code: &str) -> Result<String> {
+pub fn render_mermaid(code: &str) -> Result<String> {
     let id = format!(
         "pagemd-mermaid-{}",
         MERMAID_DIAGRAM_ID.fetch_add(1, Ordering::Relaxed)
@@ -50,7 +50,7 @@ pub(crate) fn render_mermaid(code: &str) -> Result<String> {
 }
 
 /// Client-side placeholder for `pagemd view` (official mermaid.js in the browser).
-pub(crate) fn mermaid_client_html(code: &str) -> String {
+pub fn mermaid_client_html(code: &str) -> String {
     let escaped = html_escape(code.trim());
     format!(
         "<div class=\"mermaid-display\" data-mermaid-client data-mermaid-code=\"{escaped}\">\n\
@@ -59,7 +59,7 @@ pub(crate) fn mermaid_client_html(code: &str) -> String {
     )
 }
 
-pub(crate) fn mermaid_error_html(code: &str) -> String {
+pub fn mermaid_error_html(code: &str) -> String {
     format!(
         "<div class=\"mermaid-display mermaid-error\"><strong>Mermaid render failed</strong><pre><code>{}</code></pre></div>\n",
         html_escape(code)

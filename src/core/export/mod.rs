@@ -1,24 +1,24 @@
-pub(crate) mod html;
+pub mod html;
 
 use anyhow::Result;
 
 use crate::core::model::Document;
 
-pub(crate) use html::HtmlExportOptions;
+pub use html::HtmlExportOptions;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum OutputFormat {
+pub enum OutputFormat {
     Html,
 }
 
-pub(crate) struct ExportOutput {
+pub struct ExportOutput {
     pub html: String,
     #[allow(dead_code)]
     pub title: String,
     pub section_count: usize,
 }
 
-pub(crate) fn export_document(
+pub fn export_document(
     doc: &Document,
     format: OutputFormat,
     html_opts: &HtmlExportOptions,

@@ -2,6 +2,6 @@ mod html;
 mod mermaid;
 mod plantuml;
 
-pub(crate) use html::{is_diagram_html_info, render_diagram_html};
-pub(crate) use mermaid::{mermaid_client_html, mermaid_error_html, render_mermaid};
-pub(crate) use plantuml::{plantuml_error_html, render_plantuml};
+pub use html::{is_diagram_html_info, render_diagram_html};
+pub use mermaid::{mermaid_client_html, mermaid_error_html, render_mermaid};
+pub use plantuml::{plantuml_error_html, render_plantuml};

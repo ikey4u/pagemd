@@ -351,8 +351,10 @@ fn single_file_html_includes_outline_workspace() {
     assert!(html.contains("data-theme-toggle"));
     assert!(html.contains("data-settings-toggle"));
     assert!(html.contains("data-settings-export-slot"));
+    // Preview injects a Download HTML control; convert/export HTML must not.
+    // workspace.js may mention [data-export-html] as a click selector — that is fine.
     assert!(!html.contains("data-export-ready"));
-    assert!(!html.contains("data-export-html"));
+    assert!(!html.contains("doc-settings-action\" data-export-html"));
     assert!(!html.contains(">Download HTML<"));
     assert!(html.contains("data-pagemd-diagram-lightbox"));
     assert!(html.contains("doc-theme-icon-moon"));
@@ -782,6 +784,19 @@ fn typst_cetz_package_renders_svg() {
         &html[..html.len().min(500)]
     );
     assert!(!html.contains("Typst render failed"));
+}
+
+#[test]
+fn library_render_to_html_matches_full_document() {
+    let html = crate::render_to_html(
+        "# Library API\n\nHello **world**.\n",
+        &crate::RenderOptions::default(),
+    )
+    .unwrap();
+    assert!(html.contains("<!DOCTYPE html>") || html.contains("<!doctype html>") || html.contains("<html"));
+    assert!(html.contains("Library API"));
+    assert!(html.contains("<strong>world</strong>"));
+    assert!(html.contains("<style"));
 }
 
 #[test]
