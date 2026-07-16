@@ -1,4 +1,4 @@
-pub(crate) mod error;
+pub mod error;
 mod live;
 mod resources;
 mod server;
@@ -6,7 +6,6 @@ mod server;
 use std::path::PathBuf;
 
 pub use live::ensure_export_html;
-#[cfg(test)]
 pub use live::wrap_for_preview;
 pub use resources::{collect_initial_watch_paths, collect_render_watch_paths};
 pub use server::{run, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
@@ -23,7 +22,7 @@ pub struct ViewOptions {
 
 pub fn validate_inputs(inputs: &[PathBuf]) -> anyhow::Result<()> {
     if inputs.is_empty() {
-        anyhow::bail!("Missing required input. Pass --input <FILE>.");
+        anyhow::bail!("Missing required input. Pass --input <FILE|DIR> or --dir <DIR>.");
     }
     for input in inputs {
         if !input.exists() {

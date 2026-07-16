@@ -61,6 +61,14 @@ Build and run the CLI:
 cargo run -- --input input.md --output output.html
 ```
 
+Convert a whole directory of Markdown files into one SingleFile HTML document:
+
+```bash
+cargo run -- --input examples --output examples.html
+# or
+cargo run -- --dir docs -o docs.html
+```
+
 Convert the basic example into a demo HTML file:
 
 ```bash
@@ -72,6 +80,15 @@ Preview the basic example in the default browser:
 ```bash
 cargo run -- view --input examples/BASIC.md
 ```
+
+Cross-compile release binaries (Linux glibc 2.17+, Windows, macOS) with Zig:
+
+```bash
+mise run dist
+```
+
+Artifacts are written under `dist/` as `pagemd-{os}-{arch}-{version}.zip`
+(for example `pagemd-linux-x64-0.7.0.zip`).
 
 Run validation checks:
 

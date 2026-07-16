@@ -1,6 +1,6 @@
-mod browser;
-pub(crate) mod cli;
-mod convert;
+pub mod browser;
+pub mod cli;
+pub mod convert;
 pub mod preview;
 
 pub use cli::run;

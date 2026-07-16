@@ -40,9 +40,8 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+pub mod app;
 pub mod core;
-
-mod app;
 
 /// CLI / binary entrypoint (`pagemd` executable).
 pub use app::run;
@@ -54,6 +53,3 @@ pub use core::{
     HtmlExportOptions, OutputFormat, RenderOptions, RenderResources, ResolvedInputs, ScriptEmbed,
     ThemeMode, WorkspaceChrome, DIAGRAM_HELP, MARKDOWN_HELP, PAGEMD_LONG_ABOUT,
 };
-
-#[cfg(test)]
-mod tests;

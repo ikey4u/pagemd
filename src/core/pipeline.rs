@@ -93,7 +93,7 @@ fn nearest_scan_root(path: &Path, directories: &[PathBuf]) -> PathBuf {
 
 pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     if opts.inputs.is_empty() && opts.directories.is_empty() {
-        bail!("Missing required input. Pass --input <FILE> or --dir <DIR>.");
+        bail!("Missing required input. Pass --input <FILE|DIR> or --dir <DIR>.");
     }
 
     let mut files = Vec::new();
@@ -119,10 +119,20 @@ pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
 
     for input in &opts.inputs {
         if !input.exists() {
-            bail!("Input file does not exist: {}", input.display());
+            bail!("Input path does not exist: {}", input.display());
+        }
+        if input.is_dir() {
+            let canonical = canonical_key(input);
+            if seen_dirs.insert(canonical.clone()) {
+                directories.push(canonical);
+            }
+            continue;
         }
         if !input.is_file() {
-            bail!("Input is not a file: {}", input.display());
+            bail!(
+                "Input is neither a file nor a directory: {}",
+                input.display()
+            );
         }
         if !exclude.is_empty() {
             let scan_root = nearest_scan_root(input, &directories);
@@ -133,7 +143,7 @@ pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
         push_unique_file(&mut files, &mut seen_files, input.clone());
     }
 
-    for dir in &opts.directories {
+    for dir in &directories {
         let mut dir_files = Vec::new();
         collect_markdown_files(dir, dir, &exclude, &mut dir_files)?;
         for path in dir_files {
@@ -142,7 +152,7 @@ pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     }
 
     if files.is_empty() {
-        bail!("No Markdown files found. Pass --input <FILE> or --dir <DIR> containing .md/.markdown files.");
+        bail!("No Markdown files found. Pass --input <FILE|DIR> or --dir <DIR> containing .md/.markdown files.");
     }
 
     Ok(ResolvedInputs { files, directories })

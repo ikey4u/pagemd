@@ -94,32 +94,32 @@ struct ViewArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-pub(crate) struct CliArgs {
+pub struct CliArgs {
     #[arg(
         short = 'i',
         long = "input",
-        value_name = "FILE",
+        value_name = "PATH",
         num_args = 1..,
-        help = "Markdown input file(s)"
+        help = "Markdown file(s) and/or directory(ies) to convert into one HTML document"
     )]
-    pub(crate) inputs: Vec<PathBuf>,
+    pub inputs: Vec<PathBuf>,
 
     #[arg(
         short = 'd',
         long = "dir",
         value_name = "DIR",
         num_args = 1..,
-        help = "Directory/directories to scan recursively for Markdown files"
+        help = "Directory/directories to scan recursively for Markdown files (same as passing dirs to -i)"
     )]
-    pub(crate) directories: Vec<PathBuf>,
+    pub directories: Vec<PathBuf>,
 
     #[arg(
         short = 'o',
         long = "output",
         value_name = "FILE",
-        help = "Output HTML path (required for convert; in view, exports on each render)"
+        help = "Output HTML path (defaults to <name>.html for a single file/dir input)"
     )]
-    pub(crate) output: Option<PathBuf>,
+    pub output: Option<PathBuf>,
 
     #[arg(
         short = 'x',
@@ -128,10 +128,10 @@ pub(crate) struct CliArgs {
         num_args = 1..,
         help = "Exclude files or directories while scanning (name, path, or glob such as drafts/**)"
     )]
-    pub(crate) excludes: Vec<String>,
+    pub excludes: Vec<String>,
 
     #[arg(long = "title", value_name = "TITLE", help = "Document title")]
-    pub(crate) title: Option<String>,
+    pub title: Option<String>,
 
     #[arg(
         long = "icon",
@@ -139,20 +139,20 @@ pub(crate) struct CliArgs {
         value_parser = parse_icon_arg,
         help = "Two-character favicon label (a-z, A-Z, 0-9); shown uppercase in the tab icon"
     )]
-    pub(crate) icon: Option<String>,
+    pub icon: Option<String>,
 
     #[arg(long = "font-size", default_value = "16", help = "Math font size")]
-    pub(crate) math_font_size: f64,
+    pub math_font_size: f64,
 
     #[arg(
         long = "katex-fonts",
         value_name = "DIR",
         help = "Directory containing KaTeX .ttf font files for glyph embedding"
     )]
-    pub(crate) katex_fonts: Option<PathBuf>,
+    pub katex_fonts: Option<PathBuf>,
 }
 
-pub(crate) fn parse_icon_arg(s: &str) -> Result<String, String> {
+pub fn parse_icon_arg(s: &str) -> Result<String, String> {
     if s.chars().count() != 2 {
         return Err("icon must be exactly 2 characters".into());
     }

@@ -4,10 +4,15 @@ min_version = "2024.11.1"
 node = "22"
 pnpm = "10"
 rust = "stable"
+zig = "0.14.0"
 "aqua:wasm-bindgen/wasm-pack" = "0.15.0"
+"cargo:cargo-zigbuild" = "0.20.1"
 
 [vars]
 extension_dir = "extension/chrome"
+dist_dir = "dist"
+# Minimum glibc for Linux binaries (CentOS 7 / older enterprise distros).
+linux_glibc = "2.17"
 
 [tasks.format]
 description = "Format Rust code with nightly rustfmt"
@@ -31,3 +36,11 @@ echo "Extension built -> {{vars.extension_dir}}/dist (Chrome: Load unpacked)"
 [tasks.extension-clean]
 description = "Remove Chrome extension build output"
 run = "rm -rf {{vars.extension_dir}}/dist"
+
+[tasks.dist]
+description = "Cross-compile release binaries for Linux (glibc 2.17), Windows, and macOS via cargo-zigbuild"
+run = "bash scripts/dist.sh"
+
+[tasks."dist:clean"]
+description = "Remove release distribution artifacts"
+run = "rm -rf {{vars.dist_dir}}"

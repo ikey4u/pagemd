@@ -4,16 +4,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
-use crate::app::cli::{parse_icon_arg, CliArgs};
-use crate::core::export::html::build_html;
-use crate::core::export::html::favicon::{
+use pagemd::app::cli::{parse_icon_arg, CliArgs};
+use pagemd::core::export::html::build_html;
+use pagemd::core::export::html::favicon::{
     contrast_ratio, default_icon_label_from_path, icon_background_rgb, icon_colors,
     relative_luminance,
 };
-use crate::core::export::html::page::build_html_with_nav;
-use crate::core::md::{render_markdown, FootnoteDisplay};
-use crate::core::model::{HeadingOutline, RenderedSection};
-use crate::core::resolve_inputs;
+use pagemd::core::export::html::page::build_html_with_nav;
+use pagemd::core::md::{render_markdown, FootnoteDisplay};
+use pagemd::core::model::{HeadingOutline, RenderedSection};
+use pagemd::core::resolve_inputs;
+use pagemd::{render, render_to_html, HtmlExportOptions, RenderOptions};
 
 fn render_html_at(source: &str, base_dir: &Path) -> String {
     let ss = SyntaxSet::load_defaults_newlines();
@@ -146,6 +147,35 @@ fn directory_inputs_collect_markdown_and_dedup_files() {
 }
 
 #[test]
+fn input_flag_accepts_directory_as_monolithic_html_source() {
+    let dir = temp_test_dir("input-dir");
+    let nested = dir.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(dir.join("a.md"), "# A").unwrap();
+    std::fs::write(nested.join("b.md"), "# B").unwrap();
+
+    let args = test_args(vec![dir.clone()], Vec::new());
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+    assert_eq!(resolved.files.len(), 2);
+    assert_eq!(resolved.directories.len(), 1);
+
+    let out = dir.join("out.html");
+    let html_opts = pagemd::core::HtmlExportOptions {
+        embed_workspace_script: true,
+        client_mermaid_runtime: false,
+        ..Default::default()
+    };
+    let result = pagemd::core::export_to_file(&(&args).into(), &html_opts, &out).unwrap();
+    assert_eq!(result.section_count, 2);
+    let html = std::fs::read_to_string(&out).unwrap();
+    assert!(html.contains("<html"));
+    assert!(html.contains(">A<") || html.contains("A"));
+    assert!(html.contains(">B<") || html.contains("B"));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn exclude_patterns_skip_directories_and_files() {
     let dir = temp_test_dir("exclude-inputs");
     let skipped_dir = dir.join("drafts");
@@ -202,14 +232,14 @@ fn tree_nav_uses_directory_structure_with_tmp_paths() {
 
     let args = test_args(Vec::new(), vec![dir.clone()]);
     let resolved = resolve_inputs(&(&args).into()).unwrap();
-    let html_opts = crate::core::HtmlExportOptions {
+    let html_opts = pagemd::core::HtmlExportOptions {
         embed_workspace_script: true,
         client_mermaid_runtime: false,
         ..Default::default()
     };
     let convert_opts = (&args).into();
-    let resources = crate::core::prepare_resources(&convert_opts).unwrap();
-    let output = crate::core::export_with_resources(
+    let resources = pagemd::core::prepare_resources(&convert_opts).unwrap();
+    let output = pagemd::core::export_with_resources(
         &convert_opts,
         &html_opts,
         &resources,
@@ -240,7 +270,7 @@ fn preview_html_omits_embedded_workspace_script() {
         "PG",
         None,
         None,
-        &crate::core::HtmlExportOptions {
+        &pagemd::core::HtmlExportOptions {
             embed_workspace_script: false,
             client_mermaid_runtime: false,
             ..Default::default()
@@ -248,7 +278,7 @@ fn preview_html_omits_embedded_workspace_script() {
     );
     assert!(html.contains("data-doc-workspace"));
     assert!(!html.contains("data-pagemd-workspace"));
-    let preview = crate::app::preview::wrap_for_preview(html);
+    let preview = pagemd::app::preview::wrap_for_preview(html);
     assert!(preview.contains("data-pagemd-workspace"));
     assert!(preview.contains("data-pagemd-live-preview"));
 }
@@ -270,22 +300,22 @@ fn export_html_restores_workspace_script_for_preview_render() {
         "PG",
         None,
         None,
-        &crate::core::HtmlExportOptions {
+        &pagemd::core::HtmlExportOptions {
             embed_workspace_script: false,
             client_mermaid_runtime: false,
             ..Default::default()
         },
     );
-    let exported = crate::app::preview::ensure_export_html(html);
+    let exported = pagemd::app::preview::ensure_export_html(html);
     assert!(exported.contains("data-pagemd-workspace"));
     assert!(!exported.contains("data-pagemd-live-preview"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hosted_preview_starts_inside_tokio_runtime() {
-    use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
-    use crate::app::preview::{HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
-    use crate::core::{export_with_resources, prepare_resources, ConvertOptions, OutputFormat};
+    use pagemd::app::preview::error::{build_preview_error_html, preview_html_opts};
+    use pagemd::app::preview::{HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
+    use pagemd::core::{export_with_resources, prepare_resources, ConvertOptions, OutputFormat};
 
     let dir = temp_test_dir("hosted-preview");
     let session_path = dir.join("session.md");
@@ -370,7 +400,9 @@ fn single_file_html_includes_outline_workspace() {
     // Preview injects a Download HTML control; convert/export HTML must not.
     // workspace.js may mention [data-export-html] as a click selector — that is fine.
     assert!(!html.contains("data-export-ready"));
-    assert!(!html.contains("doc-settings-action\" data-export-html"));
+    assert!(
+        !html.contains("<button type=\"button\" class=\"doc-settings-action\" data-export-html>")
+    );
     assert!(!html.contains(">Download HTML<"));
     assert!(html.contains("data-pagemd-diagram-lightbox"));
     assert!(html.contains("doc-theme-icon-moon"));
@@ -431,7 +463,7 @@ fn multi_file_html_includes_standalone_sidebar() {
         "PG",
         Some(&["a.md".to_string(), "b.md".to_string()]),
         None,
-        &crate::core::HtmlExportOptions {
+        &pagemd::core::HtmlExportOptions {
             embed_workspace_script: true,
             client_mermaid_runtime: false,
             ..Default::default()
@@ -483,7 +515,7 @@ fn multi_file_tree_sidebar_renders_folders() {
             PathBuf::from("/project/docs/readme.md"),
             PathBuf::from("/project/docs/guide/start.md"),
         ]),
-        &crate::core::HtmlExportOptions {
+        &pagemd::core::HtmlExportOptions {
             embed_workspace_script: true,
             client_mermaid_runtime: false,
             ..Default::default()
@@ -731,7 +763,7 @@ fn mermaid_client_mode_emits_source_placeholder() {
         "PG",
         None,
         None,
-        &crate::core::HtmlExportOptions {
+        &pagemd::core::HtmlExportOptions {
             embed_workspace_script: false,
             client_mermaid_runtime: true,
             ..Default::default()
@@ -797,7 +829,7 @@ fn diagram_html_tailwind_browser_runtime_is_embedded_when_needed() {
 
 #[test]
 fn bundled_typst_packages_are_embedded() {
-    assert_eq!(crate::core::ext::typst::bundled_specs().len(), 3);
+    assert_eq!(pagemd::core::ext::typst::bundled_specs().len(), 3);
 }
 
 #[test]
@@ -816,9 +848,9 @@ fn typst_cetz_package_renders_svg() {
 
 #[test]
 fn library_render_to_html_matches_full_document() {
-    let html = crate::render_to_html(
+    let html = render_to_html(
         "# Library API\n\nHello **world**.\n",
-        &crate::RenderOptions::default(),
+        &RenderOptions::default(),
     )
     .unwrap();
     assert!(
@@ -887,10 +919,10 @@ fn raw_html_resources_are_embedded() {
 
 #[test]
 fn embedded_export_is_content_only_without_scripts() {
-    let html = crate::render_to_html(
+    let html = render_to_html(
         "# Intro\n\nHello **pack**.\n\n## Details\n\nMore text.\n",
-        &crate::RenderOptions {
-            html: crate::HtmlExportOptions::embedded(),
+        &RenderOptions {
+            html: HtmlExportOptions::embedded(),
             ..Default::default()
         },
     )
@@ -905,10 +937,10 @@ fn embedded_export_is_content_only_without_scripts() {
 
 #[test]
 fn embedded_footnotes_use_tooltip_titles_without_visible_end_list() {
-    let html = crate::render_to_html(
+    let html = render_to_html(
         "Claim from README[^1].\n\n[^1]: `README.md:1-10` — <source media=\"(prefers-color-scheme: dark)\" srcset=\"x\">\n",
-        &crate::RenderOptions {
-            html: crate::HtmlExportOptions::embedded(),
+        &RenderOptions {
+            html: HtmlExportOptions::embedded(),
             ..Default::default()
         },
     )
@@ -923,11 +955,11 @@ fn embedded_footnotes_use_tooltip_titles_without_visible_end_list() {
 
 #[test]
 fn host_footnotes_extract_defs_and_keep_inline_refs() {
-    let mut html_opts = crate::HtmlExportOptions::embedded();
-    html_opts.footnotes = crate::FootnoteDisplay::Host;
-    let out = crate::render(
+    let mut html_opts = HtmlExportOptions::embedded();
+    html_opts.footnotes = FootnoteDisplay::Host;
+    let out = render(
         "Claim A[^1] and claim B[^2].\n\n[^2]: second note\n[^1]: `README.md:1` — first\n",
-        &crate::RenderOptions {
+        &RenderOptions {
             html: html_opts,
             ..Default::default()
         },
@@ -949,9 +981,9 @@ fn host_footnotes_extract_defs_and_keep_inline_refs() {
 
 #[test]
 fn default_export_keeps_workspace_chrome_for_headings() {
-    let html =
-        crate::render_to_html("# Intro\n\nHello.\n", &crate::RenderOptions::default()).unwrap();
+    let html = render_to_html("# Intro\n\nHello.\n", &RenderOptions::default()).unwrap();
     assert!(html.contains("data-doc-workspace"));
     assert!(html.contains("doc-topbar"));
     assert!(html.contains("data-pagemd-workspace"));
 }
+

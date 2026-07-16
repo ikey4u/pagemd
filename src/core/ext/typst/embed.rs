@@ -23,6 +23,7 @@ Convert Markdown to a SingleFile-style HTML document (default mode).
 Usage:
   pagemd -i INPUT.md -o OUTPUT.html
   pagemd -i a.md -i b.md -o doc.html
+  pagemd -i docs/ -o docs.html
   pagemd -d docs/ -o doc.html
   pagemd -d src/ --exclude drafts/** node_modules
 
