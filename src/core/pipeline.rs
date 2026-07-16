@@ -149,7 +149,6 @@ pub(crate) fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
 
 pub(crate) fn prepare_resources(opts: &ConvertOptions) -> Result<RenderResources> {
     let font_dir = find_katex_fonts(opts.katex_fonts.as_deref())?;
-    eprintln!("Using KaTeX fonts from: {}", font_dir);
     Ok(RenderResources {
         ss: SyntaxSet::load_defaults_newlines(),
         ts: ThemeSet::load_defaults(),
@@ -183,6 +182,7 @@ fn build_document(
             &resources.font_dir,
             &resources.ss,
             &resources.ts,
+            opts.client_mermaid,
         )
         .with_context(|| format!("Failed to render {}", input_path.display()))?;
 

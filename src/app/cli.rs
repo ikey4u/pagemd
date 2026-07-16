@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -8,7 +8,10 @@ use crate::app::browser;
 use crate::app::convert::run_convert;
 use crate::app::preview;
 use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
-use crate::core::{self, export_with_resources, prepare_resources, resolve_inputs, ConvertOptions};
+use crate::core::{
+    self, export_with_resources, prepare_resources, resolve_inputs, ConvertOptions,
+    HtmlExportOptions,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -162,13 +165,23 @@ pub(crate) fn parse_icon_arg(s: &str) -> Result<String, String> {
 fn run_view(args: &ViewArgs) -> Result<()> {
     let export_path = args.export.clone().or_else(|| args.convert.output.clone());
 
-    let convert_opts = ConvertOptions::from(&args.convert);
+    let mut convert_opts = ConvertOptions::from(&args.convert);
+    convert_opts.client_mermaid = true;
+    let native_export_opts = {
+        let mut opts = convert_opts.clone();
+        opts.client_mermaid = false;
+        opts
+    };
     let resolved = resolve_inputs(&convert_opts)?;
     preview::validate_inputs(&resolved.files)?;
 
     let resources = prepare_resources(&convert_opts)?;
     let title_hint = resolved.files.first().cloned();
     let html_opts = preview_html_opts();
+    let native_html_opts = HtmlExportOptions {
+        embed_workspace_script: true,
+        client_mermaid_runtime: false,
+    };
 
     let sources: Vec<(PathBuf, String)> = resolved
         .files
@@ -188,6 +201,9 @@ fn run_view(args: &ViewArgs) -> Result<()> {
         &sources,
     ));
 
+    // High-quality HTML export is available from the view settings panel
+    // (browser-baked SVG). `--export` keeps writing a merman-rendered file.
+    let file_export = export_path.clone();
     preview::run(
         preview::ViewOptions {
             host: args.host.clone(),
@@ -195,7 +211,7 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             inputs: resolved.files.clone(),
             watch_paths,
             open_browser: !args.no_open,
-            export_path,
+            export_path: None,
         },
         move |request: preview::RenderRequest| match export_with_resources(
             &convert_opts,
@@ -205,6 +221,21 @@ fn run_view(args: &ViewArgs) -> Result<()> {
         ) {
             Ok(document) => {
                 let _current_preview_inputs = request.inputs;
+                if let Some(path) = file_export.as_ref() {
+                    match export_with_resources(
+                        &native_export_opts,
+                        &native_html_opts,
+                        &resources,
+                        title_hint.as_deref(),
+                    ) {
+                        Ok(native) => {
+                            if let Err(err) = write_view_export(path, &native.html) {
+                                eprintln!("Export error: {err:#}");
+                            }
+                        }
+                        Err(err) => eprintln!("Export render error: {err:#}"),
+                    }
+                }
                 let extra_watch_paths = match resolve_inputs(&convert_opts) {
                     Ok(resolved) => {
                         preview::collect_render_watch_paths(&resolved.files, &resolved.directories)
@@ -227,6 +258,20 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             }
         },
     )
+}
+
+fn write_view_export(path: &Path, html: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Cannot create {}", parent.display()))?;
+        }
+    }
+    let html = preview::ensure_export_html(html.to_string());
+    fs::write(path, html.as_bytes())
+        .with_context(|| format!("Cannot export {}", path.display()))?;
+    eprintln!("Exported -> {}", path.display());
+    Ok(())
 }
 
 pub fn run() -> Result<()> {

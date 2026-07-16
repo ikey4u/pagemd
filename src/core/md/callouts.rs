@@ -17,6 +17,7 @@ pub(crate) struct CalloutRenderContext<'a> {
     pub ts: &'a ThemeSet,
     pub footnotes: &'a FootnoteRegistry,
     pub depth: usize,
+    pub client_mermaid: bool,
 }
 
 pub(crate) fn render_callout(
@@ -37,6 +38,7 @@ pub(crate) fn render_callout(
             ctx.ts,
             Some(ctx.footnotes),
             ctx.depth + 1,
+            ctx.client_mermaid,
         )?
         .html
     };

@@ -12,6 +12,7 @@ impl From<&CliArgs> for ConvertOptions {
             math_font_size: args.math_font_size,
             katex_fonts: args.katex_fonts.clone(),
             output_format: OutputFormat::Html,
+            client_mermaid: false,
         }
     }
 }
@@ -34,6 +35,7 @@ pub(crate) fn run_convert(args: &CliArgs) -> anyhow::Result<()> {
     let opts = ConvertOptions::from(args);
     let html_opts = HtmlExportOptions {
         embed_workspace_script: true,
+        client_mermaid_runtime: false,
     };
     let result = export_to_file(&opts, &html_opts, output)?;
 

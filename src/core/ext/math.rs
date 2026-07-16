@@ -98,14 +98,15 @@ pub(crate) fn latex_to_svg(
     let dl = to_display_list(&lbox);
     let embed = !font_dir.is_empty();
     let effective_font_size = if display {
-        font_size * 2.5
-    } else {
+        // Display style already enlarges operators; keep near body text scale.
         font_size * 1.15
+    } else {
+        font_size
     };
     let svg_opts = SvgOptions {
         font_size: effective_font_size,
-        padding: if display { 2.0 } else { 0.5 },
-        stroke_width: 1.5,
+        padding: if display { 1.0 } else { 0.5 },
+        stroke_width: 1.25,
         embed_glyphs: embed,
         font_dir: font_dir.to_owned(),
     };

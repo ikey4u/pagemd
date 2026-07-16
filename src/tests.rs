@@ -18,7 +18,7 @@ use crate::core::resolve_inputs;
 fn render_html_at(source: &str, base_dir: &Path) -> String {
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
-    render_markdown(source, base_dir, 16.0, "", &ss, &ts)
+    render_markdown(source, base_dir, 16.0, "", &ss, &ts, false)
         .unwrap()
         .html
 }
@@ -194,6 +194,7 @@ fn tree_nav_uses_directory_structure_with_tmp_paths() {
     let resolved = resolve_inputs(&(&args).into()).unwrap();
     let html_opts = crate::core::HtmlExportOptions {
         embed_workspace_script: true,
+        client_mermaid_runtime: false,
     };
     let convert_opts = (&args).into();
     let resources = crate::core::prepare_resources(&convert_opts).unwrap();
@@ -227,7 +228,10 @@ fn preview_html_omits_embedded_workspace_script() {
         "PG",
         None,
         None,
-        false,
+        &crate::core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: false,
+        },
     );
     assert!(html.contains("data-doc-workspace"));
     assert!(!html.contains("data-pagemd-workspace"));
@@ -252,7 +256,10 @@ fn export_html_restores_workspace_script_for_preview_render() {
         "PG",
         None,
         None,
-        false,
+        &crate::core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: false,
+        },
     );
     let exported = crate::app::preview::ensure_export_html(html);
     assert!(exported.contains("data-pagemd-workspace"));
@@ -278,6 +285,7 @@ async fn hosted_preview_starts_inside_tokio_runtime() {
         math_font_size: 1.0,
         katex_fonts: None,
         output_format: OutputFormat::Html,
+        client_mermaid: true,
     };
     let resources = prepare_resources(&convert_opts).unwrap();
     let html_opts = preview_html_opts();
@@ -341,6 +349,12 @@ fn single_file_html_includes_outline_workspace() {
     assert!(html.contains("doc-topbar"));
     assert!(html.contains("data-doc-title"));
     assert!(html.contains("data-theme-toggle"));
+    assert!(html.contains("data-settings-toggle"));
+    assert!(html.contains("data-settings-export-slot"));
+    assert!(!html.contains("data-export-ready"));
+    assert!(!html.contains("data-export-html"));
+    assert!(!html.contains(">Download HTML<"));
+    assert!(html.contains("data-pagemd-diagram-lightbox"));
     assert!(html.contains("doc-theme-icon-moon"));
     assert!(html.contains("data-pagemd-workspace"));
     assert!(html.contains("id=\"doc-1\" data-doc-panel"));
@@ -396,7 +410,10 @@ fn multi_file_html_includes_standalone_sidebar() {
         "PG",
         Some(&["a.md".to_string(), "b.md".to_string()]),
         None,
-        true,
+        &crate::core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: false,
+        },
     );
 
     assert!(html.contains("data-doc-workspace"));
@@ -442,7 +459,10 @@ fn multi_file_tree_sidebar_renders_folders() {
             PathBuf::from("/project/docs/readme.md"),
             PathBuf::from("/project/docs/guide/start.md"),
         ]),
-        true,
+        &crate::core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: false,
+        },
     );
 
     assert!(html.contains("class=\"doc-nav-tree\""));
@@ -470,6 +490,7 @@ fn outline_uses_markdown_plain_text_not_html_roundtrip() {
         "",
         &ss,
         &ts,
+        false,
     )
     .unwrap();
 
@@ -495,6 +516,7 @@ fn duplicate_heading_ids_are_unique_for_outline_links() {
         "",
         &ss,
         &ts,
+        false,
     )
     .unwrap();
 
@@ -622,6 +644,44 @@ fn mermaid_code_block_renders_svg() {
     assert_eq!(mermaid_count(&html), 1);
     assert!(html.contains("<svg"));
     assert!(!html.contains("language-mermaid"));
+    assert!(!html.contains("data-mermaid-client"));
+}
+
+#[test]
+fn mermaid_client_mode_emits_source_placeholder() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let section = render_markdown(
+        "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n",
+        Path::new("."),
+        16.0,
+        "",
+        &ss,
+        &ts,
+        true,
+    )
+    .unwrap();
+    assert!(section.html.contains("data-mermaid-client"));
+    assert!(section.html.contains("class=\"mermaid\""));
+    assert!(
+        section.html.contains("A[Start] --&gt; B[End]")
+            || section.html.contains("A[Start] --> B[End]")
+    );
+    assert!(!section.html.contains("<svg"));
+
+    let html = build_html_with_nav(
+        "Title",
+        &[section],
+        "PG",
+        None,
+        None,
+        &crate::core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: true,
+        },
+    );
+    assert!(html.contains("/__assets/mermaid.min.js"));
+    assert!(html.contains("data-pagemd-mermaid-init"));
 }
 
 #[test]

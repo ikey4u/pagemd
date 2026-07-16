@@ -316,7 +316,7 @@ mod tests {
 
         let ss = SyntaxSet::load_defaults_newlines();
         let ts = ThemeSet::load_defaults();
-        crate::core::md::render::render_markdown(source, Path::new("."), 16.0, "", &ss, &ts)
+        crate::core::md::render::render_markdown(source, Path::new("."), 16.0, "", &ss, &ts, false)
             .expect("render markdown")
             .html
     }

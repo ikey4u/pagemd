@@ -5,8 +5,9 @@ mod server;
 
 use std::path::PathBuf;
 
+pub use live::ensure_export_html;
 #[cfg(test)]
-pub use live::{ensure_export_html, wrap_for_preview};
+pub use live::wrap_for_preview;
 pub use resources::{collect_initial_watch_paths, collect_render_watch_paths};
 pub use server::{run, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
 

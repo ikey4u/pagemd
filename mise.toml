@@ -9,7 +9,7 @@ rust = "stable"
 [vars]
 extension_dir = "extension/chrome"
 
-[tasks.fmt]
+[tasks.format]
 description = "Format Rust code with nightly rustfmt"
 tools = { rust = "nightly" }
 run = "cargo fmt"

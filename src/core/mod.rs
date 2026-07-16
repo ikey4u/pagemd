@@ -28,6 +28,8 @@ pub(crate) struct ConvertOptions {
     pub katex_fonts: Option<PathBuf>,
     #[allow(dead_code)]
     pub output_format: OutputFormat,
+    /// When true, emit Mermaid source for browser-side mermaid.js (view mode).
+    pub client_mermaid: bool,
 }
 
 pub(crate) fn export_to_file(

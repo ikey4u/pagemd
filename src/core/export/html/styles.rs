@@ -289,6 +289,91 @@ html[data-theme="dark"] .doc-theme-icon-sun {
   height: 1.75rem;
 }
 
+.doc-settings {
+  position: relative;
+}
+
+.doc-settings-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 50;
+  width: 14rem;
+  padding: 0.55rem;
+  border: 1px solid var(--doc-chrome-border);
+  border-radius: 0.55rem;
+  background: var(--doc-chrome-bg);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+}
+
+.doc-settings-section + .doc-settings-section:not(:empty) {
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--doc-chrome-border);
+}
+
+.doc-settings-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--doc-chrome-muted);
+}
+
+.doc-settings-action {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--doc-chrome-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-settings-action:hover,
+.doc-settings-action:focus-visible {
+  background: color-mix(in srgb, var(--doc-chrome-muted) 12%, transparent);
+  color: var(--mermaid-fg);
+}
+
+.doc-settings-action .doc-topbar-icon {
+  flex: 0 0 auto;
+}
+
+.doc-settings-action-text-light {
+  display: none;
+}
+
+html[data-theme="dark"] .doc-settings-action-text {
+  display: none;
+}
+
+html[data-theme="dark"] .doc-settings-action-text-light {
+  display: inline;
+}
+
+.mermaid-display[data-mermaid-client] .mermaid,
+.mermaid-display .mermaid {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow: visible;
+}
+
 .doc-workspace-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -298,6 +383,128 @@ html[data-theme="dark"] .doc-theme-icon-sun {
   justify-content: center;
   overflow: hidden;
   background: var(--color-bg);
+}
+
+html.pagemd-lightbox-open {
+  overflow: hidden;
+}
+
+.pagemd-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  background: color-mix(in srgb, var(--color-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.pagemd-lightbox.is-visible {
+  opacity: 1;
+}
+
+.pagemd-lightbox-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.pagemd-lightbox-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.pagemd-lightbox-content {
+  position: relative;
+  flex: 0 0 auto;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pagemd-lightbox-content svg,
+.pagemd-lightbox-content img,
+.pagemd-lightbox-raster {
+  display: block;
+  max-width: none !important;
+  max-height: none !important;
+  min-width: 0 !important;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.pagemd-lightbox-close {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10001;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--doc-chrome-border);
+  border-radius: 999px;
+  background: var(--doc-chrome-bg);
+  color: var(--color-text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pagemd-lightbox-close:hover,
+.pagemd-lightbox-close:focus-visible {
+  background: color-mix(in srgb, var(--doc-chrome-muted) 14%, var(--doc-chrome-bg));
+}
+
+.pagemd-lightbox-controls {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  z-index: 10001;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--doc-chrome-border);
+  border-radius: 999px;
+  background: var(--doc-chrome-bg);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+  user-select: none;
+}
+
+.pagemd-lightbox-btn,
+.pagemd-lightbox-zoom {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.pagemd-lightbox-btn:hover,
+.pagemd-lightbox-zoom:hover,
+.pagemd-lightbox-btn:focus-visible,
+.pagemd-lightbox-zoom:focus-visible {
+  background: color-mix(in srgb, var(--doc-chrome-muted) 14%, transparent);
+}
+
+.pagemd-lightbox-zoom {
+  min-width: 3.4rem;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (min-width: 1200px) {
@@ -915,7 +1122,7 @@ img {
 }
 
 .math-inline svg {
-  height: 1.25em;
+  height: 1.1em;
   width: auto;
   max-width: none;
   vertical-align: middle;
@@ -925,9 +1132,15 @@ img {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin: 1.5rem 0;
+  margin: 1.25rem 0;
   overflow-x: auto;
-  padding: 0.5rem;
+  padding: 0.35rem 0;
+}
+
+.math-display svg {
+  height: auto;
+  width: auto;
+  max-width: 100%;
 }
 
 .math-error {
@@ -939,9 +1152,9 @@ img {
 }
 
 .mermaid-display {
-  margin: 1.5rem 0;
-  padding: 0;
-  overflow-x: auto;
+  margin: 1.75rem 0;
+  padding: 0.75rem 0;
+  overflow-x: hidden;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -949,73 +1162,26 @@ img {
 }
 
 .mermaid-canvas {
-  min-width: max-content;
-  display: flex;
-  justify-content: center;
-  padding: 0.25rem 0;
+  display: block;
+  width: 80%;
+  max-width: 80%;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 0.35rem 0;
   border-radius: 0;
   background: transparent;
 }
 
 .mermaid-display svg {
-  max-width: 100%;
-  height: auto;
-  font-family: var(--font-sans);
-  color: var(--mermaid-fg);
+  /* Fill the canvas (80% of the content column), centered by the canvas margin. */
+  display: block;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  margin: 0 auto;
 }
 
-.mermaid-display svg text,
-.mermaid-display svg tspan {
-  fill: var(--mermaid-fg);
-  font-family: var(--font-sans);
-}
-
-.mermaid-display svg path,
-.mermaid-display svg line,
-.mermaid-display svg polyline {
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.mermaid-display svg .node rect,
-.mermaid-display svg .node circle,
-.mermaid-display svg .node ellipse,
-.mermaid-display svg .node polygon,
-.mermaid-display svg .node path {
-  fill: var(--mermaid-surface);
-  stroke: var(--mermaid-border);
-  stroke-width: 1.5px;
-  filter: none;
-}
-
-.mermaid-display svg .edgePath path,
-.mermaid-display svg .flowchart-link,
-.mermaid-display svg .relationshipLine,
-.mermaid-display svg .messageLine0,
-.mermaid-display svg .messageLine1 {
-  stroke: var(--mermaid-line);
-  stroke-width: 1.8px;
-}
-
-.mermaid-display svg marker path,
-.mermaid-display svg marker polygon {
-  fill: var(--mermaid-accent);
-  stroke: var(--mermaid-accent);
-}
-
-.mermaid-display svg .edgeLabel,
-.mermaid-display svg .labelBkg,
-.mermaid-display svg .messageText,
-.mermaid-display svg .actor,
-.mermaid-display svg .cluster rect {
-  color: var(--mermaid-muted);
-}
-
-.mermaid-display svg .cluster rect {
-  fill: transparent;
-  stroke: var(--mermaid-border);
-  stroke-dasharray: 5 5;
-}
+/* Keep renderer-native fills/strokes. Forcing theme colors breaks state/sequence diagrams. */
 
 .mermaid-error {
   color: var(--color-error-panel-text);
@@ -1337,7 +1503,8 @@ input[type="checkbox"] {
   .doc-topbar,
   .doc-sidebar,
   .doc-outline,
-  .doc-resizer { display: none; }
+  .doc-resizer,
+  .pagemd-lightbox { display: none !important; }
   .doc-main { max-width: none; }
   .doc-panel { display: block; max-width: 100%; padding: 0; }
   .doc-section + .doc-section {

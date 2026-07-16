@@ -54,19 +54,39 @@ pub(crate) fn build_html(
     body_sections: &[RenderedSection],
     icon_label: &str,
 ) -> String {
-    build_html_with_nav(title, body_sections, icon_label, None, None, true)
+    build_html_with_nav(
+        title,
+        body_sections,
+        icon_label,
+        None,
+        None,
+        &HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: false,
+        },
+    )
 }
 
 const DIAGRAM_HTML_MARKER: &str = "class=\"diagram-html-display\"";
+const MERMAID_CLIENT_MARKER: &str = "data-mermaid-client";
 const FOOTNOTE_MARKER: &str = crate::core::export::html::footnotes::FOOTNOTE_MARKER;
 const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/diagram-html-tailwind-browser.js"
 ));
+const MERMAID_INIT_JS: &str = include_str!("../../../../assets/mermaid-init.js");
 
 fn diagram_html_tailwind_browser_js() -> &'static str {
     std::str::from_utf8(DIAGRAM_HTML_TAILWIND_BROWSER_JS)
         .expect("bundled diagram Tailwind browser runtime must be UTF-8")
+}
+
+fn mermaid_runtime_tags() -> String {
+    format!(
+        "<script src=\"/__assets/mermaid.min.js\" data-pagemd-mermaid></script>\n\
+<script data-pagemd-mermaid-init>\n{}\n</script>\n",
+        script_escape(MERMAID_INIT_JS)
+    )
 }
 
 fn build_nav_entries(
@@ -159,6 +179,12 @@ fn topbar_icon(kind: &str) -> &'static str {
             r#"<path d="M2.5 4h11M2.5 8h8M2.5 12h10" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>"#,
             "</svg>"
         ),
+        "settings" => concat!(
+            r#"<svg class="doc-topbar-icon" viewBox="0 0 16 16" aria-hidden="true">"#,
+            r#"<path d="M6.7 1.8h2.6l.3 1.2 1.1.5 1.2-.2 1.3 1.3-.2 1.2.5 1.1 1.2.3v2.6l-1.2.3-.5 1.1.2 1.2-1.3 1.3-1.2-.2-1.1.5-.3 1.2H6.7l-.3-1.2-1.1-.5-1.2.2L2.8 11.7l.2-1.2-.5-1.1L1.3 9.1V6.5l1.2-.3.5-1.1-.2-1.2L4.1 2.6l1.2.2 1.1-.5.3-1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>"#,
+            r#"<circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/>"#,
+            "</svg>"
+        ),
         "sun" => concat!(
             r#"<svg class="doc-topbar-icon doc-theme-icon doc-theme-icon-sun" viewBox="0 0 16 16" aria-hidden="true">"#,
             r#"<circle cx="8" cy="8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.25"/>"#,
@@ -190,10 +216,20 @@ fn build_topbar(initial_title: &str, use_file_sidebar: bool) -> String {
 <div class=\"doc-topbar-title\" data-doc-title title=\"{escaped_title}\">{escaped_title}</div>\n\
 <div class=\"doc-topbar-end\">\n\
 <button type=\"button\" class=\"doc-topbar-btn\" data-outline-toggle aria-label=\"Outline\" title=\"Outline\" aria-pressed=\"false\">{outline}</button>\n\
-<button type=\"button\" class=\"doc-topbar-btn\" data-theme-toggle aria-label=\"Switch to dark theme\" title=\"Dark\" aria-pressed=\"false\">{moon}{sun}</button>\n\
+<div class=\"doc-settings\">\n\
+<button type=\"button\" class=\"doc-topbar-btn\" data-settings-toggle aria-label=\"Settings\" title=\"Settings\" aria-haspopup=\"true\" aria-expanded=\"false\">{settings}</button>\n\
+<div class=\"doc-settings-panel\" data-settings-panel hidden>\n\
+<div class=\"doc-settings-section\">\n\
+<div class=\"doc-settings-label\">Theme</div>\n\
+<button type=\"button\" class=\"doc-settings-action\" data-theme-toggle aria-label=\"Switch to dark theme\" title=\"Dark\" aria-pressed=\"false\">{moon}<span class=\"doc-settings-action-text\">Dark</span>{sun}<span class=\"doc-settings-action-text doc-settings-action-text-light\">Light</span></button>\n\
+</div>\n\
+<div class=\"doc-settings-section\" data-settings-export-slot></div>\n\
+</div>\n\
+</div>\n\
 </div>\n\
 </header>\n",
         outline = topbar_icon("outline"),
+        settings = topbar_icon("settings"),
         moon = topbar_icon("moon"),
         sun = topbar_icon("sun"),
     )
@@ -245,7 +281,7 @@ pub(crate) fn build_html_with_nav(
     icon_label: &str,
     nav_labels: Option<&[String]>,
     input_paths: Option<&[PathBuf]>,
-    embed_workspace_script: bool,
+    opts: &HtmlExportOptions,
 ) -> String {
     let use_file_sidebar = body_sections.len() > 1;
     let use_outline_workspace = use_file_sidebar
@@ -281,7 +317,7 @@ pub(crate) fn build_html_with_nav(
             nav_labels,
             input_paths,
             use_file_sidebar,
-            embed_workspace_script,
+            opts.embed_workspace_script,
         )
     } else {
         (String::new(), String::new(), String::new(), String::new())
@@ -303,6 +339,16 @@ pub(crate) fn build_html_with_nav(
         String::new()
     };
 
+    let mermaid_script = if opts.client_mermaid_runtime
+        && body_sections
+            .iter()
+            .any(|section| section.html.contains(MERMAID_CLIENT_MARKER))
+    {
+        mermaid_runtime_tags()
+    } else {
+        String::new()
+    };
+
     let footnote_script = if body_sections
         .iter()
         .any(|section| section.html.contains(FOOTNOTE_MARKER))
@@ -311,6 +357,8 @@ pub(crate) fn build_html_with_nav(
     } else {
         String::new()
     };
+
+    let lightbox_script = super::lightbox::diagram_lightbox_script_tag();
 
     format!(
         r#"<!DOCTYPE html>
@@ -333,7 +381,7 @@ pub(crate) fn build_html_with_nav(
 <style>
 {css}
 </style>
-{diagram_script}
+{diagram_script}{mermaid_script}
 </head>
 <body>
 <div class="{container_class}">
@@ -341,13 +389,14 @@ pub(crate) fn build_html_with_nav(
 {body_html}
 {script_html}{layout_close}
 </div>
-{footnote_script}
+{footnote_script}{lightbox_script}
 </body>
 </html>"#,
         title = html_escape(title),
         favicon = favicon_link_tag(icon_label),
         css = CSS,
         diagram_script = diagram_script,
+        mermaid_script = mermaid_script,
         layout_open = layout_open,
         nav_html = nav_html,
         body_html = body_html,
@@ -355,11 +404,14 @@ pub(crate) fn build_html_with_nav(
         layout_close = layout_close,
         container_class = container_class,
         footnote_script = footnote_script,
+        lightbox_script = lightbox_script,
     )
 }
 
 pub(crate) struct HtmlExportOptions {
     pub embed_workspace_script: bool,
+    /// Serve official mermaid.js for client-side diagram rendering (view mode).
+    pub client_mermaid_runtime: bool,
 }
 
 pub(crate) fn render_document_html(
@@ -372,6 +424,6 @@ pub(crate) fn render_document_html(
         &doc.icon_label,
         Some(&doc.nav_labels),
         Some(&doc.input_paths),
-        opts.embed_workspace_script,
+        opts,
     )
 }

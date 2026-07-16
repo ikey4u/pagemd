@@ -79,6 +79,9 @@
       toggle.setAttribute("title", dark ? "Light" : "Dark");
       toggle.classList.toggle("is-active", dark);
     }
+    if (typeof window.PageMDInitMermaid === "function") {
+      window.PageMDInitMermaid();
+    }
   }
   function currentTheme() {
     var attr = document.documentElement.getAttribute("data-theme");
@@ -90,6 +93,25 @@
       return stored;
     }
     return "light";
+  }
+  function setSettingsOpen(open) {
+    var panel = document.querySelector("[data-settings-panel]");
+    var toggle = document.querySelector("[data-settings-toggle]");
+    if (!panel || !toggle) {
+      return;
+    }
+    if (open) {
+      panel.removeAttribute("hidden");
+    } else {
+      panel.setAttribute("hidden", "");
+    }
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.classList.toggle("is-active", open);
+  }
+
+  function toggleSettings() {
+    var panel = document.querySelector("[data-settings-panel]");
+    setSettingsOpen(!!(panel && panel.hasAttribute("hidden")));
   }
   function toggleTheme() {
     setTheme(currentTheme() === "dark" ? "light" : "dark");
@@ -336,12 +358,38 @@
       return;
     }
 
+    var settingsPanel = document.querySelector("[data-settings-panel]");
+    var settingsToggleBtn = document.querySelector("[data-settings-toggle]");
+    if (
+      settingsPanel &&
+      settingsToggleBtn &&
+      !settingsPanel.hasAttribute("hidden") &&
+      !settingsPanel.contains(event.target) &&
+      !settingsToggleBtn.contains(event.target)
+    ) {
+      setSettingsOpen(false);
+    }
+
     var themeToggle = event.target && event.target.closest
       ? event.target.closest("[data-theme-toggle]")
       : null;
     if (themeToggle) {
       event.preventDefault();
       toggleTheme();
+      return;
+    }
+
+    // Export is handled by the live-preview script; keep the panel open.
+    if (event.target && event.target.closest && event.target.closest("[data-export-html]")) {
+      return;
+    }
+
+    var settingsToggle = event.target && event.target.closest
+      ? event.target.closest("[data-settings-toggle]")
+      : null;
+    if (settingsToggle) {
+      event.preventDefault();
+      toggleSettings();
       return;
     }
 

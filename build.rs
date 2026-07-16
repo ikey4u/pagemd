@@ -13,11 +13,16 @@ const DIAGRAM_TAILWIND_BROWSER_URL: &str =
     "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.0/dist/index.global.min.js";
 const DIAGRAM_TAILWIND_BROWSER_OUT: &str = "diagram-html-tailwind-browser.js";
 
+const MERMAID_VERSION: &str = "11.6.0";
+const MERMAID_BROWSER_URL: &str = "https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.min.js";
+const MERMAID_BROWSER_OUT: &str = "mermaid.min.js";
+
 fn main() {
     let manifest_dir_path = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let manifest_dir = Path::new(&manifest_dir_path);
     println!("cargo:rerun-if-changed=assets/typst-packages/manifest.toml");
     prepare_diagram_tailwind_browser();
+    prepare_mermaid_browser();
 
     if env::var_os("PAGEMD_SKIP_TYPST_PACKAGES").is_some() {
         eprintln!(
@@ -68,6 +73,29 @@ fn prepare_diagram_tailwind_browser() {
     fs::write(&out_path, bytes.as_ref()).unwrap_or_else(|err| {
         eprintln!(
             "error: failed to write Tailwind browser runtime to {}: {err}",
+            out_path.display()
+        );
+        process::exit(1);
+    });
+}
+
+fn prepare_mermaid_browser() {
+    println!("cargo:rerun-if-env-changed=PAGEMD_MERMAID_URL");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
+    let out_path = Path::new(&out_dir).join(MERMAID_BROWSER_OUT);
+    let url = env::var("PAGEMD_MERMAID_URL").unwrap_or_else(|_| MERMAID_BROWSER_URL.to_string());
+
+    let bytes = reqwest::blocking::get(&url)
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.bytes())
+        .unwrap_or_else(|err| {
+            eprintln!("error: failed to fetch mermaid@{MERMAID_VERSION} from {url}: {err}");
+            process::exit(1);
+        });
+
+    fs::write(&out_path, bytes.as_ref()).unwrap_or_else(|err| {
+        eprintln!(
+            "error: failed to write Mermaid browser runtime to {}: {err}",
             out_path.display()
         );
         process::exit(1);

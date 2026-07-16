@@ -12,8 +12,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::extract::State;
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, Sse};
-use axum::response::Html;
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use futures::stream::Stream;
@@ -24,6 +25,8 @@ use tokio::task::JoinHandle as TokioJoinHandle;
 
 use super::live;
 use super::ViewOptions;
+
+const MERMAID_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
 
 pub struct RenderRequest {
     pub inputs: Vec<PathBuf>,
@@ -174,6 +177,7 @@ impl PreviewEngine {
         Router::new()
             .route("/", get(index_handler))
             .route("/__events", get(events_handler))
+            .route("/__assets/mermaid.min.js", get(mermaid_asset_handler))
             .with_state(Arc::clone(&self.state))
     }
 
@@ -580,6 +584,19 @@ async fn index_handler(State(state): State<Arc<AppState>>) -> Html<String> {
         .map(|guard| live::wrap_for_preview(guard.clone()))
         .unwrap_or_else(|_| live::wrap_for_preview("<p>Preview unavailable</p>".to_string()));
     Html(html)
+}
+
+async fn mermaid_asset_handler() -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/javascript; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    (StatusCode::OK, headers, MERMAID_JS).into_response()
 }
 
 async fn events_handler(

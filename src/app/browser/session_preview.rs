@@ -73,6 +73,7 @@ impl SessionPreview {
                 math_font_size: 1.0,
                 katex_fonts: None,
                 output_format: OutputFormat::Html,
+                client_mermaid: true,
             };
             let resources = prepare_resources(&convert_opts)?;
             let html_opts = preview_html_opts();

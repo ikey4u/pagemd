@@ -127,11 +127,173 @@ A fenced math block is also supported:
 
 ## Mermaid
 
+Simple flowchart:
+
 ```mermaid
 flowchart LR
   A[Markdown] --> B[PageMD]
   B --> C[Self-contained HTML]
   C --> D[Offline reading]
+```
+
+Nested subgraphs with cross-cluster edges (layout stress test):
+
+```mermaid
+flowchart TB
+  subgraph Authoring["Authoring"]
+    direction LR
+    MD[Markdown files] --> View[pagemd view]
+    MD --> CLI[pagemd convert]
+  end
+
+  subgraph Preview["Live preview"]
+    direction TB
+    Server[Preview server] --> Browser[Browser DOM]
+    Browser --> MermaidJS[mermaid.js]
+    MermaidJS --> Bake[Bake SVG on export]
+  end
+
+  subgraph Export["Static export"]
+    direction TB
+    Pipeline[render_markdown] --> Engines
+    Engines --> Merman[merman headless SVG]
+    Engines --> PlantUML[PlantUML SVG]
+    Engines --> Typst[Typst SVG]
+    Engines --> HtmlDiag[diagram html]
+    Merman --> Bundle[Single HTML]
+    PlantUML --> Bundle
+    Typst --> Bundle
+    HtmlDiag --> Bundle
+  end
+
+  View --> Server
+  CLI --> Pipeline
+  Bake --> Bundle
+
+  classDef accent fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+  classDef result fill:#ecfdf5,stroke:#059669,color:#065f46
+  class View,CLI,Bundle accent
+  class Bake,Merman result
+```
+
+Sequence diagram with alt / loop / notes:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor User
+  participant CLI as pagemd CLI
+  participant Core as Markdown renderer
+  participant Merman as merman
+  participant HTML as HTML builder
+
+  User->>CLI: convert BASIC.md
+  CLI->>Core: render_markdown
+  loop Each fenced block
+    Core->>Core: dispatch by language
+    alt mermaid / mmd
+      Core->>Merman: render_svg_sync
+      Merman-->>Core: SVG
+    else plantuml / typst / diagram html
+      Core->>Core: engine-specific render
+    end
+  end
+  Core->>HTML: sections + outline
+  HTML-->>User: self-contained HTML
+  Note over User,HTML: Offline readable, no external diagram CDN
+```
+
+Class diagram (renderer surface):
+
+```mermaid
+classDiagram
+  direction TB
+  class ConvertOptions {
+    +Vec~PathBuf~ inputs
+    +bool client_mermaid
+  }
+  class HtmlExportOptions {
+    +bool embed_workspace_script
+    +bool client_mermaid_runtime
+  }
+  class Document {
+    +String title
+    +Vec~Section~ sections
+  }
+  class HeadlessRenderer {
+    +render_svg_sync(text) Option~String~
+  }
+  class PreviewServer {
+    +serve_html()
+    +serve_mermaid_js()
+  }
+
+  ConvertOptions --> Document : build
+  HtmlExportOptions --> Document : wrap HTML
+  Document --> HeadlessRenderer : CLI mermaid path
+  Document --> PreviewServer : view mermaid path
+  PreviewServer ..> HeadlessRenderer : export button bakes SVG
+```
+
+State diagram for preview lifecycle:
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Rendering: file change / first open
+  Rendering --> Ready: HTML committed
+  Rendering --> Error: render failed
+  Error --> Rendering: fix and save
+  Ready --> Rendering: hot reload
+  Ready --> Exporting: Download HTML
+  Exporting --> Ready: bake Mermaid SVG + strip scripts
+  Ready --> [*]: quit preview
+```
+
+ER diagram (document model):
+
+```mermaid
+erDiagram
+  DOCUMENT ||--|{ SECTION : contains
+  SECTION ||--o{ HEADING : outlines
+  SECTION ||--o{ DIAGRAM : embeds
+  DIAGRAM {
+    string kind
+    string source
+    string svg_or_placeholder
+  }
+  SECTION {
+    string title
+    string html
+  }
+  DOCUMENT {
+    string title
+    string icon_label
+  }
+  HEADING {
+    int level
+    string id
+    string text
+  }
+```
+
+Gantt-style convert pipeline:
+
+```mermaid
+gantt
+  title PageMD convert pipeline
+  dateFormat X
+  axisFormat %s
+  section Resolve
+    Collect inputs           :a1, 0, 2
+    Prepare resources        :a2, after a1, 3
+  section Render
+    Markdown + extensions    :b1, after a2, 5
+    Mermaid via merman       :b2, after b1, 3
+    PlantUML / Typst / HTML  :b3, after b1, 4
+  section Export
+    Build nav + outline      :c1, after b2, 2
+    Write single HTML        :c2, after c1, 1
 ```
 
 ## PlantUML

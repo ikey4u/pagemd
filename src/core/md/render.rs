@@ -9,8 +9,8 @@ use syntect::parsing::SyntaxSet;
 
 use crate::core::export::html::bundler::{image_to_data_uri, inline_raw_html_resources};
 use crate::core::ext::diagram::{
-    is_diagram_html_info, mermaid_error_html, plantuml_error_html, render_diagram_html,
-    render_mermaid, render_plantuml,
+    is_diagram_html_info, mermaid_client_html, mermaid_error_html, plantuml_error_html,
+    render_diagram_html, render_mermaid, render_plantuml,
 };
 use crate::core::ext::math::latex_to_svg;
 use crate::core::ext::typst;
@@ -238,8 +238,19 @@ pub(crate) fn render_markdown(
     font_dir: &str,
     ss: &SyntaxSet,
     ts: &ThemeSet,
+    client_mermaid: bool,
 ) -> Result<RenderedSection> {
-    render_markdown_with_depth(source, base_dir, math_font_size, font_dir, ss, ts, None, 0)
+    render_markdown_with_depth(
+        source,
+        base_dir,
+        math_font_size,
+        font_dir,
+        ss,
+        ts,
+        None,
+        0,
+        client_mermaid,
+    )
 }
 
 pub(crate) fn render_markdown_with_depth(
@@ -251,6 +262,7 @@ pub(crate) fn render_markdown_with_depth(
     ts: &ThemeSet,
     footnotes: Option<&FootnoteRegistry>,
     depth: usize,
+    client_mermaid: bool,
 ) -> Result<RenderedSection> {
     let preprocessed = preprocess_markdown_extensions(source);
     let owned_registry;
@@ -376,13 +388,19 @@ pub(crate) fn render_markdown_with_depth(
                                 }
                             }
                         }
-                        "mermaid" | "mmd" => match render_mermaid(&buf_str) {
-                            Ok(rendered) => html.push_str(&rendered),
-                            Err(err) => {
-                                eprint_fence_render_error("Mermaid", &err, &buf_str);
-                                html.push_str(&mermaid_error_html(&buf_str));
+                        "mermaid" | "mmd" => {
+                            if client_mermaid {
+                                html.push_str(&mermaid_client_html(&buf_str));
+                            } else {
+                                match render_mermaid(&buf_str) {
+                                    Ok(rendered) => html.push_str(&rendered),
+                                    Err(err) => {
+                                        eprint_fence_render_error("Mermaid", &err, &buf_str);
+                                        html.push_str(&mermaid_error_html(&buf_str));
+                                    }
+                                }
                             }
-                        },
+                        }
                         "plantuml" | "puml" | "uml" => match render_plantuml(&buf_str) {
                             Ok(rendered) => html.push_str(&rendered),
                             Err(err) => {
@@ -411,6 +429,7 @@ pub(crate) fn render_markdown_with_depth(
                                         ts,
                                         footnotes,
                                         depth,
+                                        client_mermaid,
                                     },
                                 ) {
                                     Ok(rendered) => html.push_str(&rendered),

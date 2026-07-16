@@ -24,5 +24,6 @@ pub(crate) fn build_preview_error_html(err: &anyhow::Error) -> String {
 pub(crate) fn preview_html_opts() -> HtmlExportOptions {
     HtmlExportOptions {
         embed_workspace_script: false,
+        client_mermaid_runtime: true,
     }
 }
