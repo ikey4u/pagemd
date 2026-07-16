@@ -64,8 +64,9 @@
     storageSet("navVisible", visible ? "1" : "0");
     syncToggleState("[data-nav-toggle]", visible);
   }
-  function setTheme(theme) {
+  function setTheme(theme, opts) {
     var next = theme === "dark" ? "dark" : "light";
+    var prev = document.documentElement.getAttribute("data-theme");
     document.documentElement.setAttribute("data-theme", next);
     storageSet("theme", next);
     var toggle = document.querySelector("[data-theme-toggle]");
@@ -79,9 +80,22 @@
       toggle.setAttribute("title", dark ? "Light" : "Dark");
       toggle.classList.toggle("is-active", dark);
     }
-    if (typeof window.PageMDInitMermaid === "function") {
-      window.PageMDInitMermaid();
+    // Skip during workspace boot — mermaid-init owns the first paint.
+    // Re-render only when the user (or a real theme change) flips the theme.
+    if (
+      (!opts || !opts.skipMermaid) &&
+      prev !== next &&
+      typeof window.PageMDInitMermaid === "function"
+    ) {
+      window.PageMDInitMermaid(null, { force: true });
     }
+  }
+
+  function renderMermaidForPanel(panel) {
+    if (typeof window.PageMDInitMermaid !== "function") {
+      return;
+    }
+    window.PageMDInitMermaid(panel || document);
   }
   function currentTheme() {
     var attr = document.documentElement.getAttribute("data-theme");
@@ -167,6 +181,7 @@
     storageSet("activeDoc", activePanel.id);
     updateDocTitle(activePanel);
     updateOutlineActive();
+    renderMermaidForPanel(activePanel);
   }
   function updateOutlineActive() {
     var activePanel = document.querySelector("[data-doc-panel].is-active");
@@ -218,6 +233,7 @@
     }
     storageSet("activeDoc", activePanel.id);
     updateDocTitle(activePanel);
+    renderMermaidForPanel(activePanel);
   }
   function scrollToHeading(id, panelId) {
     var activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
@@ -302,7 +318,7 @@
     setOutlineVisible(workspace, storageGet("outlineVisible") === "1");
     // Files nav defaults to visible; only hide when explicitly stored as "0".
     setNavVisible(workspace, storageGet("navVisible") !== "0");
-    setTheme(currentTheme());
+    setTheme(currentTheme(), { skipMermaid: true });
     restoreFolderStates();
     activateDocumentFromHash();
     bindMainScroll();

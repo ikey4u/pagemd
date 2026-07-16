@@ -4,6 +4,8 @@
   }
   window.PageMDMermaidInstalled = true;
 
+  var renderGeneration = 0;
+
   function themeName() {
     return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "default";
   }
@@ -14,6 +16,18 @@
     return textarea.value;
   }
 
+  function disableAutoStart() {
+    if (!window.mermaid || typeof window.mermaid.initialize !== "function") {
+      return;
+    }
+    try {
+      window.mermaid.initialize({ startOnLoad: false });
+    } catch (_) {}
+  }
+
+  // Kill Mermaid's default window.load auto-run before DOM is ready.
+  disableAutoStart();
+
   function rebuildBlock(block) {
     var code = decodeAttr(block.getAttribute("data-mermaid-code") || "");
     var canvas = document.createElement("div");
@@ -23,13 +37,97 @@
     pre.textContent = code;
     canvas.appendChild(pre);
     block.classList.remove("mermaid-error");
+    block.setAttribute("data-mermaid-client", "");
     block.replaceChildren(canvas);
     return pre;
   }
 
-  function resetClientBlocks(root) {
-    var scope = root || document;
-    scope.querySelectorAll("[data-mermaid-client]").forEach(rebuildBlock);
+  // Mermaid measures nodes via getBBox; hidden panels (display:none) yield
+  // translate(undefined, NaN) and a failed render — only touch visible ones.
+  function isInHiddenPanel(block) {
+    var panel = block.closest("[data-doc-panel]");
+    return !!(panel && !panel.classList.contains("is-active"));
+  }
+
+  function isLaidOut(block) {
+    if (!block || !block.isConnected) {
+      return false;
+    }
+    if (isInHiddenPanel(block)) {
+      return false;
+    }
+    var host =
+      block.closest(".doc-panel.is-active") ||
+      block.closest(".doc-main") ||
+      block.parentElement ||
+      block;
+    return host.clientWidth > 0 || block.getClientRects().length > 0;
+  }
+
+  function sourceBlocks(scope) {
+    return Array.prototype.slice.call(
+      scope.querySelectorAll(
+        ".mermaid-display[data-mermaid-code], .mermaid-display[data-mermaid-client]"
+      )
+    );
+  }
+
+  function needsRender(block, force) {
+    if (!block.getAttribute("data-mermaid-code") && !block.hasAttribute("data-mermaid-client")) {
+      return false;
+    }
+    if (force) {
+      return true;
+    }
+    if (block.hasAttribute("data-mermaid-client")) {
+      return true;
+    }
+    if (block.classList.contains("mermaid-error")) {
+      return true;
+    }
+    return !block.querySelector("svg");
+  }
+
+  function afterLayout(callback) {
+    var fonts =
+      document.fonts && document.fonts.ready
+        ? document.fonts.ready.catch(function () {})
+        : Promise.resolve();
+    return fonts.then(function () {
+      return new Promise(function (resolve) {
+        window.requestAnimationFrame(function () {
+          window.requestAnimationFrame(function () {
+            resolve(callback());
+          });
+        });
+      });
+    });
+  }
+
+  function waitUntilLaidOut(blocks, myGen) {
+    if (!blocks.length) {
+      return Promise.resolve(blocks);
+    }
+    if (blocks.every(isLaidOut)) {
+      return Promise.resolve(blocks);
+    }
+
+    return new Promise(function (resolve) {
+      var tries = 0;
+      function tick() {
+        if (myGen !== renderGeneration) {
+          resolve([]);
+          return;
+        }
+        if (blocks.every(isLaidOut) || tries >= 30) {
+          resolve(blocks.filter(isLaidOut));
+          return;
+        }
+        tries += 1;
+        window.requestAnimationFrame(tick);
+      }
+      tick();
+    });
   }
 
   function svgNaturalSize(svg) {
@@ -59,7 +157,7 @@
   function fitMermaidSvgs(root) {
     var scope = root || document;
     scope.querySelectorAll(".mermaid-display").forEach(function (block) {
-      if (block.classList.contains("mermaid-error")) {
+      if (block.classList.contains("mermaid-error") || isInHiddenPanel(block)) {
         return;
       }
       var svg = block.querySelector("svg");
@@ -153,59 +251,122 @@
     });
   }
 
-  function renderBlock(block) {
+  function markRendered(block) {
+    // Keep data-mermaid-code for theme re-renders; drop client marker so export
+    // sees a baked SVG and overlapping inits do not treat this as pending work.
+    block.removeAttribute("data-mermaid-client");
+  }
+
+  function renderBlock(block, myGen) {
+    if (myGen !== renderGeneration) {
+      return Promise.resolve();
+    }
     var pre = block.querySelector(".mermaid");
     if (!pre) {
       return Promise.resolve();
     }
     return window.mermaid
       .run({ nodes: [pre] })
+      .then(function () {
+        if (myGen !== renderGeneration) {
+          return;
+        }
+        if (block.querySelector("svg")) {
+          markRendered(block);
+        }
+      })
       .catch(function (err) {
+        if (myGen !== renderGeneration) {
+          return;
+        }
         // Retry with simpler settings — avoids some edge-routing crashes.
         configureMermaid({ htmlLabels: false, curve: "linear" });
+        if (myGen !== renderGeneration) {
+          return;
+        }
         var retryPre = rebuildBlock(block);
-        return window.mermaid.run({ nodes: [retryPre] }).catch(function (err2) {
-          showMermaidError(block, err2 || err);
-          console.error("[pagemd] Mermaid render failed", err2 || err);
-        });
+        return window.mermaid.run({ nodes: [retryPre] }).then(
+          function () {
+            if (myGen !== renderGeneration) {
+              return;
+            }
+            if (block.querySelector("svg")) {
+              markRendered(block);
+            }
+          },
+          function (err2) {
+            if (myGen !== renderGeneration) {
+              return;
+            }
+            showMermaidError(block, err2 || err);
+            console.error("[pagemd] Mermaid render failed", err2 || err);
+          }
+        );
       });
   }
 
-  window.PageMDInitMermaid = function (root) {
+  // opts.force — rebuild visible diagrams (theme change).
+  window.PageMDInitMermaid = function (root, opts) {
     if (!window.mermaid || typeof window.mermaid.run !== "function") {
       return Promise.resolve();
     }
-    resetClientBlocks(root);
-    try {
-      configureMermaid();
-    } catch (_) {}
-    var scope = root || document;
-    var blocks = Array.prototype.slice.call(
-      scope.querySelectorAll(".mermaid-display[data-mermaid-client]")
-    );
-    if (!blocks.length) {
-      fitMermaidSvgs(scope);
-      return Promise.resolve();
-    }
 
-    // One-by-one so a single layout error does not abort the rest.
-    return blocks
-      .reduce(function (chain, block) {
-        return chain.then(function () {
-          return renderBlock(block);
-        });
-      }, Promise.resolve())
-      .then(function () {
-        configureMermaid();
-        fitMermaidSvgs(scope);
+    var force = !!(opts && opts.force);
+    var myGen = ++renderGeneration;
+    var scope = root || document;
+
+    return afterLayout(function () {
+      if (myGen !== renderGeneration) {
+        return Promise.resolve();
+      }
+
+      var candidates = sourceBlocks(scope).filter(function (block) {
+        return !isInHiddenPanel(block) && needsRender(block, force);
       });
+
+      return waitUntilLaidOut(candidates, myGen).then(function (blocks) {
+        if (myGen !== renderGeneration) {
+          return;
+        }
+
+        blocks.forEach(rebuildBlock);
+
+        try {
+          configureMermaid();
+        } catch (_) {}
+
+        if (!blocks.length) {
+          fitMermaidSvgs(scope);
+          return;
+        }
+
+        // One-by-one so a single layout error does not abort the rest.
+        return blocks
+          .reduce(function (chain, block) {
+            return chain.then(function () {
+              return renderBlock(block, myGen);
+            });
+          }, Promise.resolve())
+          .then(function () {
+            if (myGen !== renderGeneration) {
+              return;
+            }
+            try {
+              configureMermaid();
+            } catch (_) {}
+            fitMermaidSvgs(scope);
+          });
+      });
+    });
   };
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () {
-      window.PageMDInitMermaid();
-    });
-  } else {
+  function scheduleBoot() {
     window.PageMDInitMermaid();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleBoot);
+  } else {
+    scheduleBoot();
   }
 })();

@@ -51,25 +51,29 @@
   }
 
   function bakeMermaid(root) {
-    root.querySelectorAll("[data-mermaid-client]").forEach(function (block) {
-      var owner = block.ownerDocument || document;
-      var svg = block.querySelector("svg");
-      var canvas = owner.createElement("div");
-      canvas.className = "mermaid-canvas";
-      if (svg) {
-        canvas.appendChild(svg.cloneNode(true));
-      } else {
-        var code = block.getAttribute("data-mermaid-code") || "";
-        var pre = owner.createElement("pre");
-        var codeEl = owner.createElement("code");
-        codeEl.textContent = code;
-        pre.appendChild(codeEl);
-        canvas.appendChild(pre);
-      }
-      block.replaceChildren(canvas);
-      block.removeAttribute("data-mermaid-client");
-      block.removeAttribute("data-mermaid-code");
-    });
+    root
+      .querySelectorAll(
+        ".mermaid-display[data-mermaid-client], .mermaid-display[data-mermaid-code]"
+      )
+      .forEach(function (block) {
+        var owner = block.ownerDocument || document;
+        var svg = block.querySelector("svg");
+        var canvas = owner.createElement("div");
+        canvas.className = "mermaid-canvas";
+        if (svg) {
+          canvas.appendChild(svg.cloneNode(true));
+        } else {
+          var code = block.getAttribute("data-mermaid-code") || "";
+          var pre = owner.createElement("pre");
+          var codeEl = owner.createElement("code");
+          codeEl.textContent = code;
+          pre.appendChild(codeEl);
+          canvas.appendChild(pre);
+        }
+        block.replaceChildren(canvas);
+        block.removeAttribute("data-mermaid-client");
+        block.removeAttribute("data-mermaid-code");
+      });
   }
 
   function buildExportHtml() {
@@ -146,6 +150,37 @@
     }
   }
 
+  function appendMermaidRuntime(doc) {
+    return new Promise(function (resolve) {
+      var pending = 0;
+      function settle() {
+        pending -= 1;
+        if (pending <= 0) {
+          resolve();
+        }
+      }
+
+      if (!document.querySelector("[data-pagemd-mermaid]") && doc.querySelector("[data-pagemd-mermaid]")) {
+        pending += 1;
+        var runtime = document.importNode(doc.querySelector("[data-pagemd-mermaid]"), true);
+        runtime.onload = settle;
+        runtime.onerror = settle;
+        document.head.appendChild(runtime);
+      }
+
+      if (!document.querySelector("[data-pagemd-mermaid-init]") && doc.querySelector("[data-pagemd-mermaid-init]")) {
+        // Inline init script runs synchronously on insert.
+        document.head.appendChild(
+          document.importNode(doc.querySelector("[data-pagemd-mermaid-init]"), true)
+        );
+      }
+
+      if (pending === 0) {
+        resolve();
+      }
+    });
+  }
+
   function swapContent(html) {
     var scrollState = readScrollState();
     var doc = new DOMParser().parseFromString(html, "text/html");
@@ -168,14 +203,6 @@
       }
     }
 
-    // Keep mermaid runtime in <head> across hot reloads; refresh init if missing.
-    if (!document.querySelector("[data-pagemd-mermaid]") && doc.querySelector("[data-pagemd-mermaid]")) {
-      document.head.appendChild(document.importNode(doc.querySelector("[data-pagemd-mermaid]"), true));
-    }
-    if (!document.querySelector("[data-pagemd-mermaid-init]") && doc.querySelector("[data-pagemd-mermaid-init]")) {
-      document.head.appendChild(document.importNode(doc.querySelector("[data-pagemd-mermaid-init]"), true));
-    }
-
     if (typeof window.PageMDInitWorkspace === "function") {
       window.PageMDInitWorkspace();
     }
@@ -183,13 +210,17 @@
       window.PageMDInitFootnotes(document);
     }
     ensureExportControls();
-    if (typeof window.PageMDInitMermaid === "function") {
-      window.PageMDInitMermaid();
-    }
     if (typeof window.PageMDInitDiagramLightbox === "function") {
       window.PageMDInitDiagramLightbox(document);
     }
     restoreScrollState(scrollState);
+
+    // Keep mermaid runtime in <head> across hot reloads; wait for load before init.
+    appendMermaidRuntime(doc).then(function () {
+      if (typeof window.PageMDInitMermaid === "function") {
+        window.PageMDInitMermaid();
+      }
+    });
     return true;
   }
 
@@ -258,8 +289,7 @@
   });
 
   ensureExportControls();
-  if (typeof window.PageMDInitMermaid === "function") {
-    window.PageMDInitMermaid();
-  }
+  // First paint is owned by mermaid-init.js (DOMContentLoaded). Hot reload
+  // re-inits via swapContent after the runtime is present.
   connect();
 })();
