@@ -13,14 +13,16 @@ const DIAGRAM_TAILWIND_BROWSER_URL: &str =
     "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.0/dist/index.global.min.js";
 const DIAGRAM_TAILWIND_BROWSER_OUT: &str = "diagram-html-tailwind-browser.js";
 
-const MERMAID_VERSION: &str = "11.6.0";
-const MERMAID_BROWSER_URL: &str = "https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.min.js";
+const MERMAID_VERSION: &str = "11.16.0";
+const MERMAID_BROWSER_URL: &str =
+    "https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js";
 const MERMAID_BROWSER_OUT: &str = "mermaid.min.js";
 
 fn main() {
     let manifest_dir_path = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let manifest_dir = Path::new(&manifest_dir_path);
     println!("cargo:rerun-if-changed=assets/typst-packages/manifest.toml");
+    println!("cargo:rustc-env=PAGEMD_MERMAID_VERSION={MERMAID_VERSION}");
     prepare_diagram_tailwind_browser();
     prepare_mermaid_browser();
 

@@ -82,9 +82,12 @@ fn diagram_html_tailwind_browser_js() -> &'static str {
 }
 
 fn mermaid_runtime_tags() -> String {
+    // Bust browser cache when the bundled Mermaid version changes. Older Mermaid
+    // builds fail to lex Chinese quadrantChart axis labels.
     format!(
-        "<script src=\"/__assets/mermaid.min.js\" data-pagemd-mermaid></script>\n\
+        "<script src=\"/__assets/mermaid.min.js?v={}\" data-pagemd-mermaid></script>\n\
 <script data-pagemd-mermaid-init>\n{}\n</script>\n",
+        env!("PAGEMD_MERMAID_VERSION"),
         script_escape(MERMAID_INIT_JS)
     )
 }

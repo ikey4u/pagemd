@@ -11,23 +11,23 @@ static MERMAID_DIAGRAM_ID: AtomicU64 = AtomicU64::new(0);
 fn mermaid_site_config() -> MermaidConfig {
     MermaidConfig::from_value(serde_json::json!({
         "themeVariables": {
-            "fontSize": "20px",
+            "fontSize": "18px",
             "fontFamily": "ui-sans-serif, system-ui, -apple-system, sans-serif"
         },
         "flowchart": {
             "htmlLabels": true,
-            "useMaxWidth": true,
+            "useMaxWidth": false,
             "nodeSpacing": 42,
             "rankSpacing": 48,
             "padding": 12
         },
-        "sequence": { "useMaxWidth": true },
-        "class": { "useMaxWidth": true },
-        "state": { "useMaxWidth": true },
-        "er": { "useMaxWidth": true },
-        "gantt": { "useMaxWidth": true },
-        "pie": { "useMaxWidth": true },
-        "journey": { "useMaxWidth": true }
+        "sequence": { "useMaxWidth": false },
+        "class": { "useMaxWidth": false },
+        "state": { "useMaxWidth": false },
+        "er": { "useMaxWidth": false },
+        "gantt": { "useMaxWidth": false },
+        "pie": { "useMaxWidth": false },
+        "journey": { "useMaxWidth": false }
     }))
 }
 

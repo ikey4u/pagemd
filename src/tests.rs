@@ -648,6 +648,34 @@ fn mermaid_code_block_renders_svg() {
 }
 
 #[test]
+fn mermaid_quadrant_chart_with_chinese_axes_renders() {
+    let html = render_html(
+        "```mermaid\n\
+quadrantChart\n\
+  title 文档承诺 vs 实现成熟度（定性）\n\
+  x-axis 文档笔墨少 --> 文档笔墨多\n\
+  y-axis 实现薄弱 --> 实现充分\n\
+  quadrant-1 文档过时风险区\n\
+  quadrant-2 健康对齐区\n\
+  quadrant-3 远期缺口区\n\
+  quadrant-4 文档超前区\n\
+  Session子系统: [0.82, 0.78]\n\
+  RAL驱动: [0.55, 0.72]\n\
+  LoopEngine: [0.70, 0.62]\n\
+  Tool流水线: [0.60, 0.58]\n\
+  LocalEngine入口: [0.35, 0.70]\n\
+  Cloud多租户: [0.75, 0.18]\n\
+  LMCache: [0.80, 0.12]\n\
+  十四类扩展点全表: [0.85, 0.35]\n\
+```\n",
+    );
+    assert_eq!(mermaid_count(&html), 1);
+    assert!(html.contains("<svg"), "quadrantChart should render to SVG");
+    assert!(html.contains("Session子系统"));
+    assert!(!html.contains("Mermaid render failed"));
+}
+
+#[test]
 fn mermaid_client_mode_emits_source_placeholder() {
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
@@ -680,7 +708,7 @@ fn mermaid_client_mode_emits_source_placeholder() {
             client_mermaid_runtime: true,
         },
     );
-    assert!(html.contains("/__assets/mermaid.min.js"));
+    assert!(html.contains("/__assets/mermaid.min.js?v="));
     assert!(html.contains("data-pagemd-mermaid-init"));
 }
 
@@ -809,3 +837,4 @@ fn raw_html_resources_are_embedded() {
     assert!(!html.contains("url('tiny.svg')"));
     std::fs::remove_dir_all(dir).unwrap();
 }
+

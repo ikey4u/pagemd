@@ -1163,7 +1163,7 @@ img {
 
 .mermaid-canvas {
   display: block;
-  width: 80%;
+  width: max-content;
   max-width: 80%;
   min-width: 0;
   margin: 0 auto;
@@ -1173,11 +1173,10 @@ img {
 }
 
 .mermaid-display svg {
-  /* Fill the canvas (80% of the content column), centered by the canvas margin. */
+  /* Native size by default; JS shrinks only when wider than 80% of the column. */
   display: block;
-  width: 100% !important;
-  max-width: 100% !important;
-  height: auto !important;
+  max-width: 100%;
+  height: auto;
   margin: 0 auto;
 }
 
