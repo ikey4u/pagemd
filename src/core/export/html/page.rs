@@ -49,21 +49,14 @@ fn build_outline_nav(body_sections: &[RenderedSection]) -> String {
         .collect()
 }
 
-pub fn build_html(
-    title: &str,
-    body_sections: &[RenderedSection],
-    icon_label: &str,
-) -> String {
+pub fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) -> String {
     build_html_with_nav(
         title,
         body_sections,
         icon_label,
         None,
         None,
-        &HtmlExportOptions {
-            embed_workspace_script: true,
-            client_mermaid_runtime: false,
-        },
+        &HtmlExportOptions::default(),
     )
 }
 
@@ -286,12 +279,23 @@ pub fn build_html_with_nav(
     input_paths: Option<&[PathBuf]>,
     opts: &HtmlExportOptions,
 ) -> String {
-    let use_file_sidebar = body_sections.len() > 1;
-    let use_outline_workspace = use_file_sidebar
-        || body_sections
-            .first()
-            .is_some_and(|section| !section.outline.is_empty());
-    let body_html: String = if use_file_sidebar {
+    let content_only = matches!(opts.chrome, WorkspaceChrome::ContentOnly);
+    let force_workspace = matches!(opts.chrome, WorkspaceChrome::Full);
+    let use_file_sidebar = !content_only && body_sections.len() > 1;
+    let use_outline_workspace = !content_only
+        && (force_workspace
+            || use_file_sidebar
+            || body_sections
+                .first()
+                .is_some_and(|section| !section.outline.is_empty()));
+
+    let body_html: String = if content_only {
+        body_sections
+            .iter()
+            .map(|sec| sec.html.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else if use_file_sidebar {
         body_sections
             .iter()
             .enumerate()
@@ -314,13 +318,17 @@ pub fn build_html_with_nav(
     } else {
         body_sections[0].html.clone()
     };
+
+    let allow_scripts = matches!(opts.scripts, ScriptEmbed::Full);
+    let embed_workspace = allow_scripts && opts.embed_workspace_script && !content_only;
+
     let (layout_open, layout_close, nav_html, script_html) = if use_outline_workspace {
         build_workspace_layout(
             body_sections,
             nav_labels,
             input_paths,
             use_file_sidebar,
-            opts.embed_workspace_script,
+            embed_workspace,
         )
     } else {
         (String::new(), String::new(), String::new(), String::new())
@@ -330,9 +338,11 @@ pub fn build_html_with_nav(
     } else {
         "container"
     };
-    let diagram_script = if body_sections
-        .iter()
-        .any(|section| section.html.contains(DIAGRAM_HTML_MARKER))
+
+    let diagram_script = if allow_scripts
+        && body_sections
+            .iter()
+            .any(|section| section.html.contains(DIAGRAM_HTML_MARKER))
     {
         format!(
             "<script>\n{}\n</script>\n",
@@ -342,7 +352,8 @@ pub fn build_html_with_nav(
         String::new()
     };
 
-    let mermaid_script = if opts.client_mermaid_runtime
+    let mermaid_script = if allow_scripts
+        && opts.client_mermaid_runtime
         && body_sections
             .iter()
             .any(|section| section.html.contains(MERMAID_CLIENT_MARKER))
@@ -352,37 +363,58 @@ pub fn build_html_with_nav(
         String::new()
     };
 
-    let footnote_script = if body_sections
-        .iter()
-        .any(|section| section.html.contains(FOOTNOTE_MARKER))
+    let footnote_script = if allow_scripts
+        && body_sections
+            .iter()
+            .any(|section| section.html.contains(FOOTNOTE_MARKER))
     {
         super::footnotes::footnote_script_tag()
     } else {
         String::new()
     };
 
-    let lightbox_script = super::lightbox::diagram_lightbox_script_tag();
+    let lightbox_script = if allow_scripts {
+        super::lightbox::diagram_lightbox_script_tag()
+    } else {
+        String::new()
+    };
+
+    let theme_attr = match opts.theme {
+        ThemeMode::Light => " data-theme=\"light\"",
+        ThemeMode::Dark => " data-theme=\"dark\"",
+        ThemeMode::Persist | ThemeMode::Host => "",
+    };
+
+    let theme_script = if allow_scripts && matches!(opts.theme, ThemeMode::Persist) {
+        r#"<script>
+(function () {
+  try {
+    var theme = localStorage.getItem("pagemd.workspace.v1.theme");
+    if (theme === "dark" || theme === "light") {
+      document.documentElement.setAttribute("data-theme", theme);
+    }
+  } catch (_) {}
+})();
+</script>
+"#
+        .to_string()
+    } else {
+        String::new()
+    };
+
+    let extra_css = opts.extra_css.as_deref().unwrap_or("");
 
     format!(
         r#"<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN"{theme_attr}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script>
-(function () {{
-  try {{
-    var theme = localStorage.getItem("pagemd.workspace.v1.theme");
-    if (theme === "dark" || theme === "light") {{
-      document.documentElement.setAttribute("data-theme", theme);
-    }}
-  }} catch (_) {{}}
-}})();
-</script>
-<title>{title}</title>
+{theme_script}<title>{title}</title>
 {favicon}
 <style>
 {css}
+{extra_css}
 </style>
 {diagram_script}{mermaid_script}
 </head>
@@ -395,9 +427,12 @@ pub fn build_html_with_nav(
 {footnote_script}{lightbox_script}
 </body>
 </html>"#,
+        theme_attr = theme_attr,
+        theme_script = theme_script,
         title = html_escape(title),
         favicon = favicon_link_tag(icon_label),
         css = CSS,
+        extra_css = extra_css,
         diagram_script = diagram_script,
         mermaid_script = mermaid_script,
         layout_open = layout_open,
@@ -411,11 +446,52 @@ pub fn build_html_with_nav(
     )
 }
 
+/// Whether to emit PageMD workspace chrome (topbar / sidebar / outline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkspaceChrome {
+    /// Current heuristics: multi-file or non-empty outline → workspace.
+    #[default]
+    Auto,
+    /// Always emit workspace chrome.
+    Full,
+    /// Body only — never topbar / sidebar / outline / resizer.
+    ContentOnly,
+}
+
+/// Which `<script>` tags to embed in the exported HTML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScriptEmbed {
+    /// Theme bootstrap, lightbox, footnotes, diagram helpers, and workspace (if enabled).
+    #[default]
+    Full,
+    /// No `<script>` tags — for sandboxed host iframes.
+    None,
+}
+
+/// How `data-theme` / theme bootstrap is applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeMode {
+    /// Head localStorage bootstrap (requires [`ScriptEmbed::Full`]).
+    #[default]
+    Persist,
+    Light,
+    Dark,
+    /// Host sets `data-theme` (no bootstrap script).
+    Host,
+}
+
 #[derive(Debug, Clone)]
 pub struct HtmlExportOptions {
     pub embed_workspace_script: bool,
     /// Serve official mermaid.js for client-side diagram rendering (view mode).
     pub client_mermaid_runtime: bool,
+    pub chrome: WorkspaceChrome,
+    pub scripts: ScriptEmbed,
+    pub theme: ThemeMode,
+    /// Appended after the built-in stylesheet.
+    pub extra_css: Option<String>,
+    /// How footnote definitions are presented in the HTML body.
+    pub footnotes: crate::core::md::FootnoteDisplay,
 }
 
 impl Default for HtmlExportOptions {
@@ -424,6 +500,31 @@ impl Default for HtmlExportOptions {
             // Match CLI convert / SingleFile export defaults.
             embed_workspace_script: true,
             client_mermaid_runtime: false,
+            chrome: WorkspaceChrome::Auto,
+            scripts: ScriptEmbed::Full,
+            theme: ThemeMode::Persist,
+            extra_css: None,
+            footnotes: crate::core::md::FootnoteDisplay::EndList,
+        }
+    }
+}
+
+impl HtmlExportOptions {
+    /// Host embedding (Pack / iframe): content only, no scripts, theme owned by host.
+    ///
+    /// Footnotes use [`crate::FootnoteDisplay::Tooltip`]: end-note lists stay hidden
+    /// and superscript refs carry a plain-text `title` (no footnote JS required).
+    /// Hosts that want definitions in a separate UI should override `footnotes` to
+    /// [`crate::FootnoteDisplay::Host`] and read [`crate::ExportOutput::footnotes`].
+    pub fn embedded() -> Self {
+        Self {
+            embed_workspace_script: false,
+            client_mermaid_runtime: false,
+            chrome: WorkspaceChrome::ContentOnly,
+            scripts: ScriptEmbed::None,
+            theme: ThemeMode::Host,
+            extra_css: None,
+            footnotes: crate::core::md::FootnoteDisplay::Tooltip,
         }
     }
 }

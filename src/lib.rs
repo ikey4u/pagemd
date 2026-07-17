@@ -16,6 +16,29 @@
 //!
 //! File-based conversion (same path as `pagemd -i … -o …`) uses
 //! [`ConvertOptions`] with [`export_to_file`] or [`export_with_resources`].
+//!
+//! For LLM / host prompts that should author PageMD-flavored Markdown, call
+//! [`markdown_help`] (full short cheat-sheet) or [`diagram_help`] (figures only;
+//! includes `diagram html` + Tailwind). Prefer these over CLI [`PAGEMD_LONG_ABOUT`].
+//!
+//! Host apps that embed HTML in a sandboxed iframe can use
+//! [`HtmlExportOptions::embedded`] (content-only, no scripts, host-owned theme,
+//! [`FootnoteDisplay::Tooltip`] so end-note dumps stay hidden without footnote JS).
+//! For a citations dialog owned by the host, set [`FootnoteDisplay::Host`] and read
+//! [`ExportOutput::footnotes`] from [`render`].
+//!
+//! ```no_run
+//! use pagemd::{render_to_html, HtmlExportOptions, RenderOptions};
+//!
+//! let html = render_to_html(
+//!     "# Hi\n\nBody[^1].\n\n[^1]: note",
+//!     &RenderOptions {
+//!         html: HtmlExportOptions::embedded(),
+//!         ..Default::default()
+//!     },
+//! )?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 pub mod core;
 
@@ -25,10 +48,11 @@ mod app;
 pub use app::run;
 
 pub use core::{
-    build_html, export_to_file, export_with_resources, html_escape, prepare_resources, render,
-    render_to_html, resolve_inputs, workspace_script_tag, ConvertOptions, ExportOutput,
-    HtmlExportOptions, OutputFormat, RenderOptions, RenderResources, ResolvedInputs,
-    PAGEMD_LONG_ABOUT,
+    build_html, diagram_help, export_to_file, export_with_resources, html_escape, markdown_help,
+    normalize_footnote_definition_lines, prepare_resources, render, render_to_html, resolve_inputs,
+    workspace_script_tag, ConvertOptions, ExportOutput, ExtractedFootnote, FootnoteDisplay,
+    HtmlExportOptions, OutputFormat, RenderOptions, RenderResources, ResolvedInputs, ScriptEmbed,
+    ThemeMode, WorkspaceChrome, DIAGRAM_HELP, MARKDOWN_HELP, PAGEMD_LONG_ABOUT,
 };
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ pub(crate) fn build_preview_error_html(err: &anyhow::Error) -> String {
             title: "Preview Error".to_string(),
             html: body,
             outline: Vec::new(),
+            footnotes: Vec::new(),
         }],
         "ER",
     )
@@ -25,5 +26,6 @@ pub(crate) fn preview_html_opts() -> HtmlExportOptions {
     HtmlExportOptions {
         embed_workspace_script: false,
         client_mermaid_runtime: true,
+        ..Default::default()
     }
 }

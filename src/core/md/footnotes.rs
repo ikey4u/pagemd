@@ -20,7 +20,9 @@ pub struct FootnoteRegistry {
 
 impl FootnoteRegistry {
     pub fn from_markdown(source: &str) -> Self {
-        let mut definitions = HashMap::new();
+        // Callers that need LLM dialect repair (concatenated defs, empty stubs)
+        // should normalize upstream — Pack uses `canonicalize_intent_markdown`.
+        let mut definitions: HashMap<String, String> = HashMap::new();
         let lines: Vec<&str> = source.lines().collect();
         let mut index = 0usize;
         while index < lines.len() {
@@ -28,10 +30,6 @@ impl FootnoteRegistry {
                 index += 1;
                 continue;
             };
-            if definitions.contains_key(&label) {
-                index += 1;
-                continue;
-            }
             let mut body = first_line_body;
             index += 1;
             while index < lines.len() && is_definition_continuation(lines[index]) {
@@ -42,6 +40,14 @@ impl FootnoteRegistry {
                 }
                 body.push_str(trimmed);
                 index += 1;
+            }
+            let existing_nonempty = definitions
+                .get(&label)
+                .is_some_and(|existing| !existing.trim().is_empty());
+            // Keep a non-empty definition; allow a later non-empty body to
+            // replace an earlier empty stub (`[^n]:` alone before a table).
+            if existing_nonempty || (definitions.contains_key(&label) && body.trim().is_empty()) {
+                continue;
             }
             definitions.insert(label, body);
         }
@@ -65,6 +71,7 @@ impl FootnoteRegistry {
         let mut index = 0usize;
         let mut in_code_fence = false;
         let mut fence_len = 0usize;
+        let mut slotted: HashSet<String> = HashSet::new();
 
         while index < lines.len() {
             let line = lines[index];
@@ -92,7 +99,10 @@ impl FootnoteRegistry {
 
             if let Some((label, _)) = parse_definition_start(line) {
                 if self.definitions.contains_key(&label) {
-                    out.push_str(&footnote_slot_html(&label));
+                    // One end-note slot per label — drop duplicate def stubs.
+                    if slotted.insert(label.clone()) {
+                        out.push_str(&footnote_slot_html(&label));
+                    }
                     index += 1;
                     while index < lines.len() && is_definition_continuation(lines[index]) {
                         index += 1;
@@ -178,23 +188,273 @@ fn parse_definition_start(line: &str) -> Option<(String, String)> {
     if !trimmed.starts_with("[^") {
         return None;
     }
-    let closing = trimmed.find("]:")?;
-    let label = trimmed.get(2..closing)?.to_string();
+    let rest = &trimmed[2..];
+    let closing = rest.find(']')?;
+    let label = rest[..closing].to_string();
     if label.is_empty() || label.contains(['[', ']', ':']) {
         return None;
     }
-    let body = trimmed.get(closing + 2..)?.trim_start().to_string();
+    // Accept `[^n]:`, `[^n] :`, and fullwidth `[^n]：` (common LLM typos).
+    let after = rest[closing + 1..].trim_start();
+    let body = after
+        .strip_prefix(':')
+        .or_else(|| after.strip_prefix('：'))?
+        .trim_start()
+        .to_string();
     Some((label, body))
+}
+
+/// Opt-in LLM-dialect repair: split concatenated `[^n]:` defs, normalize spaced /
+/// fullwidth colons, and rewrite empty `[^n]:` stubs into inline refs.
+///
+/// **Not** applied by default in [`FootnoteRegistry::from_markdown`] or the HTML
+/// render path — Pack and similar hosts should canonicalize before calling PageMD.
+pub fn normalize_footnote_definition_lines(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len().saturating_add(32));
+    let mut in_fence = false;
+    let mut fence_len = 0usize;
+
+    for line in markdown.split_inclusive('\n') {
+        let line_body = line.strip_suffix('\n').unwrap_or(line);
+        let had_newline = line.len() != line_body.len();
+
+        if let Some(mark_len) = fence_marker_length(line_body) {
+            if !in_fence {
+                in_fence = true;
+                fence_len = mark_len;
+            } else if mark_len >= fence_len && is_fence_closer(line_body, fence_len) {
+                in_fence = false;
+                fence_len = 0;
+            }
+            out.push_str(line_body);
+            if had_newline {
+                out.push('\n');
+            }
+            continue;
+        }
+
+        if in_fence {
+            out.push_str(line_body);
+            if had_newline {
+                out.push('\n');
+            }
+            continue;
+        }
+
+        out.push_str(&normalize_footnote_defs_in_line(line_body));
+        if had_newline {
+            out.push('\n');
+        }
+    }
+    repair_empty_footnote_definition_stubs(&out)
+}
+
+/// LLMs often leave a bare `[^n]:` stub before a table/list/code block. That
+/// steals the real end-note definition and renders as a floating marker in a
+/// blank gap. Rewrite those stubs into an inline `[^n]` on the previous line.
+fn repair_empty_footnote_definition_stubs(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown.lines().collect();
+    if lines.is_empty() {
+        return markdown.to_string();
+    }
+    let mut owned: Vec<String> = lines.iter().map(|line| (*line).to_string()).collect();
+    let mut remove = vec![false; owned.len()];
+    let mut in_fence = false;
+    let mut fence_len = 0usize;
+
+    for i in 0..owned.len() {
+        if let Some(mark_len) = fence_marker_length(&owned[i]) {
+            if !in_fence {
+                in_fence = true;
+                fence_len = mark_len;
+            } else if mark_len >= fence_len && is_fence_closer(&owned[i], fence_len) {
+                in_fence = false;
+                fence_len = 0;
+            }
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+
+        let Some((label, body)) = parse_definition_start(&owned[i]) else {
+            continue;
+        };
+        let next_continues = owned
+            .get(i + 1)
+            .is_some_and(|next| is_definition_continuation(next));
+        if !body.trim().is_empty() || next_continues {
+            continue;
+        }
+
+        remove[i] = true;
+        let marker = format!("[^{label}]");
+        let mut j = i;
+        while j > 0 {
+            j -= 1;
+            if remove[j] || owned[j].trim().is_empty() {
+                continue;
+            }
+            if parse_definition_start(&owned[j]).is_some() {
+                continue;
+            }
+            if !owned[j].contains(&marker) {
+                let trimmed = owned[j].trim_end().to_string();
+                owned[j] = format!("{trimmed}{marker}");
+            }
+            break;
+        }
+    }
+
+    let mut out = String::with_capacity(markdown.len());
+    for (i, line) in owned.iter().enumerate() {
+        if remove[i] {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !markdown.ends_with('\n') {
+        while out.ends_with('\n') {
+            out.pop();
+        }
+    }
+    out
+}
+
+fn is_footnote_def_colon(ch: char) -> bool {
+    ch == ':' || ch == '：'
+}
+
+fn normalize_footnote_defs_in_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len().saturating_add(8));
+    let mut chars = line.chars().peekable();
+    let mut emitted_def = false;
+
+    while let Some(c) = chars.next() {
+        if c == '[' && chars.peek() == Some(&'^') {
+            let mut look = chars.clone();
+            look.next(); // ^
+            let mut label = String::new();
+            let mut is_def = false;
+            while let Some(&ch) = look.peek() {
+                if ch == ']' {
+                    look.next();
+                    while matches!(look.peek(), Some(' ' | '\t')) {
+                        look.next();
+                    }
+                    if look.peek().copied().is_some_and(is_footnote_def_colon) {
+                        is_def = !label.is_empty() && !label.contains('[') && !label.contains(']');
+                    }
+                    break;
+                }
+                if ch == '[' || ch == '\n' || ch == '\r' {
+                    break;
+                }
+                label.push(ch);
+                look.next();
+            }
+            if is_def {
+                if !out.is_empty() {
+                    while out.ends_with(' ') || out.ends_with('\t') {
+                        out.pop();
+                    }
+                    if emitted_def || !out.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                }
+                out.push('[');
+                out.push('^');
+                chars.next(); // ^
+                for _ in 0..label.chars().count() {
+                    chars.next();
+                }
+                chars.next(); // ]
+                while matches!(chars.peek(), Some(' ' | '\t')) {
+                    chars.next();
+                }
+                chars.next(); // : or ：
+                out.push_str(&label);
+                out.push_str("]:");
+                emitted_def = true;
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn is_definition_continuation(line: &str) -> bool {
     line.starts_with("    ") || line.starts_with('\t')
 }
 
-pub fn footnote_ref_html(label: &str) -> String {
+/// A footnote definition extracted out of the HTML body for host UI
+/// (e.g. a citations dialog). Populated when [`FootnoteDisplay::Host`] is used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedFootnote {
+    pub label: String,
+    /// Single-line plain text suitable for tooltips / dialogs.
+    pub plain: String,
+    /// Definition body rendered as HTML (may be empty for plain-only hosts).
+    pub html: String,
+}
+
+/// How footnote definitions appear in the exported HTML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FootnoteDisplay {
+    /// Visible end-note list (CLI / full documents). Hover hints need footnote JS.
+    #[default]
+    EndList,
+    /// Keep superscript refs; hide the end-note list. Refs get a plain-text `title`
+    /// tooltip from the definition (works without scripts — Pack / sandboxed iframes).
+    Tooltip,
+    /// Inline superscript refs only; definitions are stripped from the body and
+    /// returned via [`crate::ExportOutput::footnotes`] for the host to show in
+    /// its own citations UI.
+    Host,
+}
+
+/// Sort extracted footnotes by numeric label when possible, else lexicographically.
+pub fn sort_extracted_footnotes(footnotes: &mut [ExtractedFootnote]) {
+    footnotes.sort_by(
+        |a, b| match (a.label.parse::<u32>(), b.label.parse::<u32>()) {
+            (Ok(x), Ok(y)) => x.cmp(&y),
+            _ => a.label.cmp(&b.label),
+        },
+    );
+}
+
+/// Flatten a footnote definition to a single-line plain tooltip string.
+pub fn plain_footnote_title(body: &str) -> String {
+    let mut out = body.to_string();
+    // Strip HTML tags that would break parsing / tooltips.
+    while let Some(start) = out.find('<') {
+        if let Some(rel) = out[start..].find('>') {
+            out.replace_range(start..start + rel + 1, " ");
+        } else {
+            out.replace_range(start.., " ");
+            break;
+        }
+    }
+    out = out
+        .replace(['\n', '\r', '\t'], " ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>();
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(180).collect()
+}
+
+pub fn footnote_ref_html(label: &str, title: Option<&str>) -> String {
     let escaped = html_escape(label);
+    let title_attr = title
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| format!(" title=\"{}\"", html_escape(t)))
+        .unwrap_or_default();
     format!(
-        "<sup class=\"footnote-ref\"><a href=\"#fn-{escaped}\" class=\"footnote-ref-link\">{escaped}</a></sup>"
+        "<sup class=\"footnote-ref\"><a href=\"#fn-{escaped}\" class=\"footnote-ref-link\"{title_attr}>{escaped}</a></sup>"
     )
 }
 
@@ -202,18 +462,39 @@ pub fn footnote_slot_html(label: &str) -> String {
     format!("<div {FN_SLOT_MARKER}{}\"></div>\n", html_escape(label))
 }
 
-pub fn footnote_def_html(label: &str, body_html: &str) -> String {
+pub fn footnote_def_html(label: &str, body_html: &str, display: FootnoteDisplay) -> String {
     let escaped = html_escape(label);
+    let class = match display {
+        FootnoteDisplay::EndList => "footnote",
+        FootnoteDisplay::Tooltip => "footnote footnote--tooltip-source",
+        // Host mode never emits definition HTML into the body.
+        FootnoteDisplay::Host => return String::new(),
+    };
     format!(
-        "<div class=\"footnote\" id=\"fn-{escaped}\"><span class=\"footnote-marker\"><sup>{escaped}</sup></span><span class=\"footnote-content\">{body_html}</span></div>\n"
+        "<div class=\"{class}\" id=\"fn-{escaped}\"><span class=\"footnote-marker\"><sup>{escaped}</sup></span><span class=\"footnote-content\">{body_html}</span></div>\n"
     )
 }
 
 pub fn footnote_slot_label(raw_html: &str) -> Option<String> {
-    let start = raw_html.find(FN_SLOT_MARKER)? + FN_SLOT_MARKER.len();
-    let rest = &raw_html[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+    footnote_slot_labels(raw_html).into_iter().next()
+}
+
+/// All footnote slot labels in a raw HTML chunk (pulldown may merge adjacent slots).
+pub fn footnote_slot_labels(raw_html: &str) -> Vec<String> {
+    let mut labels = Vec::new();
+    let mut rest = raw_html;
+    while let Some(start) = rest.find(FN_SLOT_MARKER) {
+        let after = &rest[start + FN_SLOT_MARKER.len()..];
+        let Some(end) = after.find('"') else {
+            break;
+        };
+        let label = after[..end].to_string();
+        if !label.is_empty() {
+            labels.push(label);
+        }
+        rest = &after[end + 1..];
+    }
+    labels
 }
 
 pub enum FootnoteTextSegment<'a> {
@@ -259,7 +540,82 @@ pub fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{footnote_slot_label, split_footnote_text, FootnoteRegistry, FootnoteTextSegment};
+    use super::{
+        footnote_slot_label, plain_footnote_title, split_footnote_text, FootnoteDisplay,
+        FootnoteRegistry, FootnoteTextSegment,
+    };
+
+    #[test]
+    fn normalize_splits_concatenated_defs_and_skips_fences() {
+        let raw = "## 引用\n\n[^1]: `a.toml` — one[^2]: `b.md` — two\n\n```\n[^x]: keep\n```\n";
+        let normalized = super::normalize_footnote_definition_lines(raw);
+        assert!(normalized.contains("\n\n[^2]:"));
+        assert!(normalized.contains("[^x]: keep"));
+        assert!(!normalized.contains("one[^2]:"));
+
+        let html = render_md(&normalized);
+        assert!(html.contains("id=\"fn-1\""));
+        assert!(html.contains("id=\"fn-2\""));
+        assert!(html.matches("class=\"footnote\"").count() >= 2);
+    }
+
+    #[test]
+    fn empty_footnote_stub_becomes_inline_ref_on_previous_line() {
+        let raw = "各臂按优先级从高到低\n\n[^12]:\n\n| 优先级 | 臂 |\n| --- | --- |\n| 1 | a |\n\n[^12]: real note about biased select\n";
+        let normalized = super::normalize_footnote_definition_lines(raw);
+        assert!(
+            normalized.contains("各臂按优先级从高到低[^12]"),
+            "stub should attach to previous prose: {normalized:?}"
+        );
+        assert!(
+            !normalized.contains("\n[^12]:\n\n|"),
+            "empty stub before table should be removed: {normalized:?}"
+        );
+        assert!(normalized.contains("[^12]: real note"));
+
+        let html = render_md(&normalized);
+        assert!(html.contains("class=\"footnote-ref\""));
+        assert!(html.contains("id=\"fn-12\""));
+        assert!(html.contains("real note about biased select"));
+        assert!(
+            !html.contains("<p><sup class=\"footnote-ref\""),
+            "orphan ref paragraph: {html}"
+        );
+    }
+
+    #[test]
+    fn default_render_does_not_apply_llm_stub_repair() {
+        // Empty stub stays in the source; hosts must canonicalize before render.
+        let raw = "各臂按优先级从高到低\n\n[^12]:\n\n| a | b |\n| --- | --- |\n| 1 | x |\n\n[^12]: real note\n";
+        let registry = FootnoteRegistry::from_markdown(raw);
+        assert_eq!(registry.definition("12"), Some("real note"));
+        let html = render_md(raw);
+        assert!(html.contains("real note"));
+        // Without normalize, the empty stub still produces a slot/ref in the gap.
+        assert!(
+            html.contains("id=\"fn-12\"") || html.contains("footnote-ref"),
+            "def still renders: {html}"
+        );
+    }
+
+    #[test]
+    fn normalize_accepts_spaced_and_fullwidth_colons() {
+        let raw = "## 引用\n\n[^1] : `a.toml` — one\n\n[^2]：`b.md` — two\n";
+        let normalized = super::normalize_footnote_definition_lines(raw);
+        assert!(normalized.contains("[^1]: `a.toml`"));
+        assert!(normalized.contains("[^2]:"));
+        assert!(normalized.contains("`b.md`"));
+        assert!(!normalized.contains("[^1] :"));
+        assert!(!normalized.contains('：'));
+
+        // Spaced/fullwidth colons are still accepted by parse_definition_start
+        // on the default path (general CJK tolerance, not LLM concat repair).
+        let html = render_md(raw);
+        assert!(html.contains("id=\"fn-1\""));
+        assert!(html.contains("id=\"fn-2\""));
+        assert!(html.contains("class=\"footnote\""));
+        assert!(!html.contains("<p>[^1]"));
+    }
 
     #[test]
     fn registry_collects_multiline_and_prepare_replaces_with_slot() {
@@ -316,9 +672,18 @@ mod tests {
 
         let ss = SyntaxSet::load_defaults_newlines();
         let ts = ThemeSet::load_defaults();
-        crate::core::md::render::render_markdown(source, Path::new("."), 16.0, "", &ss, &ts, false)
-            .expect("render markdown")
-            .html
+        crate::core::md::render::render_markdown(
+            source,
+            Path::new("."),
+            16.0,
+            "",
+            &ss,
+            &ts,
+            false,
+            FootnoteDisplay::EndList,
+        )
+        .expect("render markdown")
+        .html
     }
 
     #[test]
@@ -360,6 +725,16 @@ mod tests {
         let html = render_md(source);
         assert!(html.contains("class=\"footnote-ref\""));
         assert!(html.contains("id=\"fn-a\""));
+    }
+
+    #[test]
+    fn plain_footnote_title_strips_html_tags() {
+        let title = plain_footnote_title(
+            "`README.md:1-80` — <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://x\">",
+        );
+        assert!(title.contains("README.md:1-80"));
+        assert!(!title.contains("<source"));
+        assert!(!title.contains("srcset"));
     }
 
     #[test]

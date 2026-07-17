@@ -11,7 +11,7 @@ use crate::core::export::html::resolve_icon_label;
 use crate::core::export::html::section_label;
 use crate::core::export::{self, HtmlExportOptions, OutputFormat};
 use crate::core::ext::math::find_katex_fonts;
-use crate::core::md::render_markdown;
+use crate::core::md::{render_markdown, FootnoteDisplay};
 use crate::core::model::{Document, Section};
 use crate::core::util::exclude::ExcludeMatcher;
 use crate::core::{ConvertOptions, RenderOptions};
@@ -162,6 +162,7 @@ fn build_document(
     title_hint: Option<&Path>,
     resources: &RenderResources,
     input_files: &[PathBuf],
+    footnote_display: FootnoteDisplay,
 ) -> Result<Document> {
     let mut sections: Vec<Section> = Vec::new();
     let mut nav_labels: Vec<String> = Vec::new();
@@ -184,6 +185,7 @@ fn build_document(
             &resources.ss,
             &resources.ts,
             opts.client_mermaid,
+            footnote_display,
         )
         .with_context(|| format!("Failed to render {}", input_path.display()))?;
 
@@ -240,7 +242,13 @@ pub fn export_with_resources(
     input_files: &[PathBuf],
     title_hint: Option<&Path>,
 ) -> Result<export::ExportOutput> {
-    let doc = build_document(opts, title_hint, resources, input_files)?;
+    let doc = build_document(
+        opts,
+        title_hint,
+        resources,
+        input_files,
+        html_opts.footnotes,
+    )?;
     export::export_document(&doc, OutputFormat::Html, html_opts)
 }
 
@@ -264,6 +272,7 @@ pub fn export_source(source: &str, opts: &RenderOptions) -> Result<export::Expor
         &resources.ss,
         &resources.ts,
         opts.client_mermaid,
+        opts.html.footnotes,
     )
     .context("Failed to render Markdown source")?;
 

@@ -189,10 +189,7 @@ fn render_nav_tree_node(node: &NavTreeNode, active_index: usize) -> String {
     }
 }
 
-pub fn render_flat_nav_html(
-    entries: &[(PathBuf, usize, String)],
-    active_index: usize,
-) -> String {
+pub fn render_flat_nav_html(entries: &[(PathBuf, usize, String)], active_index: usize) -> String {
     entries
         .iter()
         .map(|(path, section_index, label)| {

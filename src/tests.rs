@@ -11,16 +11,25 @@ use crate::core::export::html::favicon::{
     relative_luminance,
 };
 use crate::core::export::html::page::build_html_with_nav;
-use crate::core::md::render_markdown;
+use crate::core::md::{render_markdown, FootnoteDisplay};
 use crate::core::model::{HeadingOutline, RenderedSection};
 use crate::core::resolve_inputs;
 
 fn render_html_at(source: &str, base_dir: &Path) -> String {
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
-    render_markdown(source, base_dir, 16.0, "", &ss, &ts, false)
-        .unwrap()
-        .html
+    render_markdown(
+        source,
+        base_dir,
+        16.0,
+        "",
+        &ss,
+        &ts,
+        false,
+        FootnoteDisplay::EndList,
+    )
+    .unwrap()
+    .html
 }
 
 fn render_html(source: &str) -> String {
@@ -99,6 +108,7 @@ fn build_html_embeds_two_char_favicon() {
             title: String::new(),
             html: "<p>x</p>".to_string(),
             outline: Vec::new(),
+            footnotes: Vec::new(),
         }],
         "ab",
     );
@@ -195,6 +205,7 @@ fn tree_nav_uses_directory_structure_with_tmp_paths() {
     let html_opts = crate::core::HtmlExportOptions {
         embed_workspace_script: true,
         client_mermaid_runtime: false,
+        ..Default::default()
     };
     let convert_opts = (&args).into();
     let resources = crate::core::prepare_resources(&convert_opts).unwrap();
@@ -224,6 +235,7 @@ fn preview_html_omits_embedded_workspace_script() {
                 id: "intro".to_string(),
                 text: "Intro".to_string(),
             }],
+            footnotes: Vec::new(),
         }],
         "PG",
         None,
@@ -231,6 +243,7 @@ fn preview_html_omits_embedded_workspace_script() {
         &crate::core::HtmlExportOptions {
             embed_workspace_script: false,
             client_mermaid_runtime: false,
+            ..Default::default()
         },
     );
     assert!(html.contains("data-doc-workspace"));
@@ -252,6 +265,7 @@ fn export_html_restores_workspace_script_for_preview_render() {
                 id: "intro".to_string(),
                 text: "Intro".to_string(),
             }],
+            footnotes: Vec::new(),
         }],
         "PG",
         None,
@@ -259,6 +273,7 @@ fn export_html_restores_workspace_script_for_preview_render() {
         &crate::core::HtmlExportOptions {
             embed_workspace_script: false,
             client_mermaid_runtime: false,
+            ..Default::default()
         },
     );
     let exported = crate::app::preview::ensure_export_html(html);
@@ -340,6 +355,7 @@ fn single_file_html_includes_outline_workspace() {
                     text: "Details".to_string(),
                 },
             ],
+            footnotes: Vec::new(),
         }],
         "PG",
     );
@@ -376,6 +392,7 @@ fn single_file_without_headings_uses_plain_container() {
             title: String::new(),
             html: "<p>No headings here.</p>".to_string(),
             outline: Vec::new(),
+            footnotes: Vec::new(),
         }],
         "PG",
     );
@@ -398,6 +415,7 @@ fn multi_file_html_includes_standalone_sidebar() {
                     id: "a".to_string(),
                     text: "A".to_string(),
                 }],
+                footnotes: Vec::new(),
             },
             RenderedSection {
                 title: "B".to_string(),
@@ -407,6 +425,7 @@ fn multi_file_html_includes_standalone_sidebar() {
                     id: "b".to_string(),
                     text: "B".to_string(),
                 }],
+                footnotes: Vec::new(),
             },
         ],
         "PG",
@@ -415,6 +434,7 @@ fn multi_file_html_includes_standalone_sidebar() {
         &crate::core::HtmlExportOptions {
             embed_workspace_script: true,
             client_mermaid_runtime: false,
+            ..Default::default()
         },
     );
 
@@ -448,11 +468,13 @@ fn multi_file_tree_sidebar_renders_folders() {
                 title: "Root".to_string(),
                 html: "<h1>Root</h1>".to_string(),
                 outline: Vec::new(),
+                footnotes: Vec::new(),
             },
             RenderedSection {
                 title: "Guide".to_string(),
                 html: "<h1>Guide</h1>".to_string(),
                 outline: Vec::new(),
+                footnotes: Vec::new(),
             },
         ],
         "PG",
@@ -464,6 +486,7 @@ fn multi_file_tree_sidebar_renders_folders() {
         &crate::core::HtmlExportOptions {
             embed_workspace_script: true,
             client_mermaid_runtime: false,
+            ..Default::default()
         },
     );
 
@@ -493,6 +516,7 @@ fn outline_uses_markdown_plain_text_not_html_roundtrip() {
         &ss,
         &ts,
         false,
+        FootnoteDisplay::EndList,
     )
     .unwrap();
 
@@ -519,6 +543,7 @@ fn duplicate_heading_ids_are_unique_for_outline_links() {
         &ss,
         &ts,
         false,
+        FootnoteDisplay::EndList,
     )
     .unwrap();
 
@@ -689,6 +714,7 @@ fn mermaid_client_mode_emits_source_placeholder() {
         &ss,
         &ts,
         true,
+        FootnoteDisplay::EndList,
     )
     .unwrap();
     assert!(section.html.contains("data-mermaid-client"));
@@ -708,6 +734,7 @@ fn mermaid_client_mode_emits_source_placeholder() {
         &crate::core::HtmlExportOptions {
             embed_workspace_script: false,
             client_mermaid_runtime: true,
+            ..Default::default()
         },
     );
     assert!(html.contains("/__assets/mermaid.min.js?v="));
@@ -760,6 +787,7 @@ fn diagram_html_tailwind_browser_runtime_is_embedded_when_needed() {
         title: String::new(),
         html: render_html("```diagram html\n<div class=\"rounded-xl\">Node</div>\n```\n"),
         outline: Vec::new(),
+        footnotes: Vec::new(),
     };
     let html = build_html("Title", &[section], "PG");
     assert!(html.contains("<script>"));
@@ -793,7 +821,11 @@ fn library_render_to_html_matches_full_document() {
         &crate::RenderOptions::default(),
     )
     .unwrap();
-    assert!(html.contains("<!DOCTYPE html>") || html.contains("<!doctype html>") || html.contains("<html"));
+    assert!(
+        html.contains("<!DOCTYPE html>")
+            || html.contains("<!doctype html>")
+            || html.contains("<html")
+    );
     assert!(html.contains("Library API"));
     assert!(html.contains("<strong>world</strong>"));
     assert!(html.contains("<style"));
@@ -853,3 +885,73 @@ fn raw_html_resources_are_embedded() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn embedded_export_is_content_only_without_scripts() {
+    let html = crate::render_to_html(
+        "# Intro\n\nHello **pack**.\n\n## Details\n\nMore text.\n",
+        &crate::RenderOptions {
+            html: crate::HtmlExportOptions::embedded(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(html.contains("Intro"));
+    assert!(html.contains("<strong>pack</strong>"));
+    assert!(!html.contains("class=\"doc-topbar\""));
+    assert!(!html.contains("data-doc-workspace"));
+    assert!(!html.contains("data-pagemd-workspace"));
+    assert!(!html.to_ascii_lowercase().contains("<script"));
+}
+
+#[test]
+fn embedded_footnotes_use_tooltip_titles_without_visible_end_list() {
+    let html = crate::render_to_html(
+        "Claim from README[^1].\n\n[^1]: `README.md:1-10` — <source media=\"(prefers-color-scheme: dark)\" srcset=\"x\">\n",
+        &crate::RenderOptions {
+            html: crate::HtmlExportOptions::embedded(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(html.contains("class=\"footnote-ref\""));
+    assert!(html.contains("title=\""));
+    assert!(html.contains("README.md:1-10"));
+    assert!(html.contains("footnote--tooltip-source"));
+    // Raw HTML from the citation quote must not leak into the document body.
+    assert!(!html.contains("<source media="));
+}
+
+#[test]
+fn host_footnotes_extract_defs_and_keep_inline_refs() {
+    let mut html_opts = crate::HtmlExportOptions::embedded();
+    html_opts.footnotes = crate::FootnoteDisplay::Host;
+    let out = crate::render(
+        "Claim A[^1] and claim B[^2].\n\n[^2]: second note\n[^1]: `README.md:1` — first\n",
+        &crate::RenderOptions {
+            html: html_opts,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(out.html.contains("class=\"footnote-ref\""));
+    assert!(out.html.contains("title=\""));
+    assert!(!out.html.contains("class=\"footnote\""));
+    assert!(!out.html.contains("data-pagemd-fn-slot"));
+    // Definitions must not appear as end-note blocks (title attrs may still quote them).
+    assert!(!out.html.contains("id=\"fn-1\""));
+    assert!(!out.html.contains("id=\"fn-2\""));
+    assert_eq!(out.footnotes.len(), 2);
+    assert_eq!(out.footnotes[0].label, "1");
+    assert!(out.footnotes[0].plain.contains("README.md:1"));
+    assert_eq!(out.footnotes[1].label, "2");
+    assert!(out.footnotes[1].plain.contains("second note"));
+}
+
+#[test]
+fn default_export_keeps_workspace_chrome_for_headings() {
+    let html =
+        crate::render_to_html("# Intro\n\nHello.\n", &crate::RenderOptions::default()).unwrap();
+    assert!(html.contains("data-doc-workspace"));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("data-pagemd-workspace"));
+}

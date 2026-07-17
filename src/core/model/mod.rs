@@ -13,6 +13,8 @@ pub struct Section {
     pub title: String,
     pub html: String,
     pub outline: Vec<HeadingOutline>,
+    /// Footnote definitions extracted when rendering with [`crate::FootnoteDisplay::Host`].
+    pub footnotes: Vec<crate::core::md::ExtractedFootnote>,
 }
 
 pub struct Document {

@@ -36,6 +36,7 @@ pub(crate) fn run_convert(args: &CliArgs) -> anyhow::Result<()> {
     let html_opts = HtmlExportOptions {
         embed_workspace_script: true,
         client_mermaid_runtime: false,
+        ..Default::default()
     };
     let result = export_to_file(&opts, &html_opts, output)?;
 

@@ -78,12 +78,7 @@ pub fn find_katex_fonts(hint: Option<&Path>) -> Result<String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
-pub fn latex_to_svg(
-    expr: &str,
-    display: bool,
-    font_size: f64,
-    font_dir: &str,
-) -> Result<String> {
+pub fn latex_to_svg(expr: &str, display: bool, font_size: f64, font_dir: &str) -> Result<String> {
     let ast = parse_latex(expr).map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
     let style = if display {
         MathStyle::Display

@@ -16,7 +16,8 @@ use crate::core::ext::math::latex_to_svg;
 use crate::core::ext::typst;
 use crate::core::md::callouts::{render_callout, CalloutRenderContext};
 use crate::core::md::footnotes::{
-    footnote_def_html, footnote_ref_html, footnote_slot_label, split_footnote_text,
+    footnote_def_html, footnote_ref_html, footnote_slot_labels, plain_footnote_title,
+    sort_extracted_footnotes, split_footnote_text, ExtractedFootnote, FootnoteDisplay,
     FootnoteRegistry, FootnoteTextSegment,
 };
 use crate::core::md::preprocess::{parse_internal_callout_info, preprocess_markdown_extensions};
@@ -117,14 +118,47 @@ fn is_invalid_inline_math_candidate(expr: &str) -> bool {
     )
 }
 
-fn append_rich_text(buf: &mut String, text: &str, math_font_size: f64, font_dir: &str) {
+fn footnote_title_attr(
+    label: &str,
+    footnotes: &FootnoteRegistry,
+    display: FootnoteDisplay,
+) -> Option<String> {
+    if !matches!(display, FootnoteDisplay::Tooltip | FootnoteDisplay::Host) {
+        return None;
+    }
+    footnotes
+        .definition(label)
+        .map(plain_footnote_title)
+        .filter(|title| !title.is_empty())
+}
+
+fn push_extracted_footnote(extracted: &mut Vec<ExtractedFootnote>, label: &str, body: &str) {
+    if extracted.iter().any(|f| f.label == label) {
+        return;
+    }
+    extracted.push(ExtractedFootnote {
+        label: label.to_string(),
+        plain: plain_footnote_title(body),
+        html: render_footnote_body_markup(body),
+    });
+}
+
+fn append_rich_text(
+    buf: &mut String,
+    text: &str,
+    math_font_size: f64,
+    font_dir: &str,
+    footnotes: &FootnoteRegistry,
+    display: FootnoteDisplay,
+) {
     for segment in split_footnote_text(text) {
         match segment {
             FootnoteTextSegment::Plain(plain) => {
                 append_inline_math_html(buf, plain, math_font_size, font_dir);
             }
             FootnoteTextSegment::Reference(label) => {
-                buf.push_str(&footnote_ref_html(label));
+                let title = footnote_title_attr(label, footnotes, display);
+                buf.push_str(&footnote_ref_html(label, title.as_deref()));
             }
         }
     }
@@ -142,21 +176,54 @@ fn render_footnote_body_markup(body: &str) -> String {
     out.trim().to_string()
 }
 
-fn render_footnote_slot(label: &str, footnotes: &FootnoteRegistry) -> String {
+fn render_footnote_slot(
+    label: &str,
+    footnotes: &FootnoteRegistry,
+    display: FootnoteDisplay,
+    extracted: &mut Vec<ExtractedFootnote>,
+) -> String {
     let Some(body) = footnotes.definition(label) else {
         return String::new();
     };
-    let body_html = render_footnote_body_markup(body);
-    footnote_def_html(label, &body_html)
+    match display {
+        FootnoteDisplay::Host => {
+            push_extracted_footnote(extracted, label, body);
+            String::new()
+        }
+        // Tooltip mode: plain escaped text only — citation quotes may contain raw HTML.
+        FootnoteDisplay::Tooltip => {
+            let body_html = format!("<p>{}</p>", html_escape(&plain_footnote_title(body)));
+            footnote_def_html(label, &body_html, display)
+        }
+        FootnoteDisplay::EndList => {
+            let body_html = render_footnote_body_markup(body);
+            footnote_def_html(label, &body_html, display)
+        }
+    }
 }
 
-fn try_render_footnote_html(raw: &str, footnotes: &FootnoteRegistry) -> Option<String> {
-    let label = footnote_slot_label(raw)?;
-    let rendered = render_footnote_slot(&label, footnotes);
-    if rendered.is_empty() {
+fn try_render_footnote_html(
+    raw: &str,
+    footnotes: &FootnoteRegistry,
+    display: FootnoteDisplay,
+    extracted: &mut Vec<ExtractedFootnote>,
+) -> Option<String> {
+    let labels = footnote_slot_labels(raw);
+    if labels.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for label in labels {
+        out.push_str(&render_footnote_slot(&label, footnotes, display, extracted));
+    }
+    // Host always replaces the slot(s) (including with empty), so defs leave the body.
+    if display == FootnoteDisplay::Host {
+        return Some(out);
+    }
+    if out.is_empty() {
         None
     } else {
-        Some(rendered)
+        Some(out)
     }
 }
 
@@ -239,8 +306,10 @@ pub fn render_markdown(
     ss: &SyntaxSet,
     ts: &ThemeSet,
     client_mermaid: bool,
+    footnote_display: FootnoteDisplay,
 ) -> Result<RenderedSection> {
-    render_markdown_with_depth(
+    let mut extracted = Vec::new();
+    let mut section = render_markdown_with_depth(
         source,
         base_dir,
         math_font_size,
@@ -250,7 +319,14 @@ pub fn render_markdown(
         None,
         0,
         client_mermaid,
-    )
+        footnote_display,
+        &mut extracted,
+    )?;
+    if footnote_display == FootnoteDisplay::Host {
+        sort_extracted_footnotes(&mut extracted);
+        section.footnotes = extracted;
+    }
+    Ok(section)
 }
 
 pub fn render_markdown_with_depth(
@@ -263,6 +339,8 @@ pub fn render_markdown_with_depth(
     footnotes: Option<&FootnoteRegistry>,
     depth: usize,
     client_mermaid: bool,
+    footnote_display: FootnoteDisplay,
+    extracted_footnotes: &mut Vec<ExtractedFootnote>,
 ) -> Result<RenderedSection> {
     let preprocessed = preprocess_markdown_extensions(source);
     let owned_registry;
@@ -421,7 +499,7 @@ pub fn render_markdown_with_depth(
                                     &kind,
                                     &title,
                                     &buf_str,
-                                    &CalloutRenderContext {
+                                    &mut CalloutRenderContext {
                                         base_dir,
                                         math_font_size,
                                         font_dir,
@@ -430,6 +508,8 @@ pub fn render_markdown_with_depth(
                                         footnotes,
                                         depth,
                                         client_mermaid,
+                                        footnote_display,
+                                        extracted_footnotes,
                                     },
                                 ) {
                                     Ok(rendered) => html.push_str(&rendered),
@@ -478,7 +558,14 @@ pub fn render_markdown_with_depth(
                     match event {
                         Event::Text(text) => {
                             heading_plain.push_str(text);
-                            append_rich_text(heading_html, text, math_font_size, font_dir);
+                            append_rich_text(
+                                heading_html,
+                                text,
+                                math_font_size,
+                                font_dir,
+                                footnotes,
+                                footnote_display,
+                            );
                         }
                         Event::Code(code) => {
                             heading_plain.push_str(code);
@@ -535,7 +622,8 @@ pub fn render_markdown_with_depth(
                         }
                         Event::FootnoteReference(label) => {
                             heading_plain.push_str(label);
-                            heading_html.push_str(&footnote_ref_html(label));
+                            let title = footnote_title_attr(label, footnotes, footnote_display);
+                            heading_html.push_str(&footnote_ref_html(label, title.as_deref()));
                         }
                         Event::Html(raw) => {
                             heading_html.push_str(&inline_raw_html_resources(raw, base_dir))
@@ -691,7 +779,12 @@ pub fn render_markdown_with_depth(
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    if let Some(rendered) = try_render_footnote_html(raw, footnotes) {
+                    if let Some(rendered) = try_render_footnote_html(
+                        raw,
+                        footnotes,
+                        footnote_display,
+                        extracted_footnotes,
+                    ) {
                         current_target(&mut html, &mut paragraph_html).push_str(&rendered);
                     } else {
                         current_target(&mut html, &mut paragraph_html)
@@ -702,7 +795,12 @@ pub fn render_markdown_with_depth(
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    if let Some(rendered) = try_render_footnote_html(raw, footnotes) {
+                    if let Some(rendered) = try_render_footnote_html(
+                        raw,
+                        footnotes,
+                        footnote_display,
+                        extracted_footnotes,
+                    ) {
                         current_target(&mut html, &mut paragraph_html).push_str(&rendered);
                     } else {
                         current_target(&mut html, &mut paragraph_html)
@@ -864,6 +962,8 @@ pub fn render_markdown_with_depth(
                         text,
                         math_font_size,
                         font_dir,
+                        footnotes,
+                        footnote_display,
                     );
                 }
 
@@ -913,8 +1013,9 @@ pub fn render_markdown_with_depth(
                         plain.push_str(label);
                         paragraph_is_plain = false;
                     }
+                    let title = footnote_title_attr(label, footnotes, footnote_display);
                     current_target(&mut html, &mut paragraph_html)
-                        .push_str(&footnote_ref_html(label));
+                        .push_str(&footnote_ref_html(label, title.as_deref()));
                 }
 
                 Event::Start(Tag::FootnoteDefinition(_)) => {
@@ -930,6 +1031,9 @@ pub fn render_markdown_with_depth(
         title,
         html,
         outline,
+        // Nested callouts share `extracted_footnotes`; only the top-level
+        // `render_markdown` assigns the final list onto the section.
+        footnotes: Vec::new(),
     })
 }
 

@@ -359,7 +359,9 @@ fn is_close_punctuation(ch: char) -> bool {
 
 /// Strip a leading YAML frontmatter block (`---` … `---`) so it is not rendered.
 ///
-/// Invalid YAML is ignored with a warning; the block is still stripped.
+/// Only a **valid YAML mapping** (or an empty block) is treated as frontmatter.
+/// Invalid YAML / markdown accidentally wrapped in `---` … `---` is left intact
+/// so tools that fence documents with thematic breaks do not render blank pages.
 pub fn strip_yaml_frontmatter(source: &str) -> String {
     let body = source.strip_prefix('\u{FEFF}').unwrap_or(source);
     let lines: Vec<&str> = body.lines().collect();
@@ -387,7 +389,10 @@ pub fn strip_yaml_frontmatter(source: &str) -> String {
                 return source.to_string();
             }
             Err(err) => {
-                eprintln!("Warning: ignoring invalid YAML frontmatter: {err}");
+                // Keep the source: Pack intent docs (and similar) often wrap the
+                // whole Markdown body in `---` fences. Stripping would blank the page.
+                eprintln!("Warning: not treating leading --- block as frontmatter ({err})");
+                return source.to_string();
             }
         }
     }
@@ -539,11 +544,21 @@ mod tests {
     }
 
     #[test]
-    fn invalid_yaml_frontmatter_is_stripped_with_warning_path() {
+    fn invalid_yaml_frontmatter_is_kept() {
         let input = "---\ntitle: [unterminated\n---\n\nVisible\n";
         let out = strip_yaml_frontmatter(input);
-        assert!(!out.contains("title:"));
+        assert_eq!(out, input);
         assert!(out.contains("Visible"));
+    }
+
+    #[test]
+    fn markdown_wrapped_in_thematic_breaks_is_not_blanked() {
+        // Pack intent docs sometimes wrap the whole body in `---` … `---`.
+        let input = "---\n# Title\n\nBody paragraph.\n\n## 引用\n\n[^1] : `a.toml` — note\n---\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+        assert!(out.contains("# Title"));
+        assert!(out.contains("Body paragraph"));
     }
 
     #[test]

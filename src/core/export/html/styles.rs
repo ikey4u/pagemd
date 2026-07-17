@@ -1304,13 +1304,27 @@ img {
 
 .footnote {
   display: flex;
-  gap: 0.4rem;
+  flex-flow: row nowrap;
   align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   font-size: 0.875rem;
   color: var(--color-muted);
   border-top: 1px solid var(--color-border);
-  margin-top: 0.35rem;
-  padding-top: 0.35rem;
+  margin: 0.55rem 0 0;
+  padding: 0.45rem 0 0;
+}
+
+.footnote + .footnote {
+  margin-top: 0.45rem;
+}
+
+/* FootnoteDisplay::Tooltip — definitions stay in DOM for ids/titles, but must not
+   reserve layout or inflate scrollHeight (visually-hidden absolute boxes still do). */
+.footnote.footnote--tooltip-source {
+  display: none !important;
 }
 
 .footnote-marker {
@@ -1320,7 +1334,10 @@ img {
 }
 
 .footnote-content {
+  flex: 1 1 auto;
   min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .footnote-content > :first-child {
@@ -1329,6 +1346,17 @@ img {
 
 .footnote-content > :last-child {
   margin-bottom: 0;
+}
+
+.footnote-content p {
+  display: block;
+  margin: 0;
+}
+
+.footnote-content code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .footnote-ref {

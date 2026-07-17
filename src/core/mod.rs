@@ -4,6 +4,7 @@
 //! styling, and SingleFile-style embedding). The CLI is a thin front-end over
 //! the same APIs.
 
+pub mod authoring;
 pub mod export;
 pub mod ext;
 pub mod import;
@@ -12,10 +13,14 @@ pub mod model;
 pub mod pipeline;
 pub mod util;
 
+pub use authoring::{diagram_help, markdown_help, DIAGRAM_HELP, MARKDOWN_HELP};
 pub use export::html::{build_html, workspace_script_tag};
+pub use export::html::{
+    FootnoteDisplay, HtmlExportOptions, ScriptEmbed, ThemeMode, WorkspaceChrome,
+};
 pub use export::ExportOutput;
-pub use export::HtmlExportOptions;
 pub use export::OutputFormat;
+pub use md::{normalize_footnote_definition_lines, ExtractedFootnote};
 pub use pipeline::{RenderResources, ResolvedInputs};
 pub use util::html_escape;
 

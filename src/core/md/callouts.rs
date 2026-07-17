@@ -4,7 +4,7 @@ use anyhow::Result;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
-use crate::core::md::footnotes::FootnoteRegistry;
+use crate::core::md::footnotes::{ExtractedFootnote, FootnoteDisplay, FootnoteRegistry};
 use crate::core::md::preprocess::callout_label;
 use crate::core::md::render::render_markdown_with_depth;
 use crate::core::util::html_escape;
@@ -18,13 +18,15 @@ pub struct CalloutRenderContext<'a> {
     pub footnotes: &'a FootnoteRegistry,
     pub depth: usize,
     pub client_mermaid: bool,
+    pub footnote_display: FootnoteDisplay,
+    pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
 pub fn render_callout(
     kind: &str,
     title: &str,
     content: &str,
-    ctx: &CalloutRenderContext<'_>,
+    ctx: &mut CalloutRenderContext<'_>,
 ) -> Result<String> {
     let body = if ctx.depth >= 8 {
         format!("<p>{}</p>\n", html_escape(content.trim()))
@@ -39,6 +41,8 @@ pub fn render_callout(
             Some(ctx.footnotes),
             ctx.depth + 1,
             ctx.client_mermaid,
+            ctx.footnote_display,
+            ctx.extracted_footnotes,
         )?
         .html
     };

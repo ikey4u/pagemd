@@ -181,6 +181,7 @@ fn run_view(args: &ViewArgs) -> Result<()> {
     let native_html_opts = HtmlExportOptions {
         embed_workspace_script: true,
         client_mermaid_runtime: false,
+        ..Default::default()
     };
 
     let sources: Vec<(PathBuf, String)> = resolved
