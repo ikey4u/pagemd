@@ -524,6 +524,10 @@ fn multi_file_tree_sidebar_renders_folders() {
 
     assert!(html.contains("class=\"doc-nav-tree\""));
     assert!(html.contains("data-nav-folder=\"guide\""));
+    assert!(html.contains(
+        "id=\"doc-1\" data-doc-panel data-panel-title=\"readme.md\" data-doc-path=\"readme.md\""
+    ));
+    assert!(html.contains("id=\"doc-2\" data-doc-panel data-panel-title=\"guide/start.md\" data-doc-path=\"guide/start.md\""));
     assert!(html.contains("class=\"doc-nav-folder-toggle\""));
     assert!(html.contains("data-nav-toggle"));
     assert!(html.contains("doc-topbar"));
@@ -534,6 +538,50 @@ fn multi_file_tree_sidebar_renders_folders() {
     assert!(html.contains("updateDocTitle"));
     assert!(html.contains("setTheme"));
     assert!(html.contains("data-theme-toggle"));
+}
+
+#[test]
+fn workspace_script_routes_relative_markdown_links_between_panels() {
+    let script = include_str!("../assets/workspace.js");
+
+    assert!(script.contains("function documentForMarkdownLink(link)"));
+    assert!(script.contains("new URL(href, \"https://pagemd.invalid/\" + basePath)"));
+    assert!(script.contains("relativeDocumentPath(panel) === targetPath"));
+    assert!(script.contains("followMarkdownLink(markdownTarget)"));
+    assert!(script.contains("markdownLink.hasAttribute(\"target\")"));
+}
+
+#[test]
+fn workspace_document_separators_are_print_only() {
+    let css = crate::core::export::html::styles::CSS;
+    let print_start = css.find("@media print").unwrap();
+    let separator = ".doc-section + .doc-section";
+
+    assert_eq!(css.matches(separator).count(), 1);
+    assert!(css.find(separator).unwrap() > print_start);
+}
+
+#[test]
+fn dark_theme_only_swaps_the_theme_toggle_label() {
+    let css = crate::core::export::html::styles::CSS;
+
+    assert!(!css.contains("html[data-theme=\"dark\"] .doc-settings-action-text {"));
+    assert!(
+        css.contains("html[data-theme=\"dark\"] [data-theme-toggle] .doc-settings-action-text {")
+    );
+    assert!(css.contains(
+        "html[data-theme=\"dark\"] [data-theme-toggle] .doc-settings-action-text-light {"
+    ));
+}
+
+#[test]
+fn headings_do_not_render_as_section_dividers() {
+    let css = crate::core::export::html::styles::CSS;
+
+    assert!(css.contains("h1 { font-size: 2.25rem; margin-top: 0; }"));
+    assert!(css.contains("h2 { font-size: 1.5rem; }"));
+    assert!(!css.contains("h1 { font-size: 2.25rem; margin-top: 0; border-bottom:"));
+    assert!(!css.contains("h2 { font-size: 1.5rem; border-bottom:"));
 }
 
 #[test]
@@ -707,6 +755,31 @@ fn mermaid_code_block_renders_svg() {
 }
 
 #[test]
+fn client_mermaid_uses_native_light_and_dark_themes() {
+    let script = include_str!("../assets/mermaid-init.js");
+
+    assert!(script.contains("theme: themeName()"));
+    assert!(script.contains(
+        "document.documentElement.getAttribute(\"data-theme\") === \"dark\" ? \"dark\" : \"default\""
+    ));
+    assert!(script.contains("fontSize: \"18px\""));
+}
+
+#[test]
+fn mermaid_wrapper_preserves_renderer_native_shapes() {
+    let css = crate::core::export::html::styles::CSS;
+
+    assert!(css.contains(".mermaid-display {\n  margin: 1.75rem 0;"));
+    assert!(css.contains(
+        "  padding: 0.75rem 0;\n  overflow-x: hidden;\n  border: none;\n  border-radius: 0;\n  background: transparent;\n  box-shadow: none;"
+    ));
+    assert!(css.contains(".mermaid-canvas {\n  display: block;"));
+    assert!(css.contains("  margin: 0 auto;\n  padding: 0.35rem 0;\n  border-radius: 0;"));
+    assert!(!css.contains(".mermaid-display svg .cluster rect"));
+    assert!(!css.contains("border: 1.5px solid var(--mermaid-line)"));
+}
+
+#[test]
 fn mermaid_quadrant_chart_with_chinese_axes_renders() {
     let html = render_html(
         "```mermaid\n\
@@ -780,6 +853,19 @@ fn plantuml_code_block_renders_self_contained_output() {
     assert!(!html.contains("https://www.plantuml.com/plantuml/svg/"));
     assert!(html.contains("<svg") || html.contains("PlantUML render failed"));
     assert!(!html.contains("language-plantuml"));
+}
+
+#[test]
+fn plantuml_uses_a_stable_light_canvas_in_all_page_themes() {
+    let css = crate::core::export::html::styles::CSS;
+
+    assert!(css.contains(
+        ".plantuml-canvas {\n  min-width: max-content;\n  display: flex;\n  justify-content: center;\n  width: max-content;"
+    ));
+    assert!(css.contains(
+        "  padding: 0.75rem;\n  border: 1px solid #d0d7de;\n  border-radius: 0.5rem;\n  background: #ffffff;"
+    ));
+    assert!(!css.contains(".plantuml-canvas svg rect[fill='#E2E2F0']"));
 }
 
 #[test]

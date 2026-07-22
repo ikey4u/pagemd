@@ -250,6 +250,72 @@
     updateOutlineActive();
     return true;
   }
+  function relativeDocumentPath(panel) {
+    return panel ? panel.getAttribute("data-doc-path") || "" : "";
+  }
+  function documentForMarkdownLink(link) {
+    var href = link.getAttribute("href");
+    var currentPanel = document.querySelector("[data-doc-panel].is-active");
+    var currentPath = relativeDocumentPath(currentPanel);
+    if (
+      !href ||
+      !currentPath ||
+      href.charAt(0) === "#" ||
+      href.charAt(0) === "/" ||
+      href.indexOf("//") === 0 ||
+      /^[a-z][a-z0-9+.-]*:/i.test(href)
+    ) {
+      return null;
+    }
+    var slash = currentPath.lastIndexOf("/");
+    var basePath = slash === -1 ? "" : currentPath.slice(0, slash + 1);
+    var url;
+    try {
+      url = new URL(href, "https://pagemd.invalid/" + basePath);
+    } catch (_) {
+      return null;
+    }
+    if (url.origin !== "https://pagemd.invalid") {
+      return null;
+    }
+    var targetPath;
+    try {
+      targetPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    } catch (_) {
+      return null;
+    }
+    var targetPanel = null;
+    document.querySelectorAll("[data-doc-panel][data-doc-path]").forEach(function (panel) {
+      if (relativeDocumentPath(panel) === targetPath) {
+        targetPanel = panel;
+      }
+    });
+    if (!targetPanel) {
+      return null;
+    }
+    var heading = "";
+    if (url.hash) {
+      try {
+        heading = decodeURIComponent(url.hash.slice(1));
+      } catch (_) {
+        return null;
+      }
+    }
+    return { panel: targetPanel, heading: heading };
+  }
+  function followMarkdownLink(target) {
+    activatePanel(target.panel);
+    history.pushState(null, "", "#" + target.panel.id);
+    if (!target.heading) {
+      updateOutlineActive();
+      return;
+    }
+    var heading = target.panel.querySelector("#" + cssEscape(target.heading));
+    if (heading) {
+      heading.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    updateOutlineActive();
+  }
   function folderStorageKey(id) {
     return "folder:" + id;
   }
@@ -420,6 +486,27 @@
         markCopyButton(copyButton, ok);
       });
       return;
+    }
+
+    var markdownLink = event.target && event.target.closest
+      ? event.target.closest("a[href]")
+      : null;
+    if (
+      markdownLink &&
+      event.button === 0 &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !markdownLink.hasAttribute("download") &&
+      !markdownLink.hasAttribute("target")
+    ) {
+      var markdownTarget = documentForMarkdownLink(markdownLink);
+      if (markdownTarget) {
+        event.preventDefault();
+        followMarkdownLink(markdownTarget);
+        return;
+      }
     }
 
     var navLink = event.target && event.target.closest

@@ -122,6 +122,13 @@ fn build_nav_entries(
         .collect()
 }
 
+fn document_relative_path(input_paths: Option<&[PathBuf]>, index: usize) -> Option<String> {
+    let paths = input_paths?;
+    let path = paths.get(index)?;
+    let root = common_path_prefix(paths)?;
+    relativize_to_root(path, &root).map(|path| path.to_string_lossy().replace('\\', "/"))
+}
+
 fn section_panel_title(
     section: &RenderedSection,
     index: usize,
@@ -302,8 +309,11 @@ pub fn build_html_with_nav(
             .map(|(index, sec)| {
                 let active = if index == 0 { " is-active" } else { "" };
                 let panel_title = html_escape(&section_panel_title(sec, index, nav_labels));
+                let source_path = document_relative_path(input_paths, index)
+                    .map(|path| format!(" data-doc-path=\"{}\"", html_escape(&path)))
+                    .unwrap_or_default();
                 format!(
-                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel data-panel-title=\"{panel_title}\">\n{}</section>\n",
+                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel data-panel-title=\"{panel_title}\"{source_path}>\n{}</section>\n",
                     index + 1,
                     sec.html
                 )

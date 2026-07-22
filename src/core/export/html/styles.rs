@@ -351,11 +351,11 @@ html[data-theme="dark"] .doc-theme-icon-sun {
   display: none;
 }
 
-html[data-theme="dark"] .doc-settings-action-text {
+html[data-theme="dark"] [data-theme-toggle] .doc-settings-action-text {
   display: none;
 }
 
-html[data-theme="dark"] .doc-settings-action-text-light {
+html[data-theme="dark"] [data-theme-toggle] .doc-settings-action-text-light {
   display: inline;
 }
 
@@ -868,12 +868,6 @@ html.pagemd-lightbox-open {
   font-size: 0.82rem;
 }
 
-.doc-section + .doc-section {
-  margin-top: 4rem;
-  padding-top: 3rem;
-  border-top: 2px solid var(--color-border);
-}
-
 h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   line-height: 1.3;
@@ -882,8 +876,8 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--color-heading);
 }
 
-h1 { font-size: 2.25rem; margin-top: 0; border-bottom: 2px solid var(--color-border); padding-bottom: 0.5rem; }
-h2 { font-size: 1.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.35rem; }
+h1 { font-size: 2.25rem; margin-top: 0; }
+h2 { font-size: 1.5rem; }
 h3 { font-size: 1.25rem; }
 h4 { font-size: 1.1rem; }
 h5 { font-size: 1rem; }
@@ -1180,7 +1174,7 @@ img {
   margin: 0 auto;
 }
 
-/* Keep renderer-native fills/strokes. Forcing theme colors breaks state/sequence diagrams. */
+/* Keep renderer-native fills/strokes; diagram types have different SVG semantics. */
 
 .mermaid-error {
   color: var(--color-error-panel-text);
@@ -1208,22 +1202,17 @@ img {
   min-width: max-content;
   display: flex;
   justify-content: center;
-  padding: 0.25rem 0;
-  border-radius: 0;
-  background: transparent;
+  width: max-content;
+  margin: 0 auto;
+  padding: 0.75rem;
+  border: 1px solid #d0d7de;
+  border-radius: 0.5rem;
+  background: #ffffff;
 }
 
 .plantuml-canvas svg {
   max-width: 100%;
   height: auto;
-  background: transparent !important;
-}
-
-.plantuml-canvas svg rect[fill='#E2E2F0'],
-.plantuml-canvas svg polygon[fill='#E2E2F0'],
-.plantuml-canvas svg ellipse[fill='#E2E2F0'],
-.plantuml-canvas svg circle[fill='#E2E2F0'] {
-  fill: var(--color-diagram-fill) !important;
 }
 
 .plantuml-image {
@@ -1537,6 +1526,7 @@ input[type="checkbox"] {
   .doc-section + .doc-section {
     margin-top: 2rem;
     padding-top: 2rem;
+    border-top: 2px solid var(--color-border);
   }
   pre { white-space: pre-wrap; word-break: break-all; }
   a { color: var(--color-text); }
