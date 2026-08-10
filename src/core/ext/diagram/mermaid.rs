@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use merman::render::HeadlessRenderer;
+use merman::svg::HeadlessRenderer;
 use merman::MermaidConfig;
 
 use crate::core::util::html_escape;
