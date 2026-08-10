@@ -341,11 +341,18 @@
         }
 
         // One-by-one so a single layout error does not abort the rest.
+        // Yield between diagrams so theme toggles / large docs stay interactive.
         return blocks
           .reduce(function (chain, block) {
-            return chain.then(function () {
-              return renderBlock(block, myGen);
-            });
+            return chain
+              .then(function () {
+                return renderBlock(block, myGen);
+              })
+              .then(function () {
+                return new Promise(function (resolve) {
+                  window.setTimeout(resolve, 0);
+                });
+              });
           }, Promise.resolve())
           .then(function () {
             if (myGen !== renderGeneration) {

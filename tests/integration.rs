@@ -553,6 +553,15 @@ fn workspace_script_routes_relative_markdown_links_between_panels() {
 }
 
 #[test]
+fn theme_switch_does_not_animate_inherited_text_color() {
+    let css = pagemd::core::export::html::styles::CSS;
+    assert!(
+        !css.contains("transition: background-color 180ms ease, color 180ms ease"),
+        "body color transitions force style recalc across the whole tree on theme switch"
+    );
+}
+
+#[test]
 fn workspace_shell_locks_page_scroll() {
     let css = pagemd::core::export::html::styles::CSS;
     assert!(css.contains("html.pagemd-shell"));

@@ -161,7 +161,6 @@ body {
   line-height: 1.75;
   color: var(--color-text);
   background: var(--color-bg);
-  transition: background-color 180ms ease, color 180ms ease;
 }
 
 .math-inline svg,
@@ -703,7 +702,7 @@ html.pagemd-lightbox-open {
   font-size: 0.78rem;
   font-weight: 500;
   line-height: 1.25;
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 .doc-nav-label {
@@ -763,7 +762,7 @@ html.pagemd-lightbox-open {
   opacity: 0;
   padding: 0.22rem 0.34rem;
   text-overflow: clip;
-  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+  transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease;
   white-space: nowrap;
 }
 
@@ -1373,7 +1372,6 @@ img {
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
   border-radius: 2px;
-  transition: color 0.15s ease, background-color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
 .footnote-ref-link:hover,

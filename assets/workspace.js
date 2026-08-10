@@ -81,13 +81,20 @@
       toggle.classList.toggle("is-active", dark);
     }
     // Skip during workspace boot — mermaid-init owns the first paint.
-    // Re-render only when the user (or a real theme change) flips the theme.
+    // Defer diagram rebuild so the theme CSS paints first (large docs stay responsive).
     if (
       (!opts || !opts.skipMermaid) &&
       prev !== next &&
       typeof window.PageMDInitMermaid === "function"
     ) {
-      window.PageMDInitMermaid(null, { force: true });
+      var refreshMermaid = function () {
+        window.PageMDInitMermaid(null, { force: true });
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(refreshMermaid, { timeout: 500 });
+      } else {
+        window.setTimeout(refreshMermaid, 0);
+      }
     }
   }
 
