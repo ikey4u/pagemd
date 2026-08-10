@@ -291,7 +291,7 @@ async fn eval(
     let record_undo = req.record_undo.unwrap_or(false);
     if record_undo {
         let mut undo = state.undo.lock().await;
-        if let Err(err) = undo.push_before_mutate(&state.session, target).await {
+        if let Err(err) = undo.begin_record(&state.session, target).await {
             return tool_error(err);
         }
     }
@@ -302,7 +302,15 @@ async fn eval(
     };
     match eval_result {
         Ok(value) => {
-            let undo_depth = state.undo.lock().await.len();
+            let undo_depth = if record_undo {
+                let mut undo = state.undo.lock().await;
+                if let Err(err) = undo.commit_record(&state.session, target).await {
+                    return tool_error(err);
+                }
+                undo.len()
+            } else {
+                state.undo.lock().await.len()
+            };
             Json(json!({
                 "result": value,
                 "text": format_eval_result(&value),
@@ -311,7 +319,13 @@ async fn eval(
             }))
             .into_response()
         }
-        Err(err) => tool_error(err),
+        Err(err) => {
+            if record_undo {
+                let mut undo = state.undo.lock().await;
+                let _ = undo.cancel_record(&state.session, target).await;
+            }
+            tool_error(err)
+        }
     }
 }
 
@@ -334,16 +348,10 @@ async fn clean_dom(
     };
     let extra = req.extra_selectors.unwrap_or_default();
     let target = dom_target(&state);
-    let mut undo_skipped = false;
     {
         let mut undo = state.undo.lock().await;
-        if let Err(err) = undo.push_before_mutate(&state.session, target).await {
-            let msg = err.to_string();
-            if msg.contains("too slow") || msg.contains("too large") {
-                undo_skipped = true;
-            } else {
-                return tool_error(err);
-            }
+        if let Err(err) = undo.begin_record(&state.session, target).await {
+            return tool_error(err);
         }
     }
     let result = if target == DomTarget::Sandbox {
@@ -353,17 +361,24 @@ async fn clean_dom(
     };
     match result {
         Ok(value) => {
-            let undo_depth = state.undo.lock().await.len();
+            let mut undo = state.undo.lock().await;
+            if let Err(err) = undo.commit_record(&state.session, target).await {
+                return tool_error(err);
+            }
+            let undo_depth = undo.len();
             Json(json!({
                 "result": value,
                 "text": format_eval_result(&value),
                 "undo_depth": undo_depth,
                 "sandbox": target == DomTarget::Sandbox,
-                "undo_skipped": undo_skipped,
             }))
             .into_response()
         }
-        Err(err) => tool_error(err),
+        Err(err) => {
+            let mut undo = state.undo.lock().await;
+            let _ = undo.cancel_record(&state.session, target).await;
+            tool_error(err)
+        }
     }
 }
 
@@ -388,9 +403,6 @@ async fn goto(
     undo.reset();
     match state.session.navigate(&req.url).await {
         Ok(()) => {
-            if let Err(err) = undo.capture_baseline(&state.session, DomTarget::Live).await {
-                return tool_error(err);
-            }
             drop(undo);
             let _ = state.session_md.bind_to_page(&state.session).await;
             Json(json!({ "ok": true, "url": req.url })).into_response()
@@ -408,9 +420,6 @@ async fn reload(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Re
     undo.reset();
     match state.session.reload().await {
         Ok(()) => {
-            if let Err(err) = undo.capture_baseline(&state.session, DomTarget::Live).await {
-                return tool_error(err);
-            }
             drop(undo);
             let _ = state.session_md.bind_to_page(&state.session).await;
             Json(json!({ "ok": true })).into_response()

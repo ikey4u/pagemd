@@ -1,13 +1,126 @@
 use anyhow::{bail, Result};
-use serde_json::json;
+use serde_json::Value;
 
 use super::cdp::CdpSession;
-use super::sandbox;
 
-/// Body HTML larger than this cannot be snapshotted for undo (CDP round-trip cost).
-const MAX_UNDO_HTML_CHARS: usize = 1_500_000;
-/// Above this size, pulling full innerHTML over CDP is usually too slow (Seeking Alpha–class pages).
-const SOFT_UNDO_HTML_CHARS: usize = 350_000;
+/// Command-style undo: record DOM mutations in-page via MutationObserver and
+/// invert them. Never ships full-page HTML over CDP.
+const INSTALL_JS: &str = r#"(() => {
+  if (window.__PAGEMD_UNDO__ && window.__PAGEMD_UNDO__.__v === 2) {
+    return { ok: true, already: true };
+  }
+  const api = {
+    __v: 2,
+    maxDepth: 50,
+    stack: [],
+    recording: null,
+    applying: false,
+    begin(doc) {
+      if (!doc) throw new Error("undo begin: document required");
+      if (this.recording) throw new Error("undo transaction already open");
+      const records = [];
+      const self = this;
+      const observer = new MutationObserver((batch) => {
+        if (self.applying) return;
+        for (const m of batch) records.push(m);
+      });
+      observer.observe(doc.documentElement || doc, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeOldValue: true,
+        characterData: true,
+        characterDataOldValue: true,
+      });
+      this.recording = { observer, records };
+      return { ok: true, depth: this.stack.length };
+    },
+    commit() {
+      const rec = this.recording;
+      if (!rec) throw new Error("undo commit: no open transaction");
+      for (const m of rec.observer.takeRecords()) rec.records.push(m);
+      rec.observer.disconnect();
+      this.recording = null;
+      if (rec.records.length > 0) {
+        this.stack.push({ records: rec.records });
+        while (this.stack.length > this.maxDepth) this.stack.shift();
+      }
+      return { ok: true, depth: this.stack.length, recorded: rec.records.length };
+    },
+    cancel() {
+      const rec = this.recording;
+      if (!rec) return { ok: true, depth: this.stack.length, reverted: false };
+      for (const m of rec.observer.takeRecords()) rec.records.push(m);
+      rec.observer.disconnect();
+      this.recording = null;
+      if (rec.records.length > 0) {
+        this._applyInverse(rec.records);
+      }
+      return { ok: true, depth: this.stack.length, reverted: rec.records.length > 0 };
+    },
+    undoOne() {
+      if (this.recording) throw new Error("undo: finish open transaction first");
+      const entry = this.stack.pop();
+      if (!entry) return { changed: false, depth: 0 };
+      this._applyInverse(entry.records);
+      return { changed: true, depth: this.stack.length };
+    },
+    undoAll() {
+      if (this.recording) throw new Error("undo: finish open transaction first");
+      let n = 0;
+      while (this.stack.length > 0) {
+        const entry = this.stack.pop();
+        this._applyInverse(entry.records);
+        n++;
+      }
+      return { changed: n > 0, steps: n, depth: 0 };
+    },
+    reset() {
+      if (this.recording) {
+        this.recording.observer.disconnect();
+        this.recording = null;
+      }
+      this.stack = [];
+      return { ok: true, depth: 0 };
+    },
+    depth() {
+      return this.stack.length;
+    },
+    _applyInverse(records) {
+      this.applying = true;
+      try {
+        for (let i = records.length - 1; i >= 0; i--) {
+          const m = records[i];
+          if (m.type === "childList") {
+            for (const node of m.addedNodes) {
+              if (node.parentNode) node.parentNode.removeChild(node);
+            }
+            const parent = m.target;
+            const anchor = m.nextSibling;
+            for (const node of m.removedNodes) {
+              parent.insertBefore(node, anchor);
+            }
+          } else if (m.type === "attributes") {
+            const el = m.target;
+            const name = m.attributeName;
+            if (!name) continue;
+            if (m.oldValue === null) {
+              el.removeAttribute(name);
+            } else {
+              el.setAttribute(name, m.oldValue);
+            }
+          } else if (m.type === "characterData") {
+            m.target.data = m.oldValue == null ? "" : m.oldValue;
+          }
+        }
+      } finally {
+        this.applying = false;
+      }
+    },
+  };
+  window.__PAGEMD_UNDO__ = api;
+  return { ok: true, already: false };
+})()"#;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DomTarget {
@@ -16,177 +129,143 @@ pub enum DomTarget {
     Sandbox,
 }
 
-#[derive(Clone, Debug)]
-struct UndoEntry {
-    body_html: String,
-    url: String,
-}
-
+/// Thin Rust handle; mutation records and inverse ops live in the page.
 pub struct UndoStack {
-    baseline: Option<UndoEntry>,
-    entries: Vec<UndoEntry>,
+    depth: usize,
     max_depth: usize,
 }
 
 impl UndoStack {
     pub fn new(max_depth: usize) -> Self {
         Self {
-            baseline: None,
-            entries: Vec::new(),
-            max_depth,
+            depth: 0,
+            max_depth: max_depth.max(1),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.depth
     }
 
+    /// Drop local depth after navigation (page JS is gone).
     pub fn reset(&mut self) {
-        self.baseline = None;
-        self.entries.clear();
+        self.depth = 0;
     }
 
-    pub async fn capture_baseline(
-        &mut self,
-        session: &CdpSession,
-        target: DomTarget,
-    ) -> Result<()> {
-        if self.baseline.is_none() {
-            self.baseline = Some(capture_entry(session, target).await?);
-        }
+    /// Install in-page undo runtime and clear the command stack.
+    pub async fn bind(&mut self, session: &CdpSession, _target: DomTarget) -> Result<()> {
+        install(session).await?;
+        set_max_depth(session, self.max_depth).await?;
+        let value = call(session, "reset()").await?;
+        self.depth = depth_from(&value);
         Ok(())
     }
 
-    pub async fn push_before_mutate(
-        &mut self,
-        session: &CdpSession,
-        target: DomTarget,
-    ) -> Result<()> {
-        self.capture_baseline(session, target).await?;
-        let entry = capture_entry(session, target).await?;
-        self.entries.push(entry);
-        if self.entries.len() > self.max_depth {
-            self.entries.remove(0);
-        }
-        Ok(())
-    }
-
-    /// Fast size probe — avoids transferring megabytes of HTML when undo would be too slow.
-    pub async fn estimate_body_html_chars(
-        session: &CdpSession,
-        target: DomTarget,
-    ) -> Result<usize> {
-        let expr = match target {
-            DomTarget::Live => r#"(() => document.body?.innerHTML?.length ?? 0)()"#,
-            DomTarget::Sandbox => {
-                r#"(() => window.__PAGEMD_SANDBOX_DOC__?.body?.innerHTML?.length ?? 0)()"#
-            }
-        };
-        let value = session.evaluate(expr, false).await?;
-        Ok(value.as_u64().unwrap_or(0) as usize)
-    }
-
-    pub async fn undo_one(&mut self, session: &CdpSession, target: DomTarget) -> Result<bool> {
-        let Some(entry) = self.entries.pop() else {
-            return Ok(false);
-        };
-        restore_entry(session, &entry, target).await?;
-        Ok(true)
-    }
-
-    pub async fn undo_all(&mut self, session: &CdpSession, target: DomTarget) -> Result<bool> {
-        let Some(baseline) = self.baseline.clone() else {
-            return Ok(false);
-        };
-        restore_entry(session, &baseline, target).await?;
-        self.entries.clear();
-        Ok(true)
-    }
-}
-
-async fn capture_entry(session: &CdpSession, target: DomTarget) -> Result<UndoEntry> {
-    let est = UndoStack::estimate_body_html_chars(session, target).await?;
-    if est > MAX_UNDO_HTML_CHARS {
-        bail!(
-            "page body HTML is too large for undo snapshot (~{est} chars; max {MAX_UNDO_HTML_CHARS}). \
-             Use browser_eval with record_undo=false for read-only checks, or clean in smaller steps."
-        );
-    }
-    if est > SOFT_UNDO_HTML_CHARS {
-        bail!(
-            "page body HTML is ~{est} chars — undo snapshot over CDP would be too slow. \
-             Use browser_eval with record_undo=false for probes, or one browser_clean then smaller steps."
-        );
-    }
-
-    let (body_html, url) = match target {
-        DomTarget::Live => {
-            let value = session
-                .evaluate(
-                    r#"(() => ({
-  bodyHtml: document.body ? document.body.innerHTML : "",
-  url: location.href,
-}))()"#,
-                    false,
-                )
-                .await?;
-            (
-                value
-                    .get("bodyHtml")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
-                value
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
+    /// Start recording DOM mutations (command capture).
+    pub async fn begin_record(&mut self, session: &CdpSession, target: DomTarget) -> Result<()> {
+        install(session).await?;
+        set_max_depth(session, self.max_depth).await?;
+        let doc_expr = doc_expr(target);
+        let value = session
+            .evaluate(
+                &format!(
+                    r#"(() => {{
+  const doc = {doc_expr};
+  if (!doc) throw new Error("undo target document unavailable");
+  return window.__PAGEMD_UNDO__.begin(doc);
+}})()"#
+                ),
+                false,
             )
+            .await?;
+        if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            bail!("undo begin failed: {value}");
         }
-        DomTarget::Sandbox => sandbox::capture_undo_entry(session).await?,
-    };
-    let chars = body_html.chars().count();
-    if chars > MAX_UNDO_HTML_CHARS {
-        bail!(
-            "page body HTML is too large for undo snapshot ({chars} chars; max {MAX_UNDO_HTML_CHARS}). \
-             Use browser_eval with record_undo=false for read-only checks, or clean in smaller steps."
-        );
+        Ok(())
     }
 
-    Ok(UndoEntry { body_html, url })
+    /// Finish recording and push a command if anything changed.
+    pub async fn commit_record(&mut self, session: &CdpSession, _target: DomTarget) -> Result<()> {
+        let value = call(session, "commit()").await?;
+        self.depth = depth_from(&value);
+        Ok(())
+    }
+
+    /// Revert in-progress mutations without pushing (e.g. failed eval).
+    pub async fn cancel_record(&mut self, session: &CdpSession, _target: DomTarget) -> Result<()> {
+        let value = call(session, "cancel()").await?;
+        self.depth = depth_from(&value);
+        Ok(())
+    }
+
+    pub async fn undo_one(&mut self, session: &CdpSession, _target: DomTarget) -> Result<bool> {
+        install(session).await?;
+        let value = call(session, "undoOne()").await?;
+        self.depth = depth_from(&value);
+        Ok(value
+            .get("changed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
+    }
+
+    pub async fn undo_all(&mut self, session: &CdpSession, _target: DomTarget) -> Result<bool> {
+        install(session).await?;
+        let value = call(session, "undoAll()").await?;
+        self.depth = depth_from(&value);
+        Ok(value
+            .get("changed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
+    }
 }
 
-async fn restore_entry(session: &CdpSession, entry: &UndoEntry, target: DomTarget) -> Result<()> {
+fn doc_expr(target: DomTarget) -> &'static str {
     match target {
-        DomTarget::Sandbox => {
-            sandbox::restore_body_html(session, &entry.body_html).await?;
-            return Ok(());
-        }
-        DomTarget::Live => {
-            let current_url = session.current_url().await.unwrap_or_default();
-            if current_url != entry.url && !entry.url.is_empty() {
-                session.navigate(&entry.url).await?;
-            }
+        DomTarget::Live => "document",
+        DomTarget::Sandbox => "window.__PAGEMD_SANDBOX_DOC__",
+    }
+}
 
-            let html_json = json!(entry.body_html);
-            session
-                .evaluate(
-                    &format!(
-                        r#"(() => {{
-  const html = {html_json};
-  if (!document.body) {{
-    document.documentElement.innerHTML = "<head></head><body></body>";
-  }}
-  document.body.innerHTML = html;
+async fn install(session: &CdpSession) -> Result<()> {
+    session.evaluate(INSTALL_JS, false).await?;
+    Ok(())
+}
+
+async fn set_max_depth(session: &CdpSession, max_depth: usize) -> Result<()> {
+    session
+        .evaluate(
+            &format!(
+                r#"(() => {{
+  if (!window.__PAGEMD_UNDO__) return false;
+  window.__PAGEMD_UNDO__.maxDepth = {max_depth};
   return true;
 }})()"#
-                    ),
-                    false,
-                )
-                .await?;
-        }
-    }
+            ),
+            false,
+        )
+        .await?;
     Ok(())
+}
+
+async fn call(session: &CdpSession, method_call: &str) -> Result<Value> {
+    session
+        .evaluate(
+            &format!(
+                r#"(() => {{
+  if (!window.__PAGEMD_UNDO__) throw new Error("undo runtime not installed");
+  return window.__PAGEMD_UNDO__.{method_call};
+}})()"#
+            ),
+            false,
+        )
+        .await
+}
+
+fn depth_from(value: &Value) -> usize {
+    value
+        .get("depth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize
 }
 
 #[cfg(test)]
@@ -194,7 +273,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn max_undo_limit_is_documented() {
-        assert!(MAX_UNDO_HTML_CHARS >= 500_000);
+    fn stack_starts_empty() {
+        let s = UndoStack::new(50);
+        assert_eq!(s.len(), 0);
+    }
+
+    #[test]
+    fn reset_clears_local_depth() {
+        let mut s = UndoStack::new(10);
+        s.depth = 3;
+        s.reset();
+        assert_eq!(s.len(), 0);
+    }
+
+    #[test]
+    fn install_js_is_v2_command_runtime() {
+        assert!(INSTALL_JS.contains("__v === 2"));
+        assert!(INSTALL_JS.contains("MutationObserver"));
+        assert!(INSTALL_JS.contains("undoOne"));
+        assert!(!INSTALL_JS.contains("innerHTML"));
     }
 }

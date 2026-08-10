@@ -32,7 +32,7 @@ function stop(context) { /* return { shouldStop: boolean, reason?: string } */ }
 
 Hard rules:
 - **Do NOT** use `import` / `export`.
-- **`browser_eval`**: default **`record_undo: false`** for all read-only probes; set `true` only when replaying DOM mutations.
+- **`browser_eval`**: default **`record_undo: false`** for all read-only probes; set `true` only when replaying DOM mutations (records inverse ops in-page).
 - **Never** read `.pagemd/runtime.json`, curl the bridge, or kill/restart the pagemd REPL process. If MCP is slow, ask the user to Ctrl+C the agent turn and retry.
 - Hook names must be **`function clean()` / `function extract()`** declarations (not arrow assignments).
 - **`urlPattern`**: call `browser_get_url`, use `https://<host>/*` for site-wide scripts.
@@ -48,7 +48,7 @@ Hard rules:
 2. `browser_snap` — confirm page structure if needed.
 3. Draft the full script text in memory following the contract above.
 4. **Verify on the live tab before saving** (mandatory):
-   - `browser_undo` with `{ "all": true }` if you need a clean baseline, then replay your logic; OR
+   - `browser_undo` with `{ "all": true }` if you need to rewind recorded mutations, then replay your logic; OR
    - use `browser_eval` with **`"record_undo": false`** to run read-only tests (e.g. `document.querySelector("h1")?.innerText`)
    - for mutating replay use `record_undo: true` sparingly; prefer drafting from session work already in `/pmd`
    - Optionally `browser_save_markdown` + `browser_get_session_markdown` to confirm extraction quality matches what the user approved in `/pmd`.

@@ -77,7 +77,7 @@ pub async fn begin(
     session_md.capture_original_baseline(session, None).await?;
     let info = session.evaluate(INIT_JS, false).await?;
     set_enabled(sandbox_enabled, true);
-    undo.capture_baseline(session, DomTarget::Sandbox).await?;
+    undo.bind(session, DomTarget::Sandbox).await?;
     Ok(info)
 }
 
@@ -115,51 +115,6 @@ pub async fn markdown_text(session: &CdpSession, max_chars: usize) -> Result<Str
         );
     }
     Ok(super::tools::truncate(md, max_chars))
-}
-
-pub async fn capture_undo_entry(session: &CdpSession) -> Result<(String, String)> {
-    let value = session
-        .evaluate(
-            r#"(() => ({
-  bodyHtml: (window.__PAGEMD_SANDBOX_DOC__?.body?.innerHTML) || "",
-  url: location.href,
-}))()"#,
-            false,
-        )
-        .await?;
-    let body_html = value
-        .get("bodyHtml")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
-    let url = value
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
-    Ok((body_html, url))
-}
-
-pub async fn restore_body_html(session: &CdpSession, body_html: &str) -> Result<()> {
-    let html_json = serde_json::to_string(body_html)?;
-    session
-        .evaluate(
-            &format!(
-                r#"(() => {{
-  const doc = window.__PAGEMD_SANDBOX_DOC__;
-  if (!doc) throw new Error("sandbox not active");
-  if (!doc.body) {{
-    const b = doc.createElement("body");
-    doc.documentElement.appendChild(b);
-  }}
-  doc.body.innerHTML = {html_json};
-  return true;
-}})()"#
-            ),
-            false,
-        )
-        .await?;
-    Ok(())
 }
 
 pub async fn run_clean(session: &CdpSession, extra_selectors: &[String]) -> Result<Value> {

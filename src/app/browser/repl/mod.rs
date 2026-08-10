@@ -62,10 +62,6 @@ pub async fn run(
         let current = session.current_url().await.unwrap_or_default();
         if current.is_empty() || current == "about:blank" {
             session.navigate(url).await?;
-            undo.lock()
-                .await
-                .capture_baseline(&session, DomTarget::Live)
-                .await?;
         }
     }
 
@@ -223,9 +219,6 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             ctx.sandbox_enabled.store(false, Ordering::SeqCst);
             ctx.undo.reset();
             ctx.session.navigate(rest).await?;
-            ctx.undo
-                .capture_baseline(ctx.session, DomTarget::Live)
-                .await?;
             ctx.session_md.bind_to_page(ctx.session).await?;
             println!("navigated");
             return Ok(SlashOutcome::Continue {
@@ -236,9 +229,6 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             ctx.sandbox_enabled.store(false, Ordering::SeqCst);
             ctx.undo.reset();
             ctx.session.reload().await?;
-            ctx.undo
-                .capture_baseline(ctx.session, DomTarget::Live)
-                .await?;
             ctx.session_md.bind_to_page(ctx.session).await?;
             println!("reloaded");
             return Ok(SlashOutcome::Continue {
@@ -246,9 +236,6 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             });
         }
         "/back" => {
-            ctx.undo
-                .push_before_mutate(ctx.session, repl_dom_target(ctx.sandbox_enabled))
-                .await?;
             ctx.session.evaluate("history.back()", false).await?;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             ctx.sandbox_enabled.store(false, Ordering::SeqCst);
@@ -260,9 +247,6 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             });
         }
         "/forward" => {
-            ctx.undo
-                .push_before_mutate(ctx.session, repl_dom_target(ctx.sandbox_enabled))
-                .await?;
             ctx.session.evaluate("history.forward()", false).await?;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             ctx.sandbox_enabled.store(false, Ordering::SeqCst);
@@ -315,7 +299,7 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             }
             let target = repl_dom_target(ctx.sandbox_enabled);
             if !no_undo {
-                ctx.undo.push_before_mutate(ctx.session, target).await?;
+                ctx.undo.begin_record(ctx.session, target).await?;
             }
             let eval_result = if target == DomTarget::Sandbox {
                 sandbox::eval_expression(ctx.session, &expr).await
@@ -323,10 +307,15 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                 ctx.session.evaluate(&expr, false).await
             };
             match eval_result {
-                Ok(value) => print_eval_result(&value),
+                Ok(value) => {
+                    if !no_undo {
+                        ctx.undo.commit_record(ctx.session, target).await?;
+                    }
+                    print_eval_result(&value);
+                }
                 Err(err) => {
                     if !no_undo {
-                        let _ = ctx.undo.undo_one(ctx.session, target).await;
+                        let _ = ctx.undo.cancel_record(ctx.session, target).await;
                     }
                     eprintln!("eval error: {err:#}");
                 }
@@ -699,9 +688,9 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
         println!("  /manual  /ai          Disable / enable natural-language forwarding");
         println!("  /provider             Show AI backend");
     }
-    println!("  /eval [--no-undo] <js>  Run JavaScript (use --no-undo on large pages; errors stay in REPL)");
+    println!("  /eval [--no-undo] <js>  Run JavaScript (records DOM mutations for /undo; --no-undo for probes)");
     println!("  /undo                 Undo last mutating step");
-    println!("  /undo all             Restore baseline DOM for this session");
+    println!("  /undo all             Undo all recorded DOM mutations");
     println!("  /html [-o file]       Dump HTML (terminal preview; use -o for full output)");
     println!("  /md [-o file]         Convert body HTML to Markdown (preview; use -o for full)");
     println!("  /pmd [--live] [--original] [open]  Session or original Markdown preview");

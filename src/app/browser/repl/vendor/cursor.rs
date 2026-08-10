@@ -30,9 +30,9 @@ During **`/pretty`**, a **sandbox** is active: `browser_clean` / `browser_eval` 
 | `browser_save_markdown` | Sandbox/live DOM → extract Markdown → **save session file** |
 | `browser_get_session_markdown` | Read saved cleaned session Markdown |
 | `browser_get_original_markdown` | Read unmodified page baseline (before cleanup) |
-| `browser_eval` | Run JS; **default `record_undo: false`** (fast probes). Set `true` only when mutating DOM |
+| `browser_eval` | Run JS; **default `record_undo: false`** (fast probes). Set `true` only when mutating DOM (in-page mutation recording) |
 | `browser_goto` / `browser_reload` | Navigation (disables sandbox) |
-| `browser_undo` | Revert last sandbox/live mutation (`all: true` restores baseline) |
+| `browser_undo` | Revert last sandbox/live mutation (`all: true` undoes all recorded steps) |
 | `browser_get_url` / `browser_get_title` | Current tab metadata |
 | `browser_save_script` | Save validated `.pagemd.js` to REPL cwd |
 
@@ -42,7 +42,7 @@ During **`/pretty`**, a **sandbox** is active: `browser_clean` / `browser_eval` 
 
 Workflow: `browser_snap` → **`browser_clean`** (or one targeted `browser_eval` with undo) → **`browser_save_markdown`** → **`browser_get_session_markdown`** → iterate. User previews with **`/pmd`** (cleaned) and **`/pmd --original`** (baseline).
 
-For read-only DOM checks use `browser_eval` with `"record_undo": false` — do not snapshot the whole page for probes like `document.querySelector(...)`.
+For read-only DOM checks use `browser_eval` with `"record_undo": false` — do not open an undo transaction for probes like `document.querySelector(...)`.
 
 When the user is satisfied, they run **`/export`** — verify `clean()`/`extract()` on the live tab, then **`browser_save_script`**. Do **not** save an unverified script.
 

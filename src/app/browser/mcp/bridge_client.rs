@@ -165,12 +165,12 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "browser_eval",
-            "Run JavaScript in sandbox iframe when active, else live page MAIN world. Default record_undo=false (fast). Set record_undo=true only when mutating DOM.",
+            "Run JavaScript in sandbox iframe when active, else live page MAIN world. Default record_undo=false (fast probes). Set record_undo=true when mutating DOM to enable /undo via in-page mutation recording.",
             json!({
                 "type": "object",
                 "properties": {
                     "expression": { "type": "string", "description": "JavaScript expression to evaluate" },
-                    "record_undo": { "type": "boolean", "description": "Snapshot before eval for /undo (default false). Set true only when mutating DOM — slow on large pages." }
+                    "record_undo": { "type": "boolean", "description": "Record DOM mutations for /undo (default false). Set true only when mutating DOM." }
                 },
                 "required": ["expression"],
                 "additionalProperties": false
@@ -190,16 +190,16 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "browser_reload",
-            "Reload the current page and reset undo baseline.",
+            "Reload the current page and clear the undo stack.",
             json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
         tool(
             "browser_undo",
-            "Undo the last DOM mutation in sandbox or live DOM, or restore session baseline when all=true.",
+            "Undo the last recorded DOM mutation, or all mutations when all=true.",
             json!({
                 "type": "object",
                 "properties": {
-                    "all": { "type": "boolean", "description": "Restore baseline DOM for this session" }
+                    "all": { "type": "boolean", "description": "Undo all recorded DOM mutations in this session" }
                 },
                 "additionalProperties": false
             }),
