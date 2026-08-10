@@ -348,6 +348,11 @@ pub fn build_html_with_nav(
     } else {
         "container"
     };
+    let shell_attr = if use_outline_workspace {
+        " class=\"pagemd-shell\""
+    } else {
+        ""
+    };
 
     let diagram_script = if allow_scripts
         && body_sections
@@ -416,7 +421,7 @@ pub fn build_html_with_nav(
 
     format!(
         r#"<!DOCTYPE html>
-<html lang="zh-CN"{theme_attr}>
+<html lang="zh-CN"{shell_attr}{theme_attr}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -437,6 +442,7 @@ pub fn build_html_with_nav(
 {footnote_script}{lightbox_script}
 </body>
 </html>"#,
+        shell_attr = shell_attr,
         theme_attr = theme_attr,
         theme_script = theme_script,
         title = html_escape(title),

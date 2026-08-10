@@ -148,6 +148,13 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/* App shell: only sidebar / main / outline scroll — not the page itself. */
+html.pagemd-shell,
+html.pagemd-shell body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: 1rem;
@@ -176,6 +183,7 @@ html[data-theme="dark"] .math-display svg {
 .container-with-sidebar {
   max-width: none;
   padding: 0;
+  height: 100%;
 }
 
 .doc-workspace {
@@ -185,8 +193,8 @@ html[data-theme="dark"] .math-display svg {
   --doc-chrome-bg: var(--color-bg);
   --doc-chrome-border: var(--color-border);
   --doc-chrome-muted: var(--color-muted);
-  height: 100vh;
-  max-height: 100vh;
+  height: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -1465,11 +1473,17 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 640px) {
+  html.pagemd-shell,
+  html.pagemd-shell body {
+    height: auto;
+    overflow: visible;
+  }
   .container {
     padding: 1.5rem 1rem 3rem;
   }
   .container-with-sidebar {
     max-width: 100%;
+    height: auto;
   }
   .doc-workspace {
     height: auto;

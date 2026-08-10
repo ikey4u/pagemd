@@ -392,6 +392,7 @@ fn single_file_html_includes_outline_workspace() {
 
     assert!(html.contains("doc-workspace-single"));
     assert!(html.contains("data-doc-workspace"));
+    assert!(html.contains("class=\"pagemd-shell\""));
     assert!(html.contains("doc-topbar"));
     assert!(html.contains("data-doc-title"));
     assert!(html.contains("data-theme-toggle"));
@@ -552,8 +553,16 @@ fn workspace_script_routes_relative_markdown_links_between_panels() {
 }
 
 #[test]
+fn workspace_shell_locks_page_scroll() {
+    let css = pagemd::core::export::html::styles::CSS;
+    assert!(css.contains("html.pagemd-shell"));
+    assert!(css.contains("html.pagemd-shell body"));
+    assert!(css.contains("overflow: hidden"));
+}
+
+#[test]
 fn workspace_document_separators_are_print_only() {
-    let css = crate::core::export::html::styles::CSS;
+    let css = pagemd::core::export::html::styles::CSS;
     let print_start = css.find("@media print").unwrap();
     let separator = ".doc-section + .doc-section";
 
@@ -563,7 +572,7 @@ fn workspace_document_separators_are_print_only() {
 
 #[test]
 fn dark_theme_only_swaps_the_theme_toggle_label() {
-    let css = crate::core::export::html::styles::CSS;
+    let css = pagemd::core::export::html::styles::CSS;
 
     assert!(!css.contains("html[data-theme=\"dark\"] .doc-settings-action-text {"));
     assert!(
@@ -576,7 +585,7 @@ fn dark_theme_only_swaps_the_theme_toggle_label() {
 
 #[test]
 fn headings_do_not_render_as_section_dividers() {
-    let css = crate::core::export::html::styles::CSS;
+    let css = pagemd::core::export::html::styles::CSS;
 
     assert!(css.contains("h1 { font-size: 2.25rem; margin-top: 0; }"));
     assert!(css.contains("h2 { font-size: 1.5rem; }"));
@@ -767,7 +776,7 @@ fn client_mermaid_uses_native_light_and_dark_themes() {
 
 #[test]
 fn mermaid_wrapper_preserves_renderer_native_shapes() {
-    let css = crate::core::export::html::styles::CSS;
+    let css = pagemd::core::export::html::styles::CSS;
 
     assert!(css.contains(".mermaid-display {\n  margin: 1.75rem 0;"));
     assert!(css.contains(
@@ -857,7 +866,7 @@ fn plantuml_code_block_renders_self_contained_output() {
 
 #[test]
 fn plantuml_uses_a_stable_light_canvas_in_all_page_themes() {
-    let css = crate::core::export::html::styles::CSS;
+    let css = pagemd::core::export::html::styles::CSS;
 
     assert!(css.contains(
         ".plantuml-canvas {\n  min-width: max-content;\n  display: flex;\n  justify-content: center;\n  width: max-content;"
@@ -1072,4 +1081,3 @@ fn default_export_keeps_workspace_chrome_for_headings() {
     assert!(html.contains("doc-topbar"));
     assert!(html.contains("data-pagemd-workspace"));
 }
-
