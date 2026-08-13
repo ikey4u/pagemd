@@ -107,5 +107,71 @@ async fn ensure_non_empty_page(session: &CdpSession, html: &str, label: &str) ->
 }
 
 pub fn html_to_markdown(html: &str) -> Result<String> {
-    htmd::convert(html).map_err(|e| anyhow::anyhow!("html to markdown: {e}"))
+    html_to_markdown_rs::convert(html, None)
+        .map(|md| cleanup_markdown(&md))
+        .map_err(|e| anyhow::anyhow!("html to markdown: {e}"))
+}
+
+/// Strip BOM / zero-width chars common in CMS HTML (e.g. Tencent Cloud docs).
+fn cleanup_markdown(md: &str) -> String {
+    md.chars()
+        .filter(|c| !matches!(c, '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}'))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_td_is_header_tables_to_markdown() {
+        // Tencent Cloud docs use <td class="is-header"> instead of <th>/<thead>.
+        let html = r#"
+<table class="readonly">
+  <colgroup><col width="14%"/><col width="17%"/><col width="38%"/></colgroup>
+  <tbody>
+    <tr>
+      <td class="is-header"><div><span>动态分类</span></div></td>
+      <td class="is-header"><div><span>动态名称</span></div></td>
+      <td class="is-header"><div><span>相关文档</span></div></td>
+    </tr>
+    <tr>
+      <td><div><span>沙箱实例</span></div></td>
+      <td><div><span>Token 独立获取</span></div></td>
+      <td><div><a href="/document/product/1814/132406">﻿沙箱访问 Token﻿</a></div></td>
+    </tr>
+  </tbody>
+</table>
+"#;
+        let md = html_to_markdown(html).unwrap();
+        assert!(
+            md.contains("| 动态分类 | 动态名称 | 相关文档 |"),
+            "expected markdown header row, got:\n{md}"
+        );
+        assert!(md.contains("| --- |"), "expected separator row, got:\n{md}");
+        assert!(
+            md.contains("| 沙箱实例 | Token 独立获取 |"),
+            "expected data row, got:\n{md}"
+        );
+        assert!(
+            md.contains("[沙箱访问 Token](/document/product/1814/132406)"),
+            "expected cleaned link without BOM, got:\n{md}"
+        );
+        assert!(!md.contains('\u{feff}'));
+    }
+
+    #[test]
+    fn converts_classic_th_tables() {
+        let html = r#"
+<table>
+  <thead><tr><th>A</th><th>B</th></tr></thead>
+  <tbody><tr><td>1</td><td>2</td></tr></tbody>
+</table>
+"#;
+        let md = html_to_markdown(html).unwrap();
+        assert!(md.contains("| A | B |"), "{md}");
+        assert!(md.contains("| 1 | 2 |"), "{md}");
+    }
 }
