@@ -82,18 +82,21 @@
               <p class="docs-hint">Use <b>Load .pagemd.js</b> to import scripts exported from PageMD Browser. Hooks appear in the Clean / Extract / Navigate / Stop tabs as editable <code>function</code> declarations.</p>
               <pre class="docs-code">const urlPattern = "https://example.com/*";
 
-const NOISE = ["nav", "footer"];
+const defaultParams = {
+  noise: ["nav", "footer"],
+  contentSelector: "article",
+};
 
 function clean() {
   let removed = 0;
-  NOISE.forEach((sel) =&gt;
+  (params.noise || []).forEach((sel) =&gt;
     document.querySelectorAll(sel).forEach((el) =&gt; { el.remove(); removed++; })
   );
   return { removed };
 }
 
 function extract() {
-  const el = document.querySelector("article");
+  const el = document.querySelector(params.contentSelector || "article");
   if (!el) return null;
   return { title: document.title, html: el.innerHTML };
 }</pre>
@@ -148,13 +151,13 @@ function extract() {
 
             <div class="docs-section">
               <h4 class="docs-title">Stop <span class="docs-optional">optional</span></h4>
-              <p class="docs-hint">Decides when to stop batch crawling. Receives <code>context</code> with <code>currentUrl</code>, <code>pageIndex</code>, <code>collectedUrls[]</code>, <code>collectedTitles[]</code>.<br>Returns <code>{ shouldStop: boolean, reason?: string }</code></p>
+              <p class="docs-hint">Decides when to stop batch crawling <b>after</b> extracting the current page. Receives <code>context</code> with <code>currentUrl</code>, <code>pageIndex</code>, <code>collectedUrls[]</code> (includes current), <code>collectedTitles[]</code>, <code>params</code>.<br>Returns <code>{ shouldStop: boolean, reason?: string }</code></p>
               <pre class="docs-code">(function(context) {
-  if (context.currentUrl.includes('example.com'))
+  if (context.currentUrl.includes('/last'))
     return { shouldStop: true, reason: 'Done' };
-  if (context.collectedUrls.includes(
-    context.currentUrl
-  ))
+  // collectedUrls includes current — check prior pages for loops
+  const prior = context.collectedUrls.slice(0, -1);
+  if (prior.includes(context.currentUrl))
     return { shouldStop: true, reason: 'Loop' };
   return { shouldStop: false };
 })()</pre>

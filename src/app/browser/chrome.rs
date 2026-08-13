@@ -8,7 +8,7 @@ use reqwest::blocking::Client;
 use serde_json::Value;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use super::cli::BrowserArgs;
+use super::cli::ChromeLaunch;
 
 pub struct ChromeProcess {
     child: Option<Child>,
@@ -115,7 +115,7 @@ fn signal_terminate(pid: u32) {
 #[cfg(not(unix))]
 fn signal_terminate(_pid: u32) {}
 
-pub fn resolve_profile_dir(args: &BrowserArgs) -> Result<PathBuf> {
+pub fn resolve_profile_dir(args: &ChromeLaunch) -> Result<PathBuf> {
     if let Some(dir) = &args.user_data_dir {
         return Ok(dir.clone());
     }
@@ -178,7 +178,7 @@ pub fn find_chrome(explicit: Option<&Path>) -> Result<PathBuf> {
     bail!("Could not find Chrome. Install Chrome or pass --chrome-path /path/to/chrome");
 }
 
-pub fn spawn_chrome(args: &BrowserArgs) -> Result<ChromeProcess> {
+pub fn spawn_chrome(args: &ChromeLaunch) -> Result<ChromeProcess> {
     let chrome = find_chrome(args.chrome_path.as_deref())?;
     let profile = resolve_profile_dir(args)?;
 
@@ -245,7 +245,7 @@ pub fn wait_for_cdp(port: u16, timeout: Duration) -> Result<()> {
     bail!("Timed out waiting for Chrome CDP on port {port}");
 }
 
-pub fn ensure_cdp(args: &BrowserArgs) -> Result<Option<ChromeProcess>> {
+pub fn ensure_cdp(args: &ChromeLaunch) -> Result<Option<ChromeProcess>> {
     if args.connect {
         wait_for_cdp(args.port, Duration::from_secs(5))?;
         return Ok(None);
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn ephemeral_profile_is_under_cache() {
-        let args = BrowserArgs {
+        let args = ChromeLaunch {
             url: None,
             port: 9222,
             chrome_path: None,
@@ -267,9 +267,6 @@ mod tests {
             clean: true,
             connect: false,
             headless: true,
-            provider: "auto".into(),
-            no_ai: false,
-            prompt: ">".into(),
         };
         let dir = resolve_profile_dir(&args).unwrap();
         assert!(dir.to_string_lossy().contains("ephemeral-"));

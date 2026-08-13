@@ -28,7 +28,7 @@ Usage:
   pagemd -d src/ --exclude drafts/** node_modules
 
 Use `pagemd view --help` for live preview with hot reload.
-Use `pagemd browser --help` for the Chrome REPL workflow.
+Use `pagemd browser --help` for Chrome workflows (`dev` REPL, `script` runner).
 
 Supported features
 ─────────────────────────────────

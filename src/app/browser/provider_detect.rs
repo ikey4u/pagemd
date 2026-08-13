@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 
-use super::cli::BrowserArgs;
+use super::cli::BrowserDevArgs;
 use super::repl::vendor::{detect_cursor, spawn_cursor, CursorRelay};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9,7 +9,7 @@ pub enum AiMode {
     Cursor,
 }
 
-pub fn resolve_ai_mode(args: &BrowserArgs) -> Result<AiMode> {
+pub fn resolve_ai_mode(args: &BrowserDevArgs) -> Result<AiMode> {
     if args.no_ai {
         return Ok(AiMode::Off);
     }
@@ -34,7 +34,7 @@ pub fn resolve_ai_mode(args: &BrowserArgs) -> Result<AiMode> {
     }
 }
 
-pub fn spawn_ai(args: &BrowserArgs, workspace: &std::path::Path) -> Result<Option<CursorRelay>> {
+pub fn spawn_ai(args: &BrowserDevArgs, workspace: &std::path::Path) -> Result<Option<CursorRelay>> {
     match resolve_ai_mode(args)? {
         AiMode::Off => Ok(None),
         AiMode::Cursor => {

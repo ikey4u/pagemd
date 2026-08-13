@@ -10,6 +10,8 @@ export interface PagmdScript {
   source: string;
 }
 
+export type ScriptParams = Record<string, unknown>;
+
 export function parsePagmdScript(source: string): PagmdScript {
   const trimmed = source.trim();
   if (!trimmed) {
@@ -36,6 +38,7 @@ export function compileHookForRun(
   editorCode: string,
   hookType: HookType,
   script: PagmdScript | null,
+  params: ScriptParams = {},
 ): string {
   const code = editorCode.trim();
   if (!code) return code;
@@ -49,7 +52,7 @@ export function compileHookForRun(
       navigate: hookType === 'navigate' ? code : script.navigate,
       stop: hookType === 'stop' ? code : script.stop,
     };
-    return compilePagmdBundle(merged, hookType);
+    return compilePagmdBundle(merged, hookType, params);
   }
 
   if (/^function\s+\w+\s*\(/.test(code)) {
@@ -63,6 +66,7 @@ export function compileHookForRun(
         source: code,
       },
       hookType,
+      params,
     );
   }
 
@@ -72,7 +76,11 @@ export function compileHookForRun(
   return `(function() { ${code} })()`;
 }
 
-function compilePagmdBundle(script: PagmdScript, hookType: HookType): string {
+function compilePagmdBundle(
+  script: PagmdScript,
+  hookType: HookType,
+  params: ScriptParams = {},
+): string {
   const defs = [
     script.clean,
     script.extract,
@@ -81,7 +89,9 @@ function compilePagmdBundle(script: PagmdScript, hookType: HookType): string {
   ].filter(Boolean) as string[];
 
   const preamble = extractPreamble(script.source);
-  const blocks = [preamble, ...defs].filter((block) => block.trim().length > 0);
+  const blocks = [preamble, paramsPrelude(params), ...defs].filter(
+    (block) => block.trim().length > 0,
+  );
 
   let invoke: string;
   switch (hookType) {
@@ -99,7 +109,10 @@ function compilePagmdBundle(script: PagmdScript, hookType: HookType): string {
       invoke = 'return typeof navigate === "function" ? navigate() : { success: false };';
       break;
     case 'stop':
-      invoke = 'return typeof stop === "function" ? stop(context) : { shouldStop: false };';
+      invoke = [
+        'const __ctx = Object.assign({}, context, { params });',
+        'return typeof stop === "function" ? stop(__ctx) : { shouldStop: false };',
+      ].join('\n');
       break;
   }
 
@@ -108,6 +121,19 @@ function compilePagmdBundle(script: PagmdScript, hookType: HookType): string {
     return `(function(context) {\n${body}\n})`;
   }
   return `(function() {\n${body}\n})()`;
+}
+
+function paramsPrelude(params: ScriptParams): string {
+  const json = JSON.stringify(params ?? {});
+  return [
+    `const __pagemdCliParams = ${json};`,
+    'const params = Object.assign(',
+    '  {},',
+    '  (typeof defaultParams !== "undefined" && defaultParams && typeof defaultParams === "object")',
+    '    ? defaultParams : {},',
+    '  __pagemdCliParams',
+    ');',
+  ].join('\n');
 }
 
 /** Shared helpers / constants outside hook declarations (included when hooks run). */

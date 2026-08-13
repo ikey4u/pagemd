@@ -14,16 +14,18 @@ let html = render_to_html("# Hello", &RenderOptions::default())?;
 
 Browser extension documentation is available at `extension/README.md`.
 
-## Browser REPL
+## Browser
 
-`pagemd browser` starts an interactive workflow for turning live web pages into Markdown and reusable extraction scripts. It launches (or connects to) Chrome over the Chrome DevTools Protocol, opens a slash-command REPL, and optionally wires in Cursor so the agent can drive the page through MCP tools.
+`pagemd browser` drives Chrome over the Chrome DevTools Protocol. It has two subcommands:
 
-Typical usage:
+### `dev` — interactive REPL
+
+Author and tune extraction scripts with slash commands and optional Cursor agent tools.
 
 ```bash
-pagemd browser --url https://example.com/article
-pagemd browser --connect --port 9222    # attach to an existing Chrome
-pagemd browser --clean --url https://example.com   # ephemeral profile
+pagemd browser dev --url https://example.com/article
+pagemd browser dev --connect --port 9222    # attach to an existing Chrome
+pagemd browser dev --clean --url https://example.com   # ephemeral profile
 ```
 
 At a high level:
@@ -32,11 +34,32 @@ At a high level:
 - **Inspect & extract** — snapshot page structure (`/snap`), dump HTML or Markdown (`/html`, `/md`).
 - **AI-assisted cleanup** — `/pretty` runs Cursor against a hidden sandbox copy of the page so the visible tab stays unchanged for comparison; cleaned output is saved per URL under `.pagemd/sessions/`.
 - **Preview** — `/pmd` opens a live PageMD preview of the cleaned session Markdown; `/pmd --original` shows the unmodified baseline for side-by-side comparison.
+- **Run scripts** — `/run file.pagemd.js` executes a validated script against the live tab.
 - **Export scripts** — `/export` asks Cursor to save a validated `.pagemd.js` file (with `urlPattern`, `clean()`, `extract()`, and optional helpers) that you can load in the Chrome extension.
 
-When Cursor is enabled, the REPL registers a local MCP bridge (`browser_snap`, `browser_clean`, `browser_eval`, `browser_save_markdown`, …). Use `/manual` and `/ai` to toggle whether free-form input is forwarded to the agent. See `pagemd browser --help` for flags such as `--no-ai`, `--port`, and profile options.
+When Cursor is enabled, the REPL registers a local MCP bridge (`browser_snap`, `browser_clean`, `browser_eval`, `browser_save_markdown`, …). Use `/manual` and `/ai` to toggle whether free-form input is forwarded to the agent. See `pagemd browser dev --help` for flags such as `--no-ai`, `--port`, and profile options.
 
-For day-to-day page extraction in the browser UI (Clean / Extract / Navigate / Stop tabs), use the Chrome extension documented in `extension/README.md`. The browser REPL is the authoring and tuning environment; the extension is the portable runtime for saved `.pagemd.js` scripts.
+### `script` — one-shot runner
+
+Run a `.pagemd.js` file from the CLI (no REPL): open Chrome, navigate to `--url`, loop clean/extract/navigate/stop, write Markdown, exit.
+
+Scripts may declare `const defaultParams = { … }` and read `params` in hooks. Override from the command line with `--param KEY=VALUE` or `--params '{…}'`. Use `--usage` to dump the script's params without launching Chrome.
+
+```bash
+pagemd browser script meeting-docs.pagemd.js --usage
+
+pagemd browser script meeting-docs.pagemd.js \
+  --url https://cloud.tencent.com/document/product/1095/83658 \
+  -o meeting-docs \
+  --param stopUrl=https://cloud.tencent.com/document/product/1095/94313
+
+pagemd browser script site.pagemd.js --url https://example.com/a --headless
+```
+
+Pages are written as `001-….md`, `002-….md`, … under the output directory (default `<script-stem>-run/`). Pass `-o out.md` only if you want one combined Markdown file.
+See `extension/README.md` for the `.pagemd.js` contract and a full worked example.
+
+For day-to-day page extraction in the browser UI (Clean / Extract / Navigate / Stop tabs), use the Chrome extension documented in `extension/README.md`. The `dev` REPL is the authoring and tuning environment; `script` and the extension are the portable runtimes for saved `.pagemd.js` scripts.
 
 ## Features
 

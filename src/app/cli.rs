@@ -45,16 +45,18 @@ enum Commands {
     )]
     View(ViewArgs),
     #[command(
-        about = "Interactive browser REPL via Chrome DevTools Protocol",
-        long_about = "Launch (or connect to) Chrome with a dedicated profile and drive the page\n\
-                      from a slash-command REPL (/goto, /eval, /undo, /snap, /md, …).\n\n\
-                      Usage:\n  \
-                      pagemd browser\n  \
-                      pagemd browser --url https://example.com\n  \
-                      pagemd browser --connect --port 9222\n  \
-                      pagemd browser --clean --url https://example.com"
+        about = "Chrome workflows: interactive REPL (dev) or one-shot .pagemd.js runner (script)",
+        long_about = "Two modes:\n\n\
+                      Interactive authoring REPL:\n  \
+                      pagemd browser dev --url https://example.com\n  \
+                      pagemd browser dev --connect --port 9222\n  \
+                      pagemd browser dev --clean --url https://example.com\n\n\
+                      One-shot script run (no REPL):\n  \
+                      pagemd browser script site.pagemd.js --url https://example.com/docs\n  \
+                      pagemd browser script site.pagemd.js --url https://example.com/a -o out.md"
     )]
-    Browser(browser::cli::BrowserArgs),
+    #[command(subcommand)]
+    Browser(browser::cli::BrowserCommand),
     #[command(
         name = "browser-mcp",
         hide = true,

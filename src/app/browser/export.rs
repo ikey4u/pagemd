@@ -10,24 +10,33 @@ The extension parses your file, shows each hook in the **Clean / Extract / Navig
 ```javascript
 const urlPattern = "https://example.com/*";  // whole-site: https://host/* ; path: https://host/docs/*
 
-const DEFAULT_SELECTORS = ["nav", "footer"];  // optional shared helpers
+// Optional defaults — overridable via `pagemd browser script … --param KEY=VALUE`
+const usage = "Short description shown by --usage";
+const defaultParams = {
+  noise: ["nav", "footer"],
+  contentSelector: "article",
+};
+const paramHelp = {
+  noise: "Selectors removed by clean()",
+  contentSelector: "Main content CSS selector for extract()",
+};
 
 function clean() {
   let removed = 0;
-  DEFAULT_SELECTORS.forEach((sel) => {
+  (params.noise || []).forEach((sel) => {
     document.querySelectorAll(sel).forEach((el) => { el.remove(); removed++; });
   });
   return { removed };  // required shape when clean() is defined
 }
 
 function extract() {
-  const el = document.querySelector("article") || document.body;
+  const el = document.querySelector(params.contentSelector || "article") || document.body;
   return { title: document.title.trim(), html: el.innerHTML.trim() };
 }
 
 // optional:
 function navigate() { /* return { success: boolean } */ }
-function stop(context) { /* return { shouldStop: boolean, reason?: string } */ }
+function stop(context) { /* return { shouldStop: boolean, reason?: string }; context.params available */ }
 ```
 
 Hard rules:
@@ -36,6 +45,7 @@ Hard rules:
 - **Never** read `.pagemd/runtime.json`, curl the bridge, or kill/restart the pagemd REPL process. If MCP is slow, ask the user to Ctrl+C the agent turn and retry.
 - Hook names must be **`function clean()` / `function extract()`** declarations (not arrow assignments).
 - **`urlPattern`**: call `browser_get_url`, use `https://<host>/*` for site-wide scripts.
+- Prefer **`const defaultParams = { … }`** for tunables; hooks read the injected **`params`** object (defaults ∪ CLI overrides).
 - **`clean()`**: return **`{ removed: number }`**; mutates live DOM before extract.
 - **`extract()`**: return **`{ title, html }`** (or `null` on failure). `html` = main content markup only.
 - Helpers used by hooks must live at **top level in the same file** (the extension bundles them automatically).

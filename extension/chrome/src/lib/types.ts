@@ -48,6 +48,8 @@ export interface StopHookContext {
   pageIndex: number;
   collectedUrls: string[];
   collectedTitles: string[];
+  /** Merged script params (`defaultParams` + host overrides). */
+  params?: Record<string, unknown>;
 }
 
 export interface ExtractResult {

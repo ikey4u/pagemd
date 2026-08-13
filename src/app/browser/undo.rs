@@ -262,10 +262,7 @@ async fn call(session: &CdpSession, method_call: &str) -> Result<Value> {
 }
 
 fn depth_from(value: &Value) -> usize {
-    value
-        .get("depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize
+    value.get("depth").and_then(|v| v.as_u64()).unwrap_or(0) as usize
 }
 
 #[cfg(test)]

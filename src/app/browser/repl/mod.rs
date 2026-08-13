@@ -12,11 +12,14 @@ use serde_json::Value;
 use self::vendor::CursorRelay;
 use super::bridge::BrowserBridge;
 use super::cdp::CdpSession;
-use super::cli::BrowserArgs;
+use super::cli::BrowserDevArgs;
 use super::export::build_export_prompt;
 use super::pretty::PRETTY_PROMPT;
 use super::runtime::BrowserRuntime;
 use super::sandbox;
+use super::script::{
+    format_script_usage, load_pagemd_script, parse_run_args, run_pagemd_script, ParsedRunArgs,
+};
 use super::session_md::SessionMarkdown;
 use super::session_preview::{self, SessionPreview};
 use super::snap::{self, format_snap};
@@ -48,13 +51,13 @@ fn repl_dom_target(sandbox_enabled: &Arc<AtomicBool>) -> DomTarget {
 }
 
 pub async fn run(
-    args: BrowserArgs,
+    args: BrowserDevArgs,
     mut chrome_proc: Option<super::chrome::ChromeProcess>,
     vendor: Option<CursorRelay>,
     workspace: std::path::PathBuf,
 ) -> Result<()> {
     eprintln!("Connecting to page…");
-    let session = CdpSession::connect_with_hint(args.port, args.url.as_deref()).await?;
+    let session = CdpSession::connect_with_hint(args.chrome.port, args.url.as_deref()).await?;
     let undo = Arc::new(Mutex::new(UndoStack::new(50)));
     let sandbox_enabled = Arc::new(AtomicBool::new(false));
 
@@ -74,7 +77,7 @@ pub async fn run(
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| workspace.clone()));
     let bridge = BrowserBridge::start(
         &workspace,
-        args.port,
+        args.chrome.port,
         &export_dir,
         session.clone(),
         Arc::clone(&undo),
@@ -185,7 +188,7 @@ pub async fn run(
 
     if let Some(chrome) = chrome_proc.as_mut() {
         eprintln!("Closing Chrome…");
-        chrome.shutdown_gracefully(args.port).await;
+        chrome.shutdown_gracefully(args.chrome.port).await;
     }
 
     Ok(())
@@ -433,6 +436,60 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                 refresh_status: false,
             });
         }
+        "/run" => {
+            if rest.trim().is_empty() {
+                bail!(
+                    "usage: /run <file.pagemd.js> [--usage] [--url-pattern GLOB] [-o out-dir|.md] [--param KEY=VALUE]…"
+                );
+            }
+            let cwd = std::env::current_dir().context("read cwd for /run")?;
+            let parsed = parse_run_args(rest, &cwd)?;
+            match parsed {
+                ParsedRunArgs::Usage {
+                    script: script_path,
+                } => {
+                    let script = load_pagemd_script(&script_path)?;
+                    print!("{}", format_script_usage(&script_path, &script));
+                    return Ok(SlashOutcome::Continue {
+                        refresh_status: false,
+                    });
+                }
+                ParsedRunArgs::Run {
+                    script: script_path,
+                    opts,
+                } => {
+                    let script = load_pagemd_script(&script_path)?;
+                    // Live page only — leave /pretty sandbox alone.
+                    ctx.sandbox_enabled.store(false, Ordering::SeqCst);
+                    ctx.undo.reset();
+                    eprintln!(
+                        "Running {} (pattern: {}, max-pages: {})…",
+                        script_path.display(),
+                        opts.effective_url_pattern(&script),
+                        opts.max_pages
+                    );
+                    io::stderr().flush()?;
+                    let report = run_pagemd_script(ctx.session, &script, &opts).await?;
+                    println!(
+                        "Done: {} page(s) → {}\nStop reason: {}",
+                        report.pages.len(),
+                        if super::script::is_file_output(&report.output) {
+                            report.output.display().to_string()
+                        } else {
+                            format!(
+                                "{}/",
+                                report.output.display().to_string().trim_end_matches('/')
+                            )
+                        },
+                        report.stop_reason
+                    );
+                    let _ = ctx.session_md.bind_to_page(ctx.session).await;
+                    return Ok(SlashOutcome::Continue {
+                        refresh_status: true,
+                    });
+                }
+            }
+        }
         "/pretty" => {
             let Some(v) = ctx.vendor else {
                 bail!("no AI backend; /pretty requires Cursor agent");
@@ -611,18 +668,18 @@ fn print_eval_result(value: &Value) {
 }
 
 fn print_banner(
-    args: &BrowserArgs,
+    args: &BrowserDevArgs,
     profile: Option<&Path>,
     vendor: Option<&CursorRelay>,
     runtime: &BrowserRuntime,
 ) -> Result<()> {
     println!("PageMD Browser — CDP REPL + Cursor agent");
-    println!("  CDP port: {}", args.port);
-    if args.connect {
+    println!("  CDP port: {}", args.chrome.port);
+    if args.chrome.connect {
         println!("  mode: connect (existing Chrome)");
-    } else if args.clean {
+    } else if args.chrome.clean {
         println!("  profile: ephemeral (--clean)");
-    } else if let Some(dir) = &args.user_data_dir {
+    } else if let Some(dir) = &args.chrome.user_data_dir {
         println!("  profile: {}", dir.display());
     } else if let Some(dir) = profile {
         println!("  profile: {}", dir.display());
@@ -694,6 +751,8 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
     println!("  /html [-o file]       Dump HTML (terminal preview; use -o for full output)");
     println!("  /md [-o file]         Convert body HTML to Markdown (preview; use -o for full)");
     println!("  /pmd [--live] [--original] [open]  Session or original Markdown preview");
+    println!("  /run <file.pagemd.js> [--usage] [--url-pattern GLOB] [-o out-dir|.md] [--param KEY=VALUE]…");
+    println!("                        Run a validated .pagemd.js via CDP (clean→extract→navigate)");
     println!("  /url  /title          Print current URL or title");
     if ai {
         println!("  /pretty               Clean DOM in sandbox (visible tab unchanged) via Cursor");
