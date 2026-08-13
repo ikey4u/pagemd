@@ -17,7 +17,6 @@ pub enum HookKind {
 
 #[derive(Clone, Debug)]
 pub struct PagmdScript {
-    pub url_pattern: String,
     pub source: String,
     pub clean: Option<String>,
     pub extract: String,
@@ -33,38 +32,38 @@ pub struct PagmdScript {
 
 #[derive(Clone, Debug)]
 pub struct RunOptions {
-    pub max_pages: usize,
+    pub max_pages: Option<usize>,
     pub delay_ms: (u64, u64),
     pub output: PathBuf,
     pub include_title: bool,
     pub include_source_url: bool,
     /// CLI / host overrides merged into script `params` at runtime.
     pub params: Value,
-    /// Optional override for script `urlPattern` (CLI `--url-pattern`).
-    pub url_pattern: Option<String>,
+    /// Optional URL filter override (CLI `--filter`); supports full URLs or path globs like `/document/*`.
+    pub filter: Option<String>,
 }
 
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
-            max_pages: 50,
+            max_pages: None,
             delay_ms: (800, 1600),
             output: PathBuf::from("pagemd-run"),
             include_title: true,
             include_source_url: true,
             params: json!({}),
-            url_pattern: None,
+            filter: None,
         }
     }
 }
 
 impl RunOptions {
-    /// Effective urlPattern: CLI override, else script default.
-    pub fn effective_url_pattern<'a>(&'a self, script: &'a PagmdScript) -> &'a str {
-        self.url_pattern
+    /// CLI `--filter` glob, if any (full URL or path like `/document/*`).
+    pub fn filter_glob(&self) -> Option<&str> {
+        self.filter
             .as_deref()
+            .map(str::trim)
             .filter(|s| !s.is_empty())
-            .unwrap_or(script.url_pattern.as_str())
     }
 }
 
@@ -110,7 +109,6 @@ pub fn parse_pagemd_script(source: &str) -> Result<PagmdScript> {
         bail!("script must be plain JS (no ESM import/export)");
     }
 
-    let url_pattern = parse_url_pattern(source)?;
     let extract = extract_function_declaration(source, "extract")
         .ok_or_else(|| anyhow!("script must define extract() as a function declaration"))?;
     if !extract.contains("title") || !extract.contains("html") {
@@ -125,7 +123,6 @@ pub fn parse_pagemd_script(source: &str) -> Result<PagmdScript> {
     }
 
     Ok(PagmdScript {
-        url_pattern,
         source: source.to_owned(),
         clean,
         extract,
@@ -151,10 +148,9 @@ pub fn format_script_usage(path: &Path, script: &PagmdScript) -> String {
         .unwrap_or("script.pagemd.js");
     out.push_str(&format!("Usage: {name}\n"));
     out.push_str(&format!("  path:       {}\n", path.display()));
-    out.push_str(&format!(
-        "  urlPattern: {}  (override with --url-pattern)\n",
-        script.url_pattern
-    ));
+    out.push_str(
+        "  filter:     (none in script — pass --filter '/path/*' or a full URL glob at run time)\n",
+    );
 
     let mut hooks = Vec::new();
     if script.clean.is_some() {
@@ -225,7 +221,8 @@ pub fn format_script_usage(path: &Path, script: &PagmdScript) -> String {
 
     out.push_str("\nExample:\n");
     out.push_str(&format!("  pagemd browser script {} \\\n", path.display()));
-    out.push_str("    --url <start-url-matching-urlPattern> \\\n");
+    out.push_str("    --url <start-url> \\\n");
+    out.push_str("    --filter '/path/*' \\\n");
     out.push_str("    -o out-dir");
     if let Some(defaults) = defaults {
         if let Some((key, value)) = defaults.iter().next() {
@@ -257,10 +254,35 @@ pub fn url_matches_pattern(url: &str, pattern: &str) -> bool {
     if pattern.is_empty() || pattern == "*" {
         return true;
     }
+
+    // Path-only filter: "/document/*" matches against the URL path.
+    let haystack = if pattern.starts_with('/') {
+        url_path_for_filter(url)
+    } else {
+        url.to_owned()
+    };
+    glob_match(&haystack, pattern)
+}
+
+fn url_path_for_filter(url: &str) -> String {
+    let path = if let Some((_, after_scheme)) = url.split_once("://") {
+        match after_scheme.find('/') {
+            Some(i) => &after_scheme[i..],
+            None => "/",
+        }
+    } else if url.starts_with('/') {
+        url
+    } else {
+        url
+    };
+    path.split(['?', '#']).next().unwrap_or(path).to_owned()
+}
+
+fn glob_match(haystack: &str, pattern: &str) -> bool {
     if !pattern.contains('*') && !pattern.contains('?') {
-        return url == pattern || url.starts_with(pattern);
+        return haystack == pattern || haystack.starts_with(pattern);
     }
-    let mut url_chars = url.chars().peekable();
+    let mut hay_chars = haystack.chars().peekable();
     let mut pat = pattern.chars().peekable();
     while let Some(pc) = pat.next() {
         match pc {
@@ -269,11 +291,10 @@ pub fn url_matches_pattern(url: &str, pattern: &str) -> bool {
                     return true;
                 }
                 let rest: String = pat.collect();
-                // Longest suffix-friendly: try every remaining offset.
-                let mut probe = url_chars.clone();
+                let mut probe = hay_chars.clone();
                 loop {
                     let remaining: String = probe.clone().collect();
-                    if url_matches_pattern(&remaining, &rest) {
+                    if glob_match(&remaining, &rest) {
                         return true;
                     }
                     if probe.next().is_none() {
@@ -282,18 +303,18 @@ pub fn url_matches_pattern(url: &str, pattern: &str) -> bool {
                 }
             }
             '?' => {
-                if url_chars.next().is_none() {
+                if hay_chars.next().is_none() {
                     return false;
                 }
             }
             c => {
-                if url_chars.next() != Some(c) {
+                if hay_chars.next() != Some(c) {
                     return false;
                 }
             }
         }
     }
-    url_chars.next().is_none()
+    hay_chars.next().is_none()
 }
 
 /// Build a CDP expression that runs one hook with `params` available.
@@ -436,9 +457,12 @@ pub async fn run_pagemd_script(
     opts: &RunOptions,
 ) -> Result<RunReport> {
     let current = session.current_url().await.unwrap_or_default();
-    let pattern = opts.effective_url_pattern(script);
-    if !url_matches_pattern(&current, pattern) {
-        bail!("current URL does not match urlPattern\n  url:     {current}\n  pattern: {pattern}");
+    if let Some(pattern) = opts.filter_glob() {
+        if !url_matches_pattern(&current, pattern) {
+            bail!(
+                "current URL does not match --filter\n  url:     {current}\n  filter:  {pattern}"
+            );
+        }
     }
 
     let mut pages = Vec::new();
@@ -562,7 +586,9 @@ pub async fn run_pagemd_script(
         eprintln!(
             "  [{}/{}] {}",
             pages.len(),
-            opts.max_pages,
+            opts.max_pages
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "∞".into()),
             if title.is_empty() { &page_url } else { &title }
         );
 
@@ -573,9 +599,11 @@ pub async fn run_pagemd_script(
                 .with_context(|| format!("write {}", path.display()))?;
         }
 
-        if pages.len() >= opts.max_pages {
-            stop_reason = format!("reached max pages ({})", opts.max_pages);
-            break;
+        if let Some(max) = opts.max_pages {
+            if pages.len() >= max {
+                stop_reason = format!("reached max pages ({max})");
+                break;
+            }
         }
         if script.navigate.is_none() {
             stop_reason = "single page mode (no navigate hook)".into();
@@ -697,11 +725,6 @@ async fn wait_for_url_change(session: &CdpSession, previous: &str, max: Duration
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
-}
-
-fn parse_url_pattern(source: &str) -> Result<String> {
-    parse_const_string(source, "urlPattern")
-        .ok_or_else(|| anyhow!("missing urlPattern (expected: const urlPattern = \"...\")"))
 }
 
 fn parse_const_string(source: &str, name: &str) -> Option<String> {
@@ -1128,7 +1151,7 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
     let tokens: Vec<&str> = rest.split_whitespace().collect();
     if tokens.is_empty() {
         bail!(
-            "usage: /run <file.pagemd.js> [--usage] [--url-pattern GLOB] [-o out-dir|.md] [--param KEY=VALUE]…"
+            "usage: /run <file.pagemd.js> [--usage] [--filter GLOB] [-o out-dir|.md] [--param KEY=VALUE]…"
         );
     }
 
@@ -1139,12 +1162,12 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
     while i < tokens.len() {
         match tokens[i] {
             "--usage" | "--help-script" => dump_usage = true,
-            "--url-pattern" => {
+            "--filter" | "--url-pattern" => {
                 i += 1;
                 let pat = tokens
                     .get(i)
-                    .ok_or_else(|| anyhow!("--url-pattern requires a glob"))?;
-                opts.url_pattern = Some((*pat).to_owned());
+                    .ok_or_else(|| anyhow!("--filter requires a glob"))?;
+                opts.filter = Some((*pat).to_owned());
             }
             "-o" | "--output" => {
                 i += 1;
@@ -1159,9 +1182,10 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
                     .parse::<usize>()
                     .context("invalid --max-pages")?;
                 if n == 0 {
-                    bail!("--max-pages must be > 0");
+                    opts.max_pages = None;
+                } else {
+                    opts.max_pages = Some(n);
                 }
-                opts.max_pages = n;
             }
             "--delay" => {
                 i += 1;
@@ -1239,7 +1263,6 @@ mod tests {
     }
 
     const SAMPLE: &str = r#"
-const urlPattern = "https://example.com/*";
 const X = 1;
 function clean() { let removed = 0; return { removed }; }
 function extract() { return { title: document.title, html: document.body.innerHTML }; }
@@ -1254,12 +1277,12 @@ function stop(context) { return { shouldStop: false }; }
     }
 
     #[test]
-    fn parse_requires_extract_and_url_pattern() {
+    fn parse_requires_extract() {
         parse_pagemd_script(SAMPLE).unwrap();
         assert!(
-            parse_pagemd_script("function extract() { return { title: 'a', html: 'b' }; }")
-                .is_err()
+            parse_pagemd_script("function extract() { return { title: 'a', html: 'b' }; }").is_ok()
         );
+        assert!(parse_pagemd_script("const x = 1;").is_err());
     }
 
     #[test]
@@ -1276,6 +1299,30 @@ function stop(context) { return { shouldStop: false }; }
             "https://example.com/docs",
             "https://example.com/docs"
         ));
+        assert!(url_matches_pattern(
+            "https://cloud.tencent.com/document/product/1814/1",
+            "/document/*"
+        ));
+        assert!(!url_matches_pattern(
+            "https://cloud.tencent.com/other/product/1814/1",
+            "/document/*"
+        ));
+        assert!(url_matches_pattern(
+            "https://example.com/document/x?q=1#frag",
+            "/document/*"
+        ));
+    }
+
+    #[test]
+    fn parse_run_args_filter_override() {
+        let cwd = Path::new("/tmp");
+        let parsed = parse_run_args("site.pagemd.js --filter /document/*", cwd).unwrap();
+        let ParsedRunArgs::Run { opts, .. } = parsed else {
+            panic!("expected run");
+        };
+        assert_eq!(opts.filter.as_deref(), Some("/document/*"));
+        assert_eq!(opts.filter_glob(), Some("/document/*"));
+        assert!(opts.filter_glob().is_some());
     }
 
     #[test]
@@ -1291,7 +1338,6 @@ function stop(context) { return { shouldStop: false }; }
     #[test]
     fn compile_merges_cli_params() {
         let source = r#"
-const urlPattern = "https://example.com/*";
 const defaultParams = { stopUrl: "https://example.com/end", noise: ["nav"] };
 function extract() { return { title: params.stopUrl, html: "<p>x</p>" }; }
 "#;
@@ -1335,25 +1381,6 @@ function extract() { return { title: params.stopUrl, html: "<p>x</p>" }; }
     }
 
     #[test]
-    fn parse_run_args_url_pattern_override() {
-        let cwd = Path::new("/tmp");
-        let parsed =
-            parse_run_args("site.pagemd.js --url-pattern https://other.test/*", cwd).unwrap();
-        let ParsedRunArgs::Run { opts, .. } = parsed else {
-            panic!("expected run");
-        };
-        assert_eq!(opts.url_pattern.as_deref(), Some("https://other.test/*"));
-        let script = parse_pagemd_script(
-            r#"
-const urlPattern = "https://example.com/*";
-function extract() { return { title: "t", html: "<p>x</p>" }; }
-"#,
-        )
-        .unwrap();
-        assert_eq!(opts.effective_url_pattern(&script), "https://other.test/*");
-    }
-
-    #[test]
     fn parse_run_args_usage_flag() {
         let cwd = Path::new("/tmp");
         let parsed = parse_run_args("site.pagemd.js --usage", cwd).unwrap();
@@ -1368,7 +1395,6 @@ function extract() { return { title: "t", html: "<p>x</p>" }; }
     #[test]
     fn format_usage_lists_params() {
         let source = r#"
-const urlPattern = "https://example.com/docs/*";
 const usage = "Crawl docs into Markdown.";
 const defaultParams = {
   stopUrl: "https://example.com/docs/end",
@@ -1386,9 +1412,10 @@ function stop(context) { return { shouldStop: false }; }
         let script = parse_pagemd_script(source).unwrap();
         let path = Path::new("docs.pagemd.js");
         let text = format_script_usage(path, &script);
-        assert!(text.contains("urlPattern:"));
+        assert!(text.contains("filter:"));
         assert!(text.contains("stopUrl"));
         assert!(text.contains("--param"));
+        assert!(text.contains("--filter"));
         assert_eq!(
             script.default_params.get("stopUrl"),
             Some(&json!("https://example.com/docs/end"))
@@ -1404,7 +1431,7 @@ function stop(context) { return { shouldStop: false }; }
             panic!("expected run");
         };
         assert_eq!(path, PathBuf::from("/tmp/site.pagemd.js"));
-        assert_eq!(opts.max_pages, 3);
+        assert_eq!(opts.max_pages, Some(3));
         assert_eq!(opts.output, PathBuf::from("/tmp/site-run"));
     }
 
@@ -1423,7 +1450,6 @@ function stop(context) { return { shouldStop: false }; }
     #[test]
     fn parse_script_with_default_params_and_hooks() {
         let source = r#"
-const urlPattern = "https://cloud.tencent.com/document/product/1095/*";
 const defaultParams = {
   stopUrl: "https://cloud.tencent.com/document/product/1095/94313",
   contentSelector: "article",
@@ -1437,7 +1463,6 @@ function navigate() { return { success: false }; }
 function stop(context) { return { shouldStop: false }; }
 "#;
         let script = parse_pagemd_script(source).expect("parse sample");
-        assert!(script.url_pattern.contains("cloud.tencent.com"));
         assert!(script.clean.is_some());
         assert!(script.navigate.is_some());
         assert!(script.stop.is_some());
@@ -1452,7 +1477,6 @@ function stop(context) { return { shouldStop: false }; }
         let dir = temp_dir("export-script");
         std::fs::create_dir_all(&dir).unwrap();
         let source = r#"
-const urlPattern = "https://example.com/*";
 function extract() { return { title: "t", html: "<p>x</p>" }; }
 "#;
         let path = save_script(&dir, "site", source).unwrap();

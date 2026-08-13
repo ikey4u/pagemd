@@ -1,7 +1,6 @@
 import type { HookType } from './prompt';
 
 export interface PagmdScript {
-  urlPattern: string;
   clean?: string;
   extract: string;
   navigate?: string;
@@ -18,14 +17,12 @@ export function parsePagmdScript(source: string): PagmdScript {
     throw new Error('Script file is empty');
   }
 
-  const urlPattern = parseUrlPattern(trimmed);
   const extract = extractFunctionDeclaration(trimmed, 'extract');
   if (!extract) {
     throw new Error('Script must define extract()');
   }
 
   return {
-    urlPattern,
     clean: extractFunctionDeclaration(trimmed, 'clean'),
     extract,
     navigate: extractFunctionDeclaration(trimmed, 'navigate'),
@@ -58,7 +55,6 @@ export function compileHookForRun(
   if (/^function\s+\w+\s*\(/.test(code)) {
     return compilePagmdBundle(
       {
-        urlPattern: '*',
         extract: hookType === 'extract' ? code : 'function extract() { return null; }',
         clean: hookType === 'clean' ? code : undefined,
         navigate: hookType === 'navigate' ? code : undefined,
@@ -153,15 +149,6 @@ function looksLikeExecutableHook(code: string): boolean {
   if (/^\(function/m.test(code) || /^\(\(\)\s*=>/m.test(code)) return true;
   if (/^\(\s*function/m.test(code)) return true;
   return false;
-}
-
-function parseUrlPattern(source: string): string {
-  const quoted = source.match(
-    /(?:const|let|var)\s+urlPattern\s*=\s*(['"`])([\s\S]*?)\1/,
-  );
-  if (quoted) return quoted[2];
-
-  throw new Error('Missing urlPattern (expected: const urlPattern = "…")');
 }
 
 function extractFunctionDeclaration(source: string, name: string): string | undefined {

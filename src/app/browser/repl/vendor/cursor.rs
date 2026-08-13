@@ -8,58 +8,44 @@ use std::thread;
 use anyhow::{Context, Result};
 
 use super::stream::render_stream_json;
+use crate::app::browser::script_format::PAGEMD_JS_FORMAT;
 
-const WORKSPACE_RULES: &str = r#"---
-description: PageMD browser — script authoring for live pages
-alwaysApply: true
----
+/// Prefixed onto every agent turn (no Cursor rules files).
+const AGENT_PROMPT_PREAMBLE: &str = r#"You help the user author `.pagemd.js` scripts for web page extraction inside **PageMD Browser**.
 
-You help the user author `.pagemd.js` scripts for web page extraction inside **PageMD Browser**.
+Follow the **`.pagemd.js` format** below when writing or fixing scripts. Save with `browser_save_script` only after live verification.
 
 **You CAN drive the debug Chrome tab** via MCP tools exposed as `pagemd-browser` (requires `pagemd browser` REPL running):
 
-During **`/pretty`**, a **sandbox** is active: `browser_clean` / `browser_eval` / `browser_save_markdown` operate on a **hidden DOM copy** — the **visible tab stays unchanged** for side-by-side comparison. Use **`browser_get_original_markdown`** or tell the user to run **`/pmd --original`** for the unmodified baseline.
+During **`/pretty`**, a **sandbox** is active: `browser_clean` / `browser_eval` / `browser_save_markdown` operate on a **hidden DOM copy** — the **visible tab stays unchanged**. Use **`browser_get_original_markdown`** or tell the user **`/pmd --original`** for the unmodified baseline.
 
 | Tool | Purpose |
 |------|---------|
 | `browser_begin_sandbox` | Clone live page into hidden iframe (auto-called by `/pretty`) |
 | `browser_snap` | URL, title, heading outline, text preview (call first) |
-| `browser_clean` | **Fast** removal of header/nav/footer/aside/sidebars — prefer over custom eval for initial cleanup |
-| `browser_get_html` | Full or body HTML from **sandbox DOM when active**, else live DOM |
+| `browser_clean` | **Fast** removal of header/nav/footer/aside/sidebars |
+| `browser_get_html` | HTML from sandbox DOM when active, else live DOM |
 | `browser_get_markdown` | DOM → Markdown preview (does not update session file) |
-| `browser_save_markdown` | Sandbox/live DOM → extract Markdown → **save session file** |
+| `browser_save_markdown` | Extract Markdown → **save session file** |
 | `browser_get_session_markdown` | Read saved cleaned session Markdown |
-| `browser_get_original_markdown` | Read unmodified page baseline (before cleanup) |
-| `browser_eval` | Run JS; **default `record_undo: false`** (fast probes). Set `true` only when mutating DOM (in-page mutation recording) |
+| `browser_get_original_markdown` | Unmodified page baseline |
+| `browser_eval` | Run JS; **default `record_undo: false`**. Set `true` only when mutating DOM |
 | `browser_goto` / `browser_reload` | Navigation (disables sandbox) |
-| `browser_undo` | Revert last sandbox/live mutation (`all: true` undoes all recorded steps) |
-| `browser_get_url` / `browser_get_title` | Current tab metadata |
+| `browser_undo` | Revert mutations (`all: true` undoes all) |
+| `browser_get_url` / `browser_get_title` | Tab metadata |
 | `browser_save_script` | Save validated `.pagemd.js` to REPL cwd |
 
-**MCP only — never** read `runtime.json` or `curl` the bridge from shell. All page operations go through `pagemd-browser` MCP tools above.
+**MCP only — never** read `runtime.json` or `curl` the bridge. **Never kill** the pagemd process; if stuck, tell the user Ctrl+C / `/stop`.
 
-**Never kill or restart the pagemd process** (`kill`, `pkill`, stopping `cargo run`, etc.). If MCP tools time out or the bridge seems stuck, tell the user to press **Ctrl+C** once (interrupts the agent turn only) or run **`/stop`** — do **not** terminate the REPL yourself. Do **not** use shell to "fix" CDP; retry with `browser_eval` and `"record_undo": false` or ask the user to `/reload` the page tab.
+Workflow: `browser_snap` → `browser_clean` / targeted `browser_eval` → `browser_save_markdown` → iterate. User previews with `/pmd`.
 
-Workflow: `browser_snap` → **`browser_clean`** (or one targeted `browser_eval` with undo) → **`browser_save_markdown`** → **`browser_get_session_markdown`** → iterate. User previews with **`/pmd`** (cleaned) and **`/pmd --original`** (baseline).
+Slash commands: `/pretty`, `/pmd`, `/export`, `/run`, `/eval`, `/snap`, `/undo`, …
 
-For read-only DOM checks use `browser_eval` with `"record_undo": false` — do not open an undo transaction for probes like `document.querySelector(...)`.
-
-When the user is satisfied, they run **`/export`** — verify `clean()`/`extract()` on the live tab, then **`browser_save_script`**. Do **not** save an unverified script.
-
-Slash commands: `/pretty` (sandbox DOM cleanup), `/pmd` (cleaned Markdown), `/pmd --original` (baseline), **`/export`** (save `.pagemd.js`), `/eval`, `/snap`, `/undo`, …
-
-Script contract (plain JS, not ESM):
-
-- Top-level `const urlPattern = "…";` — prefer `https://<host>/*` for whole site
-- **Top-level helpers** (`const`, `function`) above hooks — extension bundles them with each hook run
-- **`function clean()`** (optional) — mutates live DOM, returns **`{ removed: number }`**
-- **`function extract()`** (required) — returns **`{ title, html }`**
-- Optional **`function navigate()`**, **`function stop(context)`**
-- Use **`function name()`** declarations, not `const clean = () => …`
-
-When suggesting hooks, output complete function bodies the user can paste into `/eval` or save later.
-Prefer minimal, robust selectors; mention when the user should run `/eval` to verify on the live page.
 "#;
+
+fn wrap_agent_prompt(user_line: &str) -> String {
+    format!("{AGENT_PROMPT_PREAMBLE}{PAGEMD_JS_FORMAT}\n\n---\n\nUser:\n{user_line}")
+}
 
 pub fn agent_executable() -> PathBuf {
     std::env::var("PAGEMD_CURSOR_AGENT")
@@ -74,24 +60,13 @@ pub fn detect_cursor() -> bool {
     which::which("agent").is_ok()
 }
 
+/// Create the agent workspace directory only — do not write Cursor rules into it.
 pub fn ensure_browser_workspace() -> Result<PathBuf> {
     let root = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("pagemd")
         .join("browser-workspace");
     std::fs::create_dir_all(&root).with_context(|| format!("create {}", root.display()))?;
-
-    let rules_dir = root.join(".cursor").join("rules");
-    std::fs::create_dir_all(&rules_dir)?;
-    let rules_path = rules_dir.join("pagemd-browser.mdc");
-    std::fs::write(&rules_path, WORKSPACE_RULES)?;
-
-    let cursorignore = root.join(".cursorignore");
-    std::fs::write(
-        &cursorignore,
-        "# PageMD bridge secrets — use pagemd-browser MCP tools only\n.pagemd/runtime.json\n",
-    )?;
-
     Ok(root)
 }
 
@@ -142,6 +117,7 @@ impl CursorAgentSession {
         self.interrupt_child_only();
 
         let workspace = self.workspace.to_string_lossy().into_owned();
+        let full_prompt = wrap_agent_prompt(prompt);
         let mut cmd = Command::new(&self.agent);
         cmd.args([
             "-p",
@@ -154,7 +130,7 @@ impl CursorAgentSession {
             "--workspace",
             workspace.as_str(),
         ]);
-        cmd.arg(prompt);
+        cmd.arg(full_prompt);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
@@ -276,10 +252,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_rules_created() {
+    fn agent_prompt_includes_format_by_default() {
         let dir = ensure_browser_workspace().unwrap();
-        assert!(dir.join(".cursor/rules/pagemd-browser.mdc").exists());
-        let ignore = std::fs::read_to_string(dir.join(".cursorignore")).unwrap();
-        assert!(ignore.contains("runtime.json"));
+        assert!(dir.is_dir());
+        let wrapped = wrap_agent_prompt("write a script");
+        assert!(wrapped.contains("defaultParams"));
+        assert!(wrapped.contains("User:\nwrite a script"));
     }
 }

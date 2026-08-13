@@ -439,7 +439,7 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
         "/run" => {
             if rest.trim().is_empty() {
                 bail!(
-                    "usage: /run <file.pagemd.js> [--usage] [--url-pattern GLOB] [-o out-dir|.md] [--param KEY=VALUE]…"
+                    "usage: /run <file.pagemd.js> [--usage] [--filter GLOB] [-o out-dir|.md] [--param KEY=VALUE]…"
                 );
             }
             let cwd = std::env::current_dir().context("read cwd for /run")?;
@@ -463,10 +463,12 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                     ctx.sandbox_enabled.store(false, Ordering::SeqCst);
                     ctx.undo.reset();
                     eprintln!(
-                        "Running {} (pattern: {}, max-pages: {})…",
+                        "Running {} (filter: {}, max-pages: {})…",
                         script_path.display(),
-                        opts.effective_url_pattern(&script),
+                        opts.filter_glob().unwrap_or("none"),
                         opts.max_pages
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "unlimited".into())
                     );
                     io::stderr().flush()?;
                     let report = run_pagemd_script(ctx.session, &script, &opts).await?;
@@ -751,7 +753,9 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
     println!("  /html [-o file]       Dump HTML (terminal preview; use -o for full output)");
     println!("  /md [-o file]         Convert body HTML to Markdown (preview; use -o for full)");
     println!("  /pmd [--live] [--original] [open]  Session or original Markdown preview");
-    println!("  /run <file.pagemd.js> [--usage] [--url-pattern GLOB] [-o out-dir|.md] [--param KEY=VALUE]…");
+    println!(
+        "  /run <file.pagemd.js> [--usage] [--filter GLOB] [-o out-dir|.md] [--param KEY=VALUE]…"
+    );
     println!("                        Run a validated .pagemd.js via CDP (clean→extract→navigate)");
     println!("  /url  /title          Print current URL or title");
     if ai {

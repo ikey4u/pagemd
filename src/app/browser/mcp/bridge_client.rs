@@ -226,7 +226,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     },
                     "content": {
                         "type": "string",
-                        "description": "Full plain-JS script source (urlPattern, extract(), optional clean())"
+                        "description": "Full plain-JS script source (extract(), optional clean/navigate/stop, defaultParams)"
                     }
                 },
                 "required": ["content"],

@@ -8,7 +8,6 @@ A script is plain JavaScript (no `import` / `export`) with this shape:
 
 | Piece | Required | Role |
 | --- | --- | --- |
-| `const urlPattern = "…"` | yes | Glob of pages this script may run on (`*` / `?` supported). Overridable with `--url-pattern`. |
 | `const usage = "…"` | no | Blurb printed by `--usage` / `/run --usage` |
 | `const defaultParams = { … }` | no | Defaults for `params` (overridable from CLI / host) |
 | `const paramHelp = { key: "…", … }` | no | Per-param descriptions for `--usage` |
@@ -16,6 +15,8 @@ A script is plain JavaScript (no `import` / `export`) with this shape:
 | `function extract()` | yes | Return `{ title, html }` or `null` (prefer `cloneNode`) |
 | `function navigate()` | no | Go to next page → `{ success: boolean }` |
 | `function stop(context)` | no | End batch → `{ shouldStop: boolean, reason?: string }` |
+
+Page allow-lists are **not** in the script. Use CLI `--filter` (full URL or path like `/document/*`) when running.
 
 At runtime the host injects:
 
@@ -38,6 +39,7 @@ pagemd browser script meeting-docs.pagemd.js --usage
 
 pagemd browser script meeting-docs.pagemd.js \
   --url https://cloud.tencent.com/document/product/1095/83658 \
+  --filter '/document/product/1095/*' \
   -o meeting-docs \
   --param stopUrl=https://cloud.tencent.com/document/product/1095/94313 \
   --param 'noiseSelectors=["#document-feedback-container"]'
@@ -45,6 +47,7 @@ pagemd browser script meeting-docs.pagemd.js \
 # or a JSON object
 pagemd browser script meeting-docs.pagemd.js \
   --url https://cloud.tencent.com/document/product/1095/83658 \
+  --filter '/document/*' \
   --params '{"stopUrl":"https://cloud.tencent.com/document/product/1095/94313"}'
 ```
 
@@ -62,8 +65,6 @@ Inside the REPL (`pagemd browser dev`):
 Crawl Tencent Meeting [Open Platform documentation](https://cloud.tencent.com/document/product/1095/83658) into Markdown. Same logic as the side-panel hooks, packaged as a standard `.pagemd.js`:
 
 ```js
-const urlPattern = "https://cloud.tencent.com/document/product/1095/*";
-
 const usage =
   "Crawl Tencent Meeting Open Platform documentation into Markdown (clean → extract → next page).";
 
@@ -139,6 +140,7 @@ pagemd browser script meeting-docs.pagemd.js --usage
 
 pagemd browser script meeting-docs.pagemd.js \
   --url https://cloud.tencent.com/document/product/1095/83658 \
+  --filter '/document/product/1095/*' \
   -o meeting-docs \
   --param stopUrl=https://cloud.tencent.com/document/product/1095/94313
 ```

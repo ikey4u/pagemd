@@ -9,6 +9,7 @@ pub(crate) mod repl;
 mod runtime;
 mod sandbox;
 mod script;
+mod script_format;
 mod session_md;
 mod session_preview;
 mod snap;

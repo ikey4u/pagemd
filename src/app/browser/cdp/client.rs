@@ -36,10 +36,6 @@ pub struct CdpSession {
 }
 
 impl CdpSession {
-    pub async fn connect(port: u16) -> Result<Self> {
-        Self::connect_with_hint(port, None).await
-    }
-
     pub async fn connect_with_hint(port: u16, preferred_url: Option<&str>) -> Result<Self> {
         let targets = list_page_targets(port).await?;
         let target = pick_best_page_target(&targets, preferred_url).with_context(|| {

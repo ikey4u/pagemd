@@ -1,7 +1,7 @@
 import { buildPrompt, type HookType } from '../lib/prompt';
 import { cleanHookCode, validateHookSyntax, executeHook, executeHookViaDebugger } from '../lib/hook-executor';
 import { loadSettings } from '../lib/settings';
-import { findMatchingRecipe, matchUrlPattern } from '../lib/recipe';
+import { findMatchingRecipe } from '../lib/recipe';
 import { parsePagmdScript, compileHookForRun, pagmdScriptSummary, type PagmdScript } from '../lib/pagemd-script';
 import { Pipeline } from '../lib/pipeline';
 import type { PageContext, StopHookContext, ExtractResult, PipelineState } from '../lib/types';
@@ -93,17 +93,11 @@ function updateScriptBarUI(currentUrl?: string) {
   summary.classList.remove('hidden');
 
   ($('script-filename') as HTMLElement).textContent = loadedScriptFileName;
-  ($('script-pattern') as HTMLElement).textContent = loadedPagmdScript.urlPattern;
+  ($('script-pattern') as HTMLElement).textContent = '(no urlPattern — host/CLI --filter)';
 
   const badge = $('script-match-badge');
-  const url = currentUrl ?? ($('current-url') as HTMLElement).textContent ?? '';
-  if (url && url !== 'No page loaded' && matchUrlPattern(url, loadedPagmdScript.urlPattern)) {
-    badge.textContent = 'Matches';
-    badge.className = 'script-badge match';
-  } else {
-    badge.textContent = 'No match';
-    badge.className = 'script-badge no-match';
-  }
+  badge.textContent = 'Ready';
+  badge.className = 'script-badge match';
 
   summary.textContent = pagmdScriptSummary(loadedPagmdScript);
 }
@@ -118,7 +112,7 @@ async function loadPagmdScriptFile(file: File) {
   const tab = await getCurrentTab();
   updateScriptBarUI(tab?.url);
   switchHookTab('extract');
-  log(`Loaded script: ${file.name} (${script.urlPattern})`, 'success');
+  log(`Loaded script: ${file.name}`, 'success');
   showToast(`Loaded ${file.name}`);
 }
 

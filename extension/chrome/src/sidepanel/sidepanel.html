@@ -24,7 +24,7 @@
         <input id="script-file-input" type="file" accept=".pagemd.js,.js" hidden />
         <div id="script-meta" class="script-meta hidden">
           <span id="script-filename" class="script-filename" title="Loaded file"></span>
-          <span id="script-pattern" class="script-pattern" title="urlPattern"></span>
+          <span id="script-pattern" class="script-pattern" title="URL filter (CLI --filter; not stored in script)"></span>
           <span id="script-match-badge" class="script-badge"></span>
         </div>
         <div id="script-actions" class="script-actions hidden">
@@ -80,9 +80,7 @@
             <div class="docs-section">
               <h4 class="docs-title">Load .pagemd.js</h4>
               <p class="docs-hint">Use <b>Load .pagemd.js</b> to import scripts exported from PageMD Browser. Hooks appear in the Clean / Extract / Navigate / Stop tabs as editable <code>function</code> declarations.</p>
-              <pre class="docs-code">const urlPattern = "https://example.com/*";
-
-const defaultParams = {
+              <pre class="docs-code">const defaultParams = {
   noise: ["nav", "footer"],
   contentSelector: "article",
 };

@@ -35,7 +35,7 @@ At a high level:
 - **AI-assisted cleanup** — `/pretty` runs Cursor against a hidden sandbox copy of the page so the visible tab stays unchanged for comparison; cleaned output is saved per URL under `.pagemd/sessions/`.
 - **Preview** — `/pmd` opens a live PageMD preview of the cleaned session Markdown; `/pmd --original` shows the unmodified baseline for side-by-side comparison.
 - **Run scripts** — `/run file.pagemd.js` executes a validated script against the live tab.
-- **Export scripts** — `/export` asks Cursor to save a validated `.pagemd.js` file (with `urlPattern`, `clean()`, `extract()`, and optional helpers) that you can load in the Chrome extension.
+- **Export scripts** — `/export` asks Cursor to save a validated `.pagemd.js` file (`clean` / `extract` / optional helpers) that you can load in the Chrome extension.
 
 When Cursor is enabled, the REPL registers a local MCP bridge (`browser_snap`, `browser_clean`, `browser_eval`, `browser_save_markdown`, …). Use `/manual` and `/ai` to toggle whether free-form input is forwarded to the agent. See `pagemd browser dev --help` for flags such as `--no-ai`, `--port`, and profile options.
 

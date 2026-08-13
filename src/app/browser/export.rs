@@ -1,76 +1,38 @@
 /// Built-in prompt for `/export`: turn validated live-page work into a `.pagemd.js` script.
-const EXPORT_PROMPT_BODY: &str = r#"Export the **current PageMD Browser session** as a reusable `.pagemd.js` script.
+use super::script_format::PAGEMD_JS_FORMAT;
+
+const EXPORT_INTRO: &str = r#"Export the **current PageMD Browser session** as a reusable `.pagemd.js` script.
 
 Context: the user already tuned DOM cleanup / extraction (e.g. via `/pretty`, `/eval`, `/pmd`). Your job is to **capture what works** into a standalone script file — not to re-invent from scratch.
 
-## Script contract (plain JS for Chrome extension)
+"#;
 
-The extension parses your file, shows each hook in the **Clean / Extract / Navigate / Stop** tabs, and runs them in the page MAIN world. **Top-level helpers are supported** — put shared `const` / `function` declarations **above** the hook functions (not inside ESM modules).
+const EXPORT_OUTRO: &str = r#"
 
-```javascript
-const urlPattern = "https://example.com/*";  // whole-site: https://host/* ; path: https://host/docs/*
-
-// Optional defaults — overridable via `pagemd browser script … --param KEY=VALUE`
-const usage = "Short description shown by --usage";
-const defaultParams = {
-  noise: ["nav", "footer"],
-  contentSelector: "article",
-};
-const paramHelp = {
-  noise: "Selectors removed by clean()",
-  contentSelector: "Main content CSS selector for extract()",
-};
-
-function clean() {
-  let removed = 0;
-  (params.noise || []).forEach((sel) => {
-    document.querySelectorAll(sel).forEach((el) => { el.remove(); removed++; });
-  });
-  return { removed };  // required shape when clean() is defined
-}
-
-function extract() {
-  const el = document.querySelector(params.contentSelector || "article") || document.body;
-  return { title: document.title.trim(), html: el.innerHTML.trim() };
-}
-
-// optional:
-function navigate() { /* return { success: boolean } */ }
-function stop(context) { /* return { shouldStop: boolean, reason?: string }; context.params available */ }
-```
-
-Hard rules:
-- **Do NOT** use `import` / `export`.
-- **`browser_eval`**: default **`record_undo: false`** for all read-only probes; set `true` only when replaying DOM mutations (records inverse ops in-page).
-- **Never** read `.pagemd/runtime.json`, curl the bridge, or kill/restart the pagemd REPL process. If MCP is slow, ask the user to Ctrl+C the agent turn and retry.
-- Hook names must be **`function clean()` / `function extract()`** declarations (not arrow assignments).
-- **`urlPattern`**: call `browser_get_url`, use `https://<host>/*` for site-wide scripts.
-- Prefer **`const defaultParams = { … }`** for tunables; hooks read the injected **`params`** object (defaults ∪ CLI overrides).
-- **`clean()`**: return **`{ removed: number }`**; mutates live DOM before extract.
-- **`extract()`**: return **`{ title, html }`** (or `null` on failure). `html` = main content markup only.
-- Helpers used by hooks must live at **top level in the same file** (the extension bundles them automatically).
+### Hard rules (export)
+- **`browser_eval`**: default **`record_undo: false`** for read-only probes; set `true` only when mutating DOM.
+- **Never** read `.pagemd/runtime.json`, curl the bridge, or kill/restart the pagemd REPL. If MCP is slow, ask the user to Ctrl+C and retry.
 - **Do NOT** write Markdown in chat. Markdown is produced later by PageMD from `html`.
-- **Save location**: use **`browser_save_script` only** — it writes to the user's **current working directory** (where they started `pagemd browser`). Do **not** write under `~/Library/.../scripts` or any other path.
+- **Save location**: use **`browser_save_script` only** — writes to the user's **current working directory** (REPL cwd). Do **not** write under `~/Library/.../scripts`.
 
 ## Required workflow
 
-1. `browser_get_url` + `browser_get_title` — anchor urlPattern and naming.
+1. `browser_get_url` + `browser_get_title` — anchor naming and suggested `--filter`.
 2. `browser_snap` — confirm page structure if needed.
-3. Draft the full script text in memory following the contract above.
+3. Draft the full script text following the format above (`usage`, `defaultParams`, `paramHelp`, hooks). **Do not** include `urlPattern`.
 4. **Verify on the live tab before saving** (mandatory):
-   - `browser_undo` with `{ "all": true }` if you need to rewind recorded mutations, then replay your logic; OR
-   - use `browser_eval` with **`"record_undo": false`** to run read-only tests (e.g. `document.querySelector("h1")?.innerText`)
-   - for mutating replay use `record_undo: true` sparingly; prefer drafting from session work already in `/pmd`
-   - Optionally `browser_save_markdown` + `browser_get_session_markdown` to confirm extraction quality matches what the user approved in `/pmd`.
+   - `browser_undo` with `{ "all": true }` if needed; OR
+   - `browser_eval` with **`"record_undo": false`** for read-only tests
+   - Optionally `browser_save_markdown` + `browser_get_session_markdown` to match `/pmd` quality
 5. Fix any failures — **do not save** until the live test passes.
 6. **`browser_save_script`** with `{ "filename": "<short-site-name>.pagemd.js", "content": "<full script source>" }`.
-7. Reply briefly: saved path, urlPattern, what clean/extract do, and remind the user they can re-test with `/eval` or re-run on similar URLs.
+7. Reply briefly: saved path, suggested `--filter`, params, what clean/extract do; remind the user to smoke-test with `/run` or `pagemd browser script`.
 
 If verification fails after 2 attempts, explain what is blocked and what the user should `/eval` manually — do not save a broken script."#;
 
 pub fn build_export_prompt(export_dir: &std::path::Path, filename_hint: Option<&str>) -> String {
     let mut prompt = format!(
-        "{EXPORT_PROMPT_BODY}\n\n**Export directory (mandatory):** `{}`",
+        "{EXPORT_INTRO}{PAGEMD_JS_FORMAT}{EXPORT_OUTRO}\n\n**Export directory (mandatory):** `{}`",
         export_dir.display()
     );
     if let Some(hint) = filename_hint.filter(|s| !s.trim().is_empty()) {

@@ -50,6 +50,12 @@ export function matchUrlPattern(url: string, pattern: string): boolean {
   try {
     const urlObj = new URL(url);
     const pat = pattern.trim();
+    if (!pat || pat === '*') return true;
+
+    // Path-only filter: "/document/*"
+    if (pat.startsWith('/')) {
+      return globMatchPath(urlObj.pathname, pat);
+    }
 
     if (/^https?:\/\//i.test(pat)) {
       const pathWildcard = /\/\*+\/?$/.test(pat);
@@ -94,6 +100,22 @@ export function matchUrlPattern(url: string, pattern: string): boolean {
   } catch {
     return false;
   }
+}
+
+function globMatchPath(pathname: string, pattern: string): boolean {
+  if (!pattern.includes('*') && !pattern.includes('?')) {
+    return pathname === pattern || pathname.startsWith(pattern);
+  }
+  // Convert simple glob to RegExp: * → .*, ? → .
+  let re = '^';
+  for (const ch of pattern) {
+    if (ch === '*') re += '.*';
+    else if (ch === '?') re += '.';
+    else if (/[.+^${}()|[\]\\]/.test(ch)) re += `\\${ch}`;
+    else re += ch;
+  }
+  re += '$';
+  return new RegExp(re).test(pathname);
 }
 
 export function createEmptyRecipe(name: string, urlPattern: string): Recipe {

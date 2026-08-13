@@ -475,10 +475,6 @@ pub fn footnote_def_html(label: &str, body_html: &str, display: FootnoteDisplay)
     )
 }
 
-pub fn footnote_slot_label(raw_html: &str) -> Option<String> {
-    footnote_slot_labels(raw_html).into_iter().next()
-}
-
 /// All footnote slot labels in a raw HTML chunk (pulldown may merge adjacent slots).
 pub fn footnote_slot_labels(raw_html: &str) -> Vec<String> {
     let mut labels = Vec::new();
@@ -541,7 +537,7 @@ pub fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        footnote_slot_label, plain_footnote_title, split_footnote_text, FootnoteDisplay,
+        footnote_slot_labels, plain_footnote_title, split_footnote_text, FootnoteDisplay,
         FootnoteRegistry, FootnoteTextSegment,
     };
 
@@ -660,8 +656,8 @@ mod tests {
 
     #[test]
     fn slot_label_is_extracted_from_placeholder_html() {
-        let label = footnote_slot_label("<div data-pagemd-fn-slot=\"demo\"></div>");
-        assert_eq!(label.as_deref(), Some("demo"));
+        let labels = footnote_slot_labels("<div data-pagemd-fn-slot=\"demo\"></div>");
+        assert_eq!(labels, vec!["demo".to_string()]);
     }
 
     fn render_md(source: &str) -> String {

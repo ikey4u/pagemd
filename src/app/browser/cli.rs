@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{ArgAction, Args, Subcommand};
 
 use super::cdp::CdpSession;
@@ -34,13 +34,13 @@ pub enum BrowserCommand {
                       script's clean/extract/navigate/stop hooks, and write Markdown.\n\n\
                       Scripts may declare `const defaultParams = { … }` and read `params` in hooks.\n\
                       Override with repeatable `--param KEY=VALUE` or `--params '{…}'`.\n\
-                      Override the script allow-list with `--url-pattern GLOB`.\n\
+                      Override which pages may run with `--filter GLOB` (full URL or path like `/document/*`).\n\
                       Print script help (params) without launching Chrome: `--usage`.\n\n\
                       Usage:\n  \
                       pagemd browser script site.pagemd.js --usage\n  \
                       pagemd browser script site.pagemd.js --url https://example.com/docs\n  \
                       pagemd browser script site.pagemd.js --url https://other.example/a \\\n    \
-                      --url-pattern 'https://other.example/*'\n  \
+                      --filter '/document/*'\n  \
                       pagemd browser script site.pagemd.js --url https://example.com/a -o docs-out\n  \
                       pagemd browser script site.pagemd.js --url https://example.com/a \\\n    \
                       --param stopUrl=https://example.com/last --max-pages 10\n  \
@@ -113,16 +113,16 @@ pub struct BrowserScriptArgs {
     #[arg(
         long,
         required_unless_present = "usage",
-        help = "Start URL (must match urlPattern, or --url-pattern if set)"
+        help = "Start URL after Chrome opens"
     )]
     pub url: Option<String>,
 
     #[arg(
-        long = "url-pattern",
+        long = "filter",
         value_name = "GLOB",
-        help = "Override the script's urlPattern for this run"
+        help = "Optional URL allow filter (full URL or path glob, e.g. /document/*)"
     )]
-    pub url_pattern: Option<String>,
+    pub filter: Option<String>,
 
     #[arg(
         short = 'o',
@@ -132,8 +132,12 @@ pub struct BrowserScriptArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[arg(long, default_value_t = 50, help = "Maximum pages to extract")]
-    pub max_pages: usize,
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Maximum pages to extract (default: unlimited; 0 also means unlimited)"
+    )]
+    pub max_pages: Option<usize>,
 
     #[arg(
         long,
@@ -211,9 +215,10 @@ impl BrowserScriptArgs {
     }
 
     pub fn run_options(&self, cwd: &Path) -> Result<RunOptions> {
-        if self.max_pages == 0 {
-            bail!("--max-pages must be > 0");
-        }
+        let max_pages = match self.max_pages {
+            Some(0) | None => None,
+            Some(n) => Some(n),
+        };
         let delay_ms = parse_delay(&self.delay)?;
         let script_path = if self.script.is_absolute() {
             self.script.clone()
@@ -235,14 +240,14 @@ impl BrowserScriptArgs {
             merge_params_object(&mut params, json!({ key: value }))?;
         }
         Ok(RunOptions {
-            max_pages: self.max_pages,
+            max_pages,
             delay_ms,
             output,
             include_title: !self.no_title,
             include_source_url: !self.no_source,
             params,
-            url_pattern: self
-                .url_pattern
+            filter: self
+                .filter
                 .as_ref()
                 .map(|s| s.trim().to_owned())
                 .filter(|s| !s.is_empty()),
@@ -339,10 +344,12 @@ fn run_script(args: BrowserScriptArgs) -> Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
 
         eprintln!(
-            "Running {} (pattern: {}, max-pages: {})…",
+            "Running {} (filter: {}, max-pages: {})…",
             script_path.display(),
-            opts.effective_url_pattern(&script),
+            opts.filter_glob().unwrap_or("none"),
             opts.max_pages
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unlimited".into())
         );
         run_pagemd_script(&session, &script, &opts).await
     });
