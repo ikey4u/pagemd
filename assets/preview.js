@@ -208,6 +208,8 @@
 
   function swapContent(html) {
     var scrollState = readScrollState();
+    var activePanel = document.querySelector("[data-doc-panel].is-active");
+    var activeId = activePanel ? activePanel.id : "";
     var doc = new DOMParser().parseFromString(html, "text/html");
     var fresh = doc.querySelector(".container");
     var current = document.querySelector(".container");
@@ -230,6 +232,9 @@
 
     if (typeof window.PageMDInitWorkspace === "function") {
       window.PageMDInitWorkspace();
+    }
+    if (activeId && typeof window.PageMDActivatePanelById === "function") {
+      window.PageMDActivatePanelById(activeId);
     }
     if (typeof window.PageMDInitFootnotes === "function") {
       window.PageMDInitFootnotes(document);

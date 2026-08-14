@@ -463,6 +463,15 @@
 
   window.PageMDInitWorkspace = initWorkspace;
   window.PageMDActivateDocumentFromHash = activateDocumentFromHash;
+  window.PageMDActivatePanelById = function (id) {
+    if (!id) {
+      return;
+    }
+    var panel = document.getElementById(id);
+    if (panel && panel.hasAttribute("data-doc-panel")) {
+      activatePanel(panel);
+    }
+  };
 
   function fallbackCopyText(text) {
     var textarea = document.createElement("textarea");

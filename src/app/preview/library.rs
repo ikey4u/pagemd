@@ -397,6 +397,78 @@ mod tests {
     }
 
     #[test]
+    fn lazy_shell_keeps_mermaid_runtime_when_diagram_is_in_a_lazy_section() {
+        let dir = temp_dir("lazy-mermaid");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nno diagram\n").unwrap();
+        fs::write(
+            &b,
+            "# Beta\n\n```mermaid\nflowchart TB\n  src[LazyNodeSrc] --> dst[LazyNodeDst]\n```\n",
+        )
+        .unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = crate::core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let shell = lib.shell_html(&[0]).unwrap();
+        assert!(shell.contains("no diagram"), "{shell}");
+        assert!(shell.contains("data-lazy-section=\"2\""), "{shell}");
+        assert!(
+            !shell.contains("LazyNodeDst"),
+            "lazy shell must not embed the second file's diagram source"
+        );
+
+        let payload = lib.section_payload(2).unwrap();
+        assert!(
+            payload.html.contains("data-mermaid-client"),
+            "lazy section body still emits the client placeholder: {}",
+            payload.html
+        );
+        assert!(payload.html.contains("flowchart TB"), "{}", payload.html);
+        assert!(
+            payload.html.contains("class=\"mermaid\""),
+            "{}",
+            payload.html
+        );
+
+        let has_runtime = shell.contains("/__assets/mermaid.min.js");
+        let has_init = shell.contains("data-pagemd-mermaid-init");
+        assert!(
+            has_runtime && has_init,
+            "lazy shell cannot see later sections, so it must still ship mermaid.js; otherwise PageMDInitMermaid no-ops and the placeholder stays as source. runtime={has_runtime} init={has_init}"
+        );
+
+        let workspace = include_str!("../../../assets/workspace.js");
+        assert!(
+            !workspace.contains("mermaid.min.js"),
+            "lazy section fetch does not inject mermaid.js; the shell must already have it"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn incremental_skips_unchanged_files() {
         let dir = temp_dir("incr");
         let a = dir.join("a.md");
@@ -422,6 +494,56 @@ mod tests {
         assert!(lib.cache[1].is_none());
         lib.ensure_indices(&[1]).unwrap();
         assert!(lib.cache[1].as_ref().unwrap().section.html.contains("B2"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lazy_shell_html_does_not_change_when_a_lazy_file_is_edited() {
+        let dir = temp_dir("lazy-reload");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nbody-a\n").unwrap();
+        fs::write(&b, "# Beta\n\nbody-b\n").unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = crate::core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let first = lib.shell_html(&[0]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&b, "# Beta\n\nbody-b-changed\n").unwrap();
+        lib.invalidate(&[b.clone()]);
+        let second = lib.shell_html(&[0]).unwrap();
+        assert_eq!(
+            first, second,
+            "lazy shell only embeds file 0, so editing file 1 must not change stored HTML"
+        );
+        assert!(!second.contains("body-b-changed"));
+        assert!(lib
+            .section_payload(2)
+            .unwrap()
+            .html
+            .contains("body-b-changed"));
 
         fs::remove_dir_all(dir).unwrap();
     }

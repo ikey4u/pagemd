@@ -551,6 +551,15 @@ fn workspace_script_routes_relative_markdown_links_between_panels() {
     assert!(script.contains("relativeDocumentPath(panel) === targetPath"));
     assert!(script.contains("followMarkdownLink(markdownTarget)"));
     assert!(script.contains("markdownLink.hasAttribute(\"target\")"));
+    assert!(script.contains("window.PageMDActivatePanelById = function (id)"));
+}
+
+#[test]
+fn live_preview_restores_active_lazy_panel_after_reload() {
+    let script = include_str!("../assets/preview.js");
+
+    assert!(script.contains("var activeId = activePanel ? activePanel.id : \"\""));
+    assert!(script.contains("window.PageMDActivatePanelById(activeId)"));
 }
 
 #[test]
@@ -863,6 +872,62 @@ fn mermaid_client_mode_emits_source_placeholder() {
     );
     assert!(html.contains("/__assets/mermaid.min.js?v="));
     assert!(html.contains("data-pagemd-mermaid-init"));
+}
+
+#[test]
+fn lazy_workspace_html_ships_mermaid_runtime_without_inlined_diagrams() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "A".to_string(),
+                html: "<p>no diagram</p>".to_string(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+            RenderedSection {
+                title: "B".to_string(),
+                html: String::new(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["a.md".to_string(), "b.md".to_string()]),
+        None,
+        &pagemd::core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: true,
+            lazy_sections: true,
+            ..Default::default()
+        },
+    );
+    assert!(html.contains("data-lazy-section=\"2\""));
+    assert!(html.contains("/__assets/mermaid.min.js?v="));
+    assert!(html.contains("data-pagemd-mermaid-init"));
+}
+
+#[test]
+fn eager_html_without_mermaid_does_not_ship_runtime() {
+    let html = build_html_with_nav(
+        "Title",
+        &[RenderedSection {
+            title: "A".to_string(),
+            html: "<p>no diagram</p>".to_string(),
+            outline: Vec::new(),
+            footnotes: Vec::new(),
+        }],
+        "PG",
+        None,
+        None,
+        &pagemd::core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: true,
+            lazy_sections: false,
+            ..Default::default()
+        },
+    );
+    assert!(!html.contains("/__assets/mermaid.min.js"));
 }
 
 #[test]

@@ -566,11 +566,7 @@ fn commit_html(state: &Arc<AppState>, html: String, export: bool) {
         Err(_) => false,
     };
 
-    if !changed {
-        return;
-    }
-
-    if export {
+    if changed && export {
         if let Ok(guard) = state.html.read() {
             if let Err(err) = write_export_if_configured(state.export_path.as_deref(), &guard) {
                 eprintln!("Export error: {err:#}");
@@ -578,6 +574,9 @@ fn commit_html(state: &Arc<AppState>, html: String, export: bool) {
         }
     }
 
+    // Always tick SSE. Lazy shells only embed the first section, so a later
+    // file can change without altering the stored HTML; the browser still has
+    // to refetch `/__section/N`.
     let version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = state.notify_tx.send(version);
     eprintln!("Reloaded (v{version})");
@@ -771,5 +770,30 @@ mod watch_tests {
         );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn commit_html_notifies_even_when_shell_html_is_unchanged() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, RwLock};
+        use tokio::sync::broadcast;
+
+        let (notify_tx, mut rx) = broadcast::channel(8);
+        let state = Arc::new(AppState {
+            html: RwLock::new("<p>shell</p>".to_string()),
+            version: AtomicU64::new(0),
+            notify_tx,
+            export_path: None,
+            library: None,
+        });
+
+        commit_html(&state, "<p>shell</p>".to_string(), false);
+        assert_eq!(state.version.load(Ordering::SeqCst), 1);
+        assert_eq!(rx.try_recv().unwrap(), 1);
+
+        commit_html(&state, "<p>shell</p>".to_string(), false);
+        assert_eq!(state.version.load(Ordering::SeqCst), 2);
+        assert_eq!(rx.try_recv().unwrap(), 2);
+        assert_eq!(*state.html.read().unwrap(), "<p>shell</p>");
     }
 }

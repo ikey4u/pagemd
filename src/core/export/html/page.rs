@@ -383,11 +383,14 @@ pub fn build_html_with_nav(
         String::new()
     };
 
+    // Lazy shells only embed the active section. Later files may still contain
+    // Mermaid, so the runtime cannot be gated on currently inlined HTML.
     let mermaid_script = if allow_scripts
         && opts.client_mermaid_runtime
-        && body_sections
-            .iter()
-            .any(|section| section.html.contains(MERMAID_CLIENT_MARKER))
+        && (opts.lazy_sections
+            || body_sections
+                .iter()
+                .any(|section| section.html.contains(MERMAID_CLIENT_MARKER)))
     {
         mermaid_runtime_tags()
     } else {
