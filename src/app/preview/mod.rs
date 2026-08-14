@@ -1,10 +1,12 @@
 pub mod error;
+mod library;
 mod live;
 mod resources;
 mod server;
 
 use std::path::PathBuf;
 
+pub use library::{lock_library, PreviewLibrary, SectionPayload, SharedPreviewLibrary};
 pub use live::ensure_export_html;
 pub use live::wrap_for_preview;
 pub use resources::{collect_initial_watch_paths, collect_render_watch_paths};
@@ -18,6 +20,7 @@ pub struct ViewOptions {
     pub watch_paths: Vec<PathBuf>,
     pub open_browser: bool,
     pub export_path: Option<PathBuf>,
+    pub library: Option<SharedPreviewLibrary>,
 }
 
 pub fn validate_inputs(inputs: &[PathBuf]) -> anyhow::Result<()> {

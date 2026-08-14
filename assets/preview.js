@@ -124,30 +124,55 @@
       trigger.disabled = true;
       trigger.setAttribute("aria-busy", "true");
     }
-    try {
-      var html = buildExportHtml();
-      var blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      var url = URL.createObjectURL(blob);
-      var anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = suggestedExportName();
-      anchor.rel = "noopener";
-      anchor.style.display = "none";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(function () {
-        URL.revokeObjectURL(url);
-      }, 1000);
-    } catch (err) {
-      console.error("[pagemd] Export HTML failed", err);
-      window.alert("Export failed. See the browser console for details.");
-    } finally {
-      if (trigger) {
-        trigger.disabled = false;
-        trigger.removeAttribute("aria-busy");
+
+    var finish = function (html) {
+      try {
+        var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        var url = URL.createObjectURL(blob);
+        var anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = suggestedExportName();
+        anchor.rel = "noopener";
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(function () {
+          URL.revokeObjectURL(url);
+        }, 1000);
+      } catch (err) {
+        console.error("[pagemd] Export HTML failed", err);
+        window.alert("Export failed. See the browser console for details.");
+      } finally {
+        if (trigger) {
+          trigger.disabled = false;
+          trigger.removeAttribute("aria-busy");
+        }
       }
+    };
+
+    var needsServerExport = !!document.querySelector("[data-lazy-section], [data-lazy-loaded]");
+    if (needsServerExport) {
+      fetch("/__export", { cache: "no-store" })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("export failed (" + response.status + ")");
+          }
+          return response.text();
+        })
+        .then(finish)
+        .catch(function (err) {
+          console.error("[pagemd] Export HTML failed", err);
+          window.alert("Export failed. See the browser console for details.");
+          if (trigger) {
+            trigger.disabled = false;
+            trigger.removeAttribute("aria-busy");
+          }
+        });
+      return;
     }
+
+    finish(buildExportHtml());
   }
 
   function appendMermaidRuntime(doc) {

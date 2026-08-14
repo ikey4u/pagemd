@@ -21,7 +21,7 @@ pub use export::html::{
 pub use export::ExportOutput;
 pub use export::OutputFormat;
 pub use md::{normalize_footnote_definition_lines, ExtractedFootnote};
-pub use pipeline::{RenderResources, ResolvedInputs};
+pub use pipeline::{render_file_section, RenderResources, ResolvedInputs};
 pub use util::html_escape;
 
 use std::path::{Path, PathBuf};

@@ -9,6 +9,7 @@ pub struct HeadingOutline {
     pub text: String,
 }
 
+#[derive(Clone)]
 pub struct Section {
     pub title: String,
     pub html: String,

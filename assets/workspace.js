@@ -104,6 +104,74 @@
     }
     window.PageMDInitMermaid(panel || document);
   }
+  function lazySectionId(panel) {
+    return panel ? panel.getAttribute("data-lazy-section") : null;
+  }
+  function loadLazySection(panel) {
+    var id = lazySectionId(panel);
+    if (!id || panel.getAttribute("data-lazy-loaded") === "1") {
+      return Promise.resolve(panel);
+    }
+    if (panel._lazyPromise) {
+      return panel._lazyPromise;
+    }
+    var placeholder = panel.querySelector("[data-lazy-placeholder]");
+    if (placeholder) {
+      placeholder.textContent = "Loading…";
+    }
+    panel._lazyPromise = fetch("/__section/" + encodeURIComponent(id), { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("section " + id + " failed (" + response.status + ")");
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        panel.innerHTML = payload.html || "";
+        panel.setAttribute(
+          "data-panel-title",
+          payload.title || panel.getAttribute("data-panel-title") || ""
+        );
+        panel.setAttribute("data-lazy-loaded", "1");
+        panel.removeAttribute("data-lazy-section");
+        var outline = document.querySelector('[data-outline-for="' + panel.id + '"]');
+        if (outline) {
+          outline.innerHTML =
+            payload.outline_html || '<div class="doc-outline-empty">No headings</div>';
+        }
+        if (typeof window.PageMDInitFootnotes === "function") {
+          window.PageMDInitFootnotes(panel);
+        }
+        if (typeof window.PageMDInitDiagramLightbox === "function") {
+          window.PageMDInitDiagramLightbox(panel);
+        }
+        updateDocTitle(panel);
+        renderMermaidForPanel(panel);
+        delete panel._lazyPromise;
+        return panel;
+      })
+      .catch(function (err) {
+        delete panel._lazyPromise;
+        if (placeholder) {
+          placeholder.textContent = "Failed to load section.";
+        } else {
+          panel.innerHTML =
+            '<div class="doc-lazy-placeholder">Failed to load section.</div>';
+        }
+        console.error("[pagemd] lazy section", err);
+        throw err;
+      });
+    return panel._lazyPromise;
+  }
+  function ensurePanelContent(panel) {
+    if (!panel) {
+      return Promise.resolve(null);
+    }
+    if (lazySectionId(panel)) {
+      return loadLazySection(panel);
+    }
+    return Promise.resolve(panel);
+  }
   function currentTheme() {
     var attr = document.documentElement.getAttribute("data-theme");
     if (attr === "dark" || attr === "light") {
@@ -164,31 +232,12 @@
     return panelForId((window.location.hash || "").replace(/^#/, ""));
   }
   function activateDocumentFromHash() {
-    var panels = document.querySelectorAll("[data-doc-panel]");
-    var links = document.querySelectorAll("[data-doc-target]");
-    var outlines = document.querySelectorAll("[data-outline-for]");
     var id = (window.location.hash || "").replace(/^#/, "");
     var activePanel = id ? panelForId(id) : activePanelFromHash();
     if (!activePanel) {
       return;
     }
-    panels.forEach(function (panel) {
-      panel.classList.toggle("is-active", panel === activePanel);
-    });
-    links.forEach(function (link) {
-      link.classList.toggle("is-active", link.getAttribute("data-doc-target") === activePanel.id);
-    });
-    outlines.forEach(function (outline) {
-      outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
-    });
-    var activeLink = document.querySelector('[data-doc-target="' + activePanel.id + '"]');
-    if (activeLink) {
-      expandFolderAncestors(activeLink);
-    }
-    storageSet("activeDoc", activePanel.id);
-    updateDocTitle(activePanel);
-    updateOutlineActive();
-    renderMermaidForPanel(activePanel);
+    activatePanel(activePanel);
   }
   function updateOutlineActive() {
     var activePanel = document.querySelector("[data-doc-panel].is-active");
@@ -222,39 +271,53 @@
     return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
   }
   function activatePanel(activePanel) {
-    var panels = document.querySelectorAll("[data-doc-panel]");
-    var links = document.querySelectorAll("[data-doc-target]");
-    var outlines = document.querySelectorAll("[data-outline-for]");
-    panels.forEach(function (panel) {
-      panel.classList.toggle("is-active", panel === activePanel);
-    });
-    links.forEach(function (link) {
-      link.classList.toggle("is-active", link.getAttribute("data-doc-target") === activePanel.id);
-    });
-    outlines.forEach(function (outline) {
-      outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === activePanel.id);
-    });
-    var activeLink = document.querySelector('[data-doc-target="' + activePanel.id + '"]');
-    if (activeLink) {
-      expandFolderAncestors(activeLink);
+    if (!activePanel) {
+      return;
     }
-    storageSet("activeDoc", activePanel.id);
-    updateDocTitle(activePanel);
-    renderMermaidForPanel(activePanel);
+    ensurePanelContent(activePanel).then(function (panel) {
+      if (!panel) {
+        return;
+      }
+      var panels = document.querySelectorAll("[data-doc-panel]");
+      var links = document.querySelectorAll("[data-doc-target]");
+      var outlines = document.querySelectorAll("[data-outline-for]");
+      panels.forEach(function (item) {
+        item.classList.toggle("is-active", item === panel);
+      });
+      links.forEach(function (link) {
+        link.classList.toggle("is-active", link.getAttribute("data-doc-target") === panel.id);
+      });
+      outlines.forEach(function (outline) {
+        outline.classList.toggle("is-active", outline.getAttribute("data-outline-for") === panel.id);
+      });
+      var activeLink = document.querySelector('[data-doc-target="' + panel.id + '"]');
+      if (activeLink) {
+        expandFolderAncestors(activeLink);
+      }
+      storageSet("activeDoc", panel.id);
+      updateDocTitle(panel);
+      renderMermaidForPanel(panel);
+      updateOutlineActive();
+    });
   }
   function scrollToHeading(id, panelId) {
     var activePanel = panelId ? panelForId(panelId) : activePanelFromHash();
     if (!activePanel) {
       return false;
     }
-    var target = activePanel.querySelector("#" + cssEscape(id));
-    if (!target) {
-      return false;
-    }
-    activatePanel(activePanel);
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    history.replaceState(null, "", "#" + id);
-    updateOutlineActive();
+    ensurePanelContent(activePanel).then(function (panel) {
+      if (!panel) {
+        return;
+      }
+      var target = panel.querySelector("#" + cssEscape(id));
+      if (!target) {
+        return;
+      }
+      activatePanel(panel);
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      history.replaceState(null, "", "#" + id);
+      updateOutlineActive();
+    });
     return true;
   }
   function relativeDocumentPath(panel) {

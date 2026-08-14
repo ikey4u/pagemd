@@ -92,6 +92,7 @@ impl SessionPreview {
                     inputs,
                     watch_paths,
                     export_path: None,
+                    library: None,
                 },
                 move |_request: RenderRequest| render_session(&render_ctx),
             )

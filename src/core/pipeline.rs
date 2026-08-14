@@ -167,6 +167,32 @@ pub fn prepare_resources(opts: &ConvertOptions) -> Result<RenderResources> {
     })
 }
 
+/// Render one Markdown file into a [`Section`] (used by parallel + incremental pipelines).
+pub fn render_file_section(
+    opts: &ConvertOptions,
+    resources: &RenderResources,
+    input_path: &Path,
+    footnote_display: FootnoteDisplay,
+) -> Result<Section> {
+    let base_dir = input_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let source = fs::read_to_string(input_path)
+        .with_context(|| format!("Cannot read {}", input_path.display()))?;
+    render_markdown(
+        &source,
+        &base_dir,
+        opts.math_font_size,
+        &resources.font_dir,
+        &resources.ss,
+        &resources.ts,
+        opts.client_mermaid,
+        footnote_display,
+    )
+    .with_context(|| format!("Failed to render {}", input_path.display()))
+}
+
 fn build_document(
     opts: &ConvertOptions,
     title_hint: Option<&Path>,
@@ -174,36 +200,25 @@ fn build_document(
     input_files: &[PathBuf],
     footnote_display: FootnoteDisplay,
 ) -> Result<Document> {
-    let mut sections: Vec<Section> = Vec::new();
-    let mut nav_labels: Vec<String> = Vec::new();
+    use rayon::prelude::*;
+
+    let rendered: Vec<(String, Section)> = input_files
+        .par_iter()
+        .map(|input_path| {
+            let section = render_file_section(opts, resources, input_path, footnote_display)?;
+            Ok((section_label(input_path), section))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut sections = Vec::with_capacity(rendered.len());
+    let mut nav_labels = Vec::with_capacity(rendered.len());
     let mut doc_title = opts.title.clone().unwrap_or_default();
 
-    for input_path in input_files {
-        let base_dir = input_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
-
-        let source = fs::read_to_string(input_path)
-            .with_context(|| format!("Cannot read {}", input_path.display()))?;
-
-        let section = render_markdown(
-            &source,
-            &base_dir,
-            opts.math_font_size,
-            &resources.font_dir,
-            &resources.ss,
-            &resources.ts,
-            opts.client_mermaid,
-            footnote_display,
-        )
-        .with_context(|| format!("Failed to render {}", input_path.display()))?;
-
+    for (label, section) in rendered {
         if doc_title.is_empty() && !section.title.is_empty() {
             doc_title = section.title.clone();
         }
-
-        nav_labels.push(section_label(input_path));
+        nav_labels.push(label);
         sections.push(section);
     }
 

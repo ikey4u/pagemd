@@ -8,10 +8,7 @@ use crate::app::browser;
 use crate::app::convert::run_convert;
 use crate::app::preview;
 use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
-use crate::core::{
-    self, export_with_resources, prepare_resources, resolve_inputs, ConvertOptions,
-    HtmlExportOptions,
-};
+use crate::core::{self, prepare_resources, resolve_inputs, ConvertOptions};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -169,43 +166,45 @@ fn run_view(args: &ViewArgs) -> Result<()> {
 
     let mut convert_opts = ConvertOptions::from(&args.convert);
     convert_opts.client_mermaid = true;
-    let native_export_opts = {
-        let mut opts = convert_opts.clone();
-        opts.client_mermaid = false;
-        opts
-    };
+    let mut native_export_opts = convert_opts.clone();
+    native_export_opts.client_mermaid = false;
+
     let resolved = resolve_inputs(&convert_opts)?;
     preview::validate_inputs(&resolved.files)?;
 
     let resources = prepare_resources(&convert_opts)?;
     let title_hint = resolved.files.first().cloned();
     let html_opts = preview_html_opts();
-    let native_html_opts = HtmlExportOptions {
-        embed_workspace_script: true,
-        client_mermaid_runtime: false,
-        ..Default::default()
+
+    // Avoid reading hundreds of files just to discover asset refs at boot; scan
+    // roots already cover nested creates, and post-render discovery still runs.
+    let boot_sources: Vec<(PathBuf, String)> = if resolved.files.len() <= 32 {
+        resolved
+            .files
+            .iter()
+            .map(|input| {
+                let source = fs::read_to_string(input)
+                    .with_context(|| format!("Cannot read {}", input.display()))?;
+                Ok((input.clone(), source))
+            })
+            .collect::<Result<_>>()?
+    } else {
+        Vec::new()
     };
 
-    let sources: Vec<(PathBuf, String)> = resolved
-        .files
-        .iter()
-        .map(|input| {
-            let source = fs::read_to_string(input)
-                .with_context(|| format!("Cannot read {}", input.display()))?;
-            Ok((input.clone(), source))
-        })
-        .collect::<Result<_>>()?;
-
-    // Prefer scan roots first so they are registered recursively before file
-    // watches attach their parents as non-recursive.
     let mut watch_paths = resolved.directories.clone();
     watch_paths.extend(preview::collect_initial_watch_paths(
         &resolved.files,
-        &sources,
+        &boot_sources,
     ));
 
-    // High-quality HTML export is available from the view settings panel
-    // (browser-baked SVG). `--export` keeps writing a merman-rendered file.
+    let library = std::sync::Arc::new(std::sync::Mutex::new(preview::PreviewLibrary::new(
+        convert_opts.clone(),
+        html_opts,
+        resources,
+        title_hint.clone(),
+    )));
+
     let file_export = export_path.clone();
     preview::run(
         preview::ViewOptions {
@@ -215,48 +214,57 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             watch_paths,
             open_browser: !args.no_open,
             export_path: None,
+            library: Some(std::sync::Arc::clone(&library)),
         },
-        move |request: preview::RenderRequest| match export_with_resources(
-            &convert_opts,
-            &html_opts,
-            &resources,
-            title_hint.as_deref(),
-        ) {
-            Ok(document) => {
-                let _current_preview_inputs = request.inputs;
-                if let Some(path) = file_export.as_ref() {
-                    match export_with_resources(
-                        &native_export_opts,
-                        &native_html_opts,
-                        &resources,
-                        title_hint.as_deref(),
-                    ) {
-                        Ok(native) => {
-                            if let Err(err) = write_view_export(path, &native.html) {
-                                eprintln!("Export error: {err:#}");
+        move |request: preview::RenderRequest| {
+            let result = (|| -> Result<String> {
+                let mut lib = preview::lock_library(&library)?;
+                if !request.changed_paths.is_empty() {
+                    lib.invalidate(&request.changed_paths);
+                }
+                // Cold start / watch: shell embeds only the first section; others load on demand.
+                lib.shell_html(&[0])
+            })();
+
+            match result {
+                Ok(html) => {
+                    if let Some(path) = file_export.as_ref() {
+                        match preview::lock_library(&library).and_then(|mut lib| {
+                            lib.set_client_mermaid(false);
+                            lib.invalidate(&[]);
+                            let out = lib.full_html();
+                            lib.set_client_mermaid(true);
+                            lib.invalidate(&[]);
+                            out
+                        }) {
+                            Ok(native) => {
+                                if let Err(err) = write_view_export(path, &native) {
+                                    eprintln!("Export error: {err:#}");
+                                }
                             }
+                            Err(err) => eprintln!("Export render error: {err:#}"),
                         }
-                        Err(err) => eprintln!("Export render error: {err:#}"),
+                    }
+                    let extra_watch_paths = match resolve_inputs(&convert_opts) {
+                        Ok(resolved) => preview::collect_render_watch_paths(
+                            &resolved.files,
+                            &resolved.directories,
+                        ),
+                        Err(err) => {
+                            eprintln!("Watch path refresh warning: {err:#}");
+                            Vec::new()
+                        }
+                    };
+                    preview::RenderResult::Ok {
+                        html,
+                        extra_watch_paths,
                     }
                 }
-                let extra_watch_paths = match resolve_inputs(&convert_opts) {
-                    Ok(resolved) => {
-                        preview::collect_render_watch_paths(&resolved.files, &resolved.directories)
+                Err(err) => {
+                    eprintln!("Render error: {err:#}");
+                    preview::RenderResult::Err {
+                        html: build_preview_error_html(&err),
                     }
-                    Err(err) => {
-                        eprintln!("Watch path refresh warning: {err:#}");
-                        Vec::new()
-                    }
-                };
-                preview::RenderResult::Ok {
-                    html: document.html,
-                    extra_watch_paths,
-                }
-            }
-            Err(err) => {
-                eprintln!("Render error: {err:#}");
-                preview::RenderResult::Err {
-                    html: build_preview_error_html(&err),
                 }
             }
         },

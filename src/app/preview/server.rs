@@ -23,6 +23,7 @@ use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle as TokioJoinHandle;
 
+use super::library::SharedPreviewLibrary;
 use super::live;
 use super::ViewOptions;
 
@@ -30,6 +31,8 @@ const MERMAID_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.
 
 pub struct RenderRequest {
     pub inputs: Vec<PathBuf>,
+    /// Paths reported by the file watcher. Empty means unknown / full refresh.
+    pub changed_paths: Vec<PathBuf>,
 }
 
 pub enum RenderResult {
@@ -49,6 +52,7 @@ pub struct HostedPreviewOptions {
     pub inputs: Vec<PathBuf>,
     pub watch_paths: Vec<PathBuf>,
     pub export_path: Option<PathBuf>,
+    pub library: Option<SharedPreviewLibrary>,
 }
 
 impl From<ViewOptions> for HostedPreviewOptions {
@@ -59,6 +63,7 @@ impl From<ViewOptions> for HostedPreviewOptions {
             inputs: options.inputs,
             watch_paths: options.watch_paths,
             export_path: options.export_path,
+            library: options.library,
         }
     }
 }
@@ -69,6 +74,7 @@ struct AppState {
     version: AtomicU64,
     notify_tx: broadcast::Sender<u64>,
     export_path: Option<PathBuf>,
+    library: Option<SharedPreviewLibrary>,
 }
 
 struct WatchState {
@@ -81,6 +87,7 @@ struct PreviewEngineOptions {
     inputs: Vec<PathBuf>,
     watch_paths: Vec<PathBuf>,
     export_path: Option<PathBuf>,
+    library: Option<SharedPreviewLibrary>,
 }
 
 impl From<HostedPreviewOptions> for PreviewEngineOptions {
@@ -89,6 +96,7 @@ impl From<HostedPreviewOptions> for PreviewEngineOptions {
             inputs: options.inputs,
             watch_paths: options.watch_paths,
             export_path: options.export_path,
+            library: options.library,
         }
     }
 }
@@ -102,7 +110,7 @@ impl From<ViewOptions> for PreviewEngineOptions {
 struct PreviewEngine {
     state: Arc<AppState>,
     shutdown: Arc<AtomicBool>,
-    render_tx: Option<std::sync::mpsc::Sender<()>>,
+    render_tx: Option<std::sync::mpsc::Sender<Vec<PathBuf>>>,
     render_worker: Option<JoinHandle<()>>,
     watch_state: Arc<Mutex<WatchState>>,
 }
@@ -116,6 +124,7 @@ impl PreviewEngine {
 
         let first = render(RenderRequest {
             inputs: options.inputs.clone(),
+            changed_paths: Vec::new(),
         });
         let (initial_html, initial_extra, export_initial) = match first {
             RenderResult::Ok {
@@ -130,6 +139,7 @@ impl PreviewEngine {
             version: AtomicU64::new(0),
             notify_tx: notify_tx.clone(),
             export_path: options.export_path.clone(),
+            library: options.library.clone(),
         });
 
         if export_initial {
@@ -141,7 +151,7 @@ impl PreviewEngine {
         }
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let (render_tx, render_rx) = std::sync::mpsc::channel::<()>();
+        let (render_tx, render_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
 
         let mut watch_paths = options.watch_paths.clone();
         watch_paths.extend(initial_extra);
@@ -178,12 +188,14 @@ impl PreviewEngine {
             .route("/", get(index_handler))
             .route("/__events", get(events_handler))
             .route("/__assets/mermaid.min.js", get(mermaid_asset_handler))
+            .route("/__section/{id}", get(section_handler))
+            .route("/__export", get(export_handler))
             .with_state(Arc::clone(&self.state))
     }
 
     fn trigger_render(&self) {
         if let Some(tx) = &self.render_tx {
-            let _ = tx.send(());
+            let _ = tx.send(Vec::new());
         }
     }
 
@@ -373,7 +385,7 @@ pub fn run(
 
 fn setup_watcher(
     paths: Vec<PathBuf>,
-    render_tx: std::sync::mpsc::Sender<()>,
+    render_tx: std::sync::mpsc::Sender<Vec<PathBuf>>,
 ) -> Result<WatchState> {
     let debouncer = new_debouncer(
         Duration::from_millis(300),
@@ -381,9 +393,13 @@ fn setup_watcher(
             let Ok(events) = result else {
                 return;
             };
-            if should_trigger_render(&events) {
-                let _ = render_tx.send(());
+            if events.is_empty() {
+                return;
             }
+            let mut paths: Vec<PathBuf> = events.into_iter().map(|event| event.path).collect();
+            paths.sort();
+            paths.dedup();
+            let _ = render_tx.send(paths);
         },
     )
     .context("Failed to create file watcher")?;
@@ -394,10 +410,6 @@ fn setup_watcher(
     };
     sync_watches(&mut state, &paths)?;
     Ok(state)
-}
-
-fn should_trigger_render(events: &[notify_debouncer_mini::DebouncedEvent]) -> bool {
-    !events.is_empty()
 }
 
 fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Result<()> {
@@ -476,12 +488,18 @@ fn sync_watches(state: &mut WatchState, paths: &[PathBuf]) -> Result<()> {
     Ok(())
 }
 
-fn drain_render_triggers(render_rx: &std::sync::mpsc::Receiver<()>) {
-    while render_rx.try_recv().is_ok() {}
+fn drain_render_triggers(render_rx: &std::sync::mpsc::Receiver<Vec<PathBuf>>) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    while let Ok(batch) = render_rx.try_recv() {
+        paths.extend(batch);
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 fn spawn_render_worker(
-    render_rx: std::sync::mpsc::Receiver<()>,
+    render_rx: std::sync::mpsc::Receiver<Vec<PathBuf>>,
     state: Arc<AppState>,
     watch_state: std::sync::Weak<Mutex<WatchState>>,
     inputs: Vec<PathBuf>,
@@ -490,11 +508,15 @@ fn spawn_render_worker(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         while !shutdown.load(Ordering::Relaxed) {
-            match render_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(()) => drain_render_triggers(&render_rx),
+            let first = match render_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(paths) => paths,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-            }
+            };
+            let mut changed = first;
+            changed.extend(drain_render_triggers(&render_rx));
+            changed.sort();
+            changed.dedup();
 
             if shutdown.load(Ordering::Relaxed) {
                 break;
@@ -502,6 +524,7 @@ fn spawn_render_worker(
 
             let result = render(RenderRequest {
                 inputs: inputs.clone(),
+                changed_paths: changed,
             });
 
             if shutdown.load(Ordering::Relaxed) {
@@ -584,6 +607,69 @@ async fn index_handler(State(state): State<Arc<AppState>>) -> Html<String> {
         .map(|guard| live::wrap_for_preview(guard.clone()))
         .unwrap_or_else(|_| live::wrap_for_preview("<p>Preview unavailable</p>".to_string()));
     Html(html)
+}
+
+async fn section_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(library) = state.library.as_ref() else {
+        return (StatusCode::NOT_FOUND, "lazy sections unavailable").into_response();
+    };
+    let one_based = id.strip_prefix("doc-").unwrap_or(&id).parse::<usize>().ok();
+    let Some(one_based) = one_based else {
+        return (StatusCode::BAD_REQUEST, "invalid section id").into_response();
+    };
+
+    let payload = match library.lock() {
+        Ok(mut guard) => guard.section_payload(one_based),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "library lock poisoned").into_response();
+        }
+    };
+
+    match payload {
+        Ok(payload) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json; charset=utf-8"),
+            );
+            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            match serde_json::to_vec(&payload) {
+                Ok(body) => (StatusCode::OK, headers, body).into_response(),
+                Err(err) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("serialize section: {err}"),
+                )
+                    .into_response(),
+            }
+        }
+        Err(err) => (StatusCode::NOT_FOUND, format!("{err:#}")).into_response(),
+    }
+}
+
+async fn export_handler(State(state): State<Arc<AppState>>) -> Response {
+    let Some(library) = state.library.as_ref() else {
+        // Fall back to current shell HTML when no library is attached.
+        let html = state
+            .html
+            .read()
+            .map(|guard| live::ensure_export_html(guard.clone()))
+            .unwrap_or_else(|_| "<p>Export unavailable</p>".to_string());
+        return Html(html).into_response();
+    };
+
+    let html = match library.lock() {
+        Ok(mut guard) => guard.full_html(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "library lock poisoned").into_response();
+        }
+    };
+    match html {
+        Ok(html) => Html(live::ensure_export_html(html)).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")).into_response(),
+    }
 }
 
 async fn mermaid_asset_handler() -> Response {

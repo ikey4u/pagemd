@@ -149,14 +149,17 @@ pub fn collect_render_watch_paths(files: &[PathBuf], directories: &[PathBuf]) ->
         paths.insert(dir.canonicalize().unwrap_or_else(|_| dir.clone()));
     }
 
-    match discover_watch_paths(files) {
-        Ok(discovered) => {
-            for path in discovered {
-                paths.insert(path);
+    // Full-corpus asset scans are expensive; directory watches already cover nested files.
+    if files.len() <= 64 {
+        match discover_watch_paths(files) {
+            Ok(discovered) => {
+                for path in discovered {
+                    paths.insert(path);
+                }
             }
-        }
-        Err(err) => {
-            eprintln!("Resource watch discovery warning: {err:#}");
+            Err(err) => {
+                eprintln!("Resource watch discovery warning: {err:#}");
+            }
         }
     }
 

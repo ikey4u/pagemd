@@ -342,6 +342,7 @@ async fn hosted_preview_starts_inside_tokio_runtime() {
             inputs: vec![session_path.clone()],
             watch_paths: vec![session_path.clone()],
             export_path: None,
+            library: None,
         },
         move |_request: RenderRequest| match export_with_resources(
             &convert_opts,

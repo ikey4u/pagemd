@@ -24,29 +24,34 @@ fn build_outline_nav(body_sections: &[RenderedSection]) -> String {
         .map(|(section_index, section)| {
             let doc_id = format!("doc-{}", section_index + 1);
             let active = if section_index == 0 { " is-active" } else { "" };
-            let items = if section.outline.is_empty() {
-                "<div class=\"doc-outline-empty\">No headings</div>\n".to_string()
-            } else {
-                section
-                    .outline
-                    .iter()
-                    .map(|heading| {
-                        let depth = heading.level.saturating_sub(1).min(5);
-                        format!(
-                            "<a class=\"doc-outline-link depth-{depth}\" href=\"#{}\" data-heading-target=\"{}\" title=\"{}\">{}</a>\n",
-                            html_escape(&heading.id),
-                            html_escape(&heading.id),
-                            html_escape(&heading.text),
-                            html_escape(&heading.text)
-                        )
-                    })
-                    .collect()
-            };
             format!(
-                "<nav class=\"doc-outline-list{active}\" data-outline-for=\"{doc_id}\">\n{items}</nav>\n"
+                "<nav class=\"doc-outline-list{active}\" data-outline-for=\"{doc_id}\">\n{}</nav>\n",
+                outline_list_inner(section)
             )
         })
         .collect()
+}
+
+/// Inner outline links for one section (also used by lazy section API).
+pub fn outline_list_inner(section: &RenderedSection) -> String {
+    if section.outline.is_empty() {
+        "<div class=\"doc-outline-empty\">No headings</div>\n".to_string()
+    } else {
+        section
+            .outline
+            .iter()
+            .map(|heading| {
+                let depth = heading.level.saturating_sub(1).min(5);
+                format!(
+                    "<a class=\"doc-outline-link depth-{depth}\" href=\"#{}\" data-heading-target=\"{}\" title=\"{}\">{}</a>\n",
+                    html_escape(&heading.id),
+                    html_escape(&heading.id),
+                    html_escape(&heading.text),
+                    html_escape(&heading.text)
+                )
+            })
+            .collect()
+    }
 }
 
 pub fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) -> String {
@@ -312,10 +317,21 @@ pub fn build_html_with_nav(
                 let source_path = document_relative_path(input_paths, index)
                     .map(|path| format!(" data-doc-path=\"{}\"", html_escape(&path)))
                     .unwrap_or_default();
+                let lazy = opts.lazy_sections && sec.html.trim().is_empty();
+                let lazy_attr = if lazy {
+                    format!(" data-lazy-section=\"{}\"", index + 1)
+                } else {
+                    String::new()
+                };
+                let body = if lazy {
+                    "<div class=\"doc-lazy-placeholder\" data-lazy-placeholder>Loading…</div>\n"
+                        .to_string()
+                } else {
+                    sec.html.clone()
+                };
                 format!(
-                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel data-panel-title=\"{panel_title}\"{source_path}>\n{}</section>\n",
+                    "<section class=\"doc-section doc-panel{active}\" id=\"doc-{}\" data-doc-panel data-panel-title=\"{panel_title}\"{source_path}{lazy_attr}>\n{body}</section>\n",
                     index + 1,
-                    sec.html
                 )
             })
             .collect()
@@ -501,6 +517,8 @@ pub struct HtmlExportOptions {
     pub embed_workspace_script: bool,
     /// Serve official mermaid.js for client-side diagram rendering (view mode).
     pub client_mermaid_runtime: bool,
+    /// When true, empty section bodies are emitted as lazy placeholders (`data-lazy-section`).
+    pub lazy_sections: bool,
     pub chrome: WorkspaceChrome,
     pub scripts: ScriptEmbed,
     pub theme: ThemeMode,
@@ -516,6 +534,7 @@ impl Default for HtmlExportOptions {
             // Match CLI convert / SingleFile export defaults.
             embed_workspace_script: true,
             client_mermaid_runtime: false,
+            lazy_sections: false,
             chrome: WorkspaceChrome::Auto,
             scripts: ScriptEmbed::Full,
             theme: ThemeMode::Persist,
@@ -536,6 +555,7 @@ impl HtmlExportOptions {
         Self {
             embed_workspace_script: false,
             client_mermaid_runtime: false,
+            lazy_sections: false,
             chrome: WorkspaceChrome::ContentOnly,
             scripts: ScriptEmbed::None,
             theme: ThemeMode::Host,

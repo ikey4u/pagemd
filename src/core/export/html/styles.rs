@@ -830,6 +830,12 @@ html.pagemd-lightbox-open {
   display: block;
 }
 
+.doc-lazy-placeholder {
+  color: var(--color-muted, #64748b);
+  font-size: 0.95rem;
+  padding: 2rem 0;
+}
+
 .doc-outline-list {
   display: none;
 }
