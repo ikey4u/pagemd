@@ -18,8 +18,9 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use futures::stream::Stream;
-use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
+use notify::event::{AccessKind, AccessMode, EventKind, ModifyKind};
+use notify::{EventHandler, RecommendedWatcher, RecursiveMode, Watcher};
+use notify_debouncer_mini::{new_debouncer_opt, DebounceEventResult};
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle as TokioJoinHandle;
 
@@ -78,9 +79,64 @@ struct AppState {
 }
 
 struct WatchState {
-    debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
+    debouncer: notify_debouncer_mini::Debouncer<ContentChangeWatcher>,
     /// Canonical path → whether the active watch is recursive.
     watched: HashMap<PathBuf, bool>,
+}
+
+/// Drops Linux inotify OPEN/ATTRIB noise before debounce.
+///
+/// `notify`'s inotify backend watches `OPEN` and `ATTRIB`. Reading Markdown
+/// during render (and NFS atime updates) therefore looks like a change,
+/// which retriggers render → another OPEN → `Reloaded (vN)` forever.
+/// Keep CLOSE_WRITE, data/name modifies, create, and remove.
+struct ContentChangeWatcher {
+    inner: RecommendedWatcher,
+}
+
+impl Watcher for ContentChangeWatcher {
+    fn new<F: EventHandler>(mut event_handler: F, config: notify::Config) -> notify::Result<Self> {
+        let inner = RecommendedWatcher::new(
+            move |event: notify::Result<notify::Event>| match event {
+                Ok(event) if is_content_change_event(&event) => {
+                    event_handler.handle_event(Ok(event));
+                }
+                Ok(_) => {}
+                Err(err) => event_handler.handle_event(Err(err)),
+            },
+            config,
+        )?;
+        Ok(Self { inner })
+    }
+
+    fn watch(&mut self, path: &Path, recursive_mode: RecursiveMode) -> notify::Result<()> {
+        self.inner.watch(path, recursive_mode)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        self.inner.unwatch(path)
+    }
+
+    fn configure(&mut self, option: notify::Config) -> notify::Result<bool> {
+        self.inner.configure(option)
+    }
+
+    fn kind() -> notify::WatcherKind {
+        RecommendedWatcher::kind()
+    }
+}
+
+fn is_content_change_event(event: &notify::Event) -> bool {
+    match event.kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        EventKind::Modify(ModifyKind::Metadata(_)) => false,
+        EventKind::Create(_)
+        | EventKind::Remove(_)
+        | EventKind::Modify(_)
+        | EventKind::Any
+        | EventKind::Other => true,
+    }
 }
 
 struct PreviewEngineOptions {
@@ -387,9 +443,9 @@ fn setup_watcher(
     paths: Vec<PathBuf>,
     render_tx: std::sync::mpsc::Sender<Vec<PathBuf>>,
 ) -> Result<WatchState> {
-    let debouncer = new_debouncer(
-        Duration::from_millis(300),
-        move |result: DebounceEventResult| {
+    let config = notify_debouncer_mini::Config::default().with_timeout(Duration::from_millis(300));
+    let debouncer =
+        new_debouncer_opt::<_, ContentChangeWatcher>(config, move |result: DebounceEventResult| {
             let Ok(events) = result else {
                 return;
             };
@@ -400,9 +456,8 @@ fn setup_watcher(
             paths.sort();
             paths.dedup();
             let _ = render_tx.send(paths);
-        },
-    )
-    .context("Failed to create file watcher")?;
+        })
+        .context("Failed to create file watcher")?;
 
     let mut state = WatchState {
         debouncer,
@@ -748,6 +803,28 @@ mod watch_tests {
         let dir = std::env::temp_dir().join(format!("pagemd-{name}-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn content_watch_ignores_open_and_metadata_noise() {
+        use notify::event::{CreateKind, DataChange, MetadataKind, RemoveKind};
+        use notify::Event;
+
+        let open = Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)));
+        let attrib = Event::new(EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)));
+        let close_read = Event::new(EventKind::Access(AccessKind::Close(AccessMode::Read)));
+        assert!(!is_content_change_event(&open));
+        assert!(!is_content_change_event(&attrib));
+        assert!(!is_content_change_event(&close_read));
+
+        let close_write = Event::new(EventKind::Access(AccessKind::Close(AccessMode::Write)));
+        let data = Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Content)));
+        let create = Event::new(EventKind::Create(CreateKind::File));
+        let remove = Event::new(EventKind::Remove(RemoveKind::File));
+        assert!(is_content_change_event(&close_write));
+        assert!(is_content_change_event(&data));
+        assert!(is_content_change_event(&create));
+        assert!(is_content_change_event(&remove));
     }
 
     #[test]
