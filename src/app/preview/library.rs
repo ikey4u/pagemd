@@ -469,6 +469,65 @@ mod tests {
     }
 
     #[test]
+    fn lazy_shell_keeps_diagram_html_runtime_when_fence_is_in_a_lazy_section() {
+        let dir = temp_dir("lazy-diagram-html");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nno diagram\n").unwrap();
+        fs::write(
+            &b,
+            "# Beta\n\n```diagram html\n<div class=\"rounded-xl bg-sky-50 p-4\">LazyHtmlNode</div>\n```\n",
+        )
+        .unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = crate::core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let shell = lib.shell_html(&[0]).unwrap();
+        assert!(shell.contains("no diagram"), "{shell}");
+        assert!(shell.contains("data-lazy-section=\"2\""));
+        assert!(
+            !shell.contains("LazyHtmlNode"),
+            "lazy shell must not embed the second file's diagram html"
+        );
+        assert!(
+            shell.contains("/__assets/diagram-html-tailwind-browser.js"),
+            "lazy shell cannot see later sections, so it must still ship the Tailwind runtime: {shell}"
+        );
+        assert!(shell.contains("type=\"text/tailwindcss\""));
+
+        let payload = lib.section_payload(2).unwrap();
+        assert!(
+            payload.html.contains("class=\"diagram-html-display\""),
+            "{}",
+            payload.html
+        );
+        assert!(payload.html.contains("LazyHtmlNode"), "{}", payload.html);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn incremental_skips_unchanged_files() {
         let dir = temp_dir("incr");
         let a = dir.join("a.md");

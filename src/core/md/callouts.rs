@@ -5,7 +5,7 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
 use crate::core::md::footnotes::{ExtractedFootnote, FootnoteDisplay, FootnoteRegistry};
-use crate::core::md::preprocess::callout_label;
+use crate::core::md::preprocess::{callout_label, FoldState};
 use crate::core::md::render::render_markdown_with_depth;
 use crate::core::util::html_escape;
 
@@ -22,16 +22,11 @@ pub struct CalloutRenderContext<'a> {
     pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
-pub fn render_callout(
-    kind: &str,
-    title: &str,
-    content: &str,
-    ctx: &mut CalloutRenderContext<'_>,
-) -> Result<String> {
-    let body = if ctx.depth >= 8 {
-        format!("<p>{}</p>\n", html_escape(content.trim()))
+fn render_nested_markdown(content: &str, ctx: &mut CalloutRenderContext<'_>) -> Result<String> {
+    if ctx.depth >= 8 {
+        Ok(format!("<p>{}</p>\n", html_escape(content.trim())))
     } else {
-        render_markdown_with_depth(
+        Ok(render_markdown_with_depth(
             content,
             ctx.base_dir,
             ctx.math_font_size,
@@ -44,16 +39,65 @@ pub fn render_callout(
             ctx.footnote_display,
             ctx.extracted_footnotes,
         )?
-        .html
-    };
+        .html)
+    }
+}
+
+fn chevron() -> &'static str {
+    "<span class=\"md-fold-chevron\" aria-hidden=\"true\"></span>"
+}
+
+pub fn render_callout(
+    kind: &str,
+    title: &str,
+    content: &str,
+    fold: Option<FoldState>,
+    ctx: &mut CalloutRenderContext<'_>,
+) -> Result<String> {
+    let body = render_nested_markdown(content, ctx)?;
     let title_text = if title.trim().is_empty() {
         callout_label(kind)
     } else {
         title.trim()
     };
+    let title_html = html_escape(title_text);
+    if let Some(fold) = fold {
+        let open_attr = if matches!(fold, FoldState::Open) {
+            " open"
+        } else {
+            ""
+        };
+        Ok(format!(
+            "<details class=\"callout callout-{kind} callout-fold\"{open_attr}>\
+<summary class=\"callout-title\">{chevron}<span>{title_html}</span></summary>\
+<div class=\"callout-body\">{body}</div></details>\n",
+            chevron = chevron(),
+        ))
+    } else {
+        Ok(format!(
+            "<div class=\"callout callout-{kind}\"><div class=\"callout-title\"><span>{title_html}</span></div><div class=\"callout-body\">{body}</div></div>\n"
+        ))
+    }
+}
+
+pub fn render_details(
+    title: &str,
+    content: &str,
+    open: bool,
+    ctx: &mut CalloutRenderContext<'_>,
+) -> Result<String> {
+    let body = render_nested_markdown(content, ctx)?;
+    let title_text = if title.trim().is_empty() {
+        "Details"
+    } else {
+        title.trim()
+    };
+    let open_attr = if open { " open" } else { "" };
     Ok(format!(
-        "<div class=\"callout callout-{kind}\"><div class=\"callout-title\"><span>{}</span></div><div class=\"callout-body\">{}</div></div>\n",
+        "<details class=\"md-details\"{open_attr}>\
+<summary class=\"md-details-summary\">{chevron}<span>{}</span></summary>\
+<div class=\"md-details-body\">{body}</div></details>\n",
         html_escape(title_text),
-        body
+        chevron = chevron(),
     ))
 }

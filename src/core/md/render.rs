@@ -14,13 +14,15 @@ use crate::core::ext::diagram::{
 };
 use crate::core::ext::math::latex_to_svg;
 use crate::core::ext::typst;
-use crate::core::md::callouts::{render_callout, CalloutRenderContext};
+use crate::core::md::callouts::{render_callout, render_details, CalloutRenderContext};
 use crate::core::md::footnotes::{
     footnote_def_html, footnote_ref_html, footnote_slot_labels, plain_footnote_title,
     sort_extracted_footnotes, split_footnote_text, ExtractedFootnote, FootnoteDisplay,
     FootnoteRegistry, FootnoteTextSegment,
 };
-use crate::core::md::preprocess::{parse_internal_callout_info, preprocess_markdown_extensions};
+use crate::core::md::preprocess::{
+    parse_internal_block_info, preprocess_markdown_extensions, InternalFence,
+};
 use crate::core::model::{HeadingOutline, RenderedSection};
 use crate::core::util::unique_heading_id;
 use crate::core::util::{eprint_fence_render_error, html_escape};
@@ -493,31 +495,61 @@ pub fn render_markdown_with_depth(
                                 html.push_str(&typst::typst_error_html(&buf_str));
                             }
                         },
-                        "pagemd-callout" => {
-                            if let Some((kind, title)) = parse_internal_callout_info(&lang_info) {
-                                match render_callout(
-                                    &kind,
-                                    &title,
-                                    &buf_str,
-                                    &mut CalloutRenderContext {
-                                        base_dir,
-                                        math_font_size,
-                                        font_dir,
-                                        ss,
-                                        ts,
-                                        footnotes,
-                                        depth,
-                                        client_mermaid,
-                                        footnote_display,
-                                        extracted_footnotes,
-                                    },
-                                ) {
-                                    Ok(rendered) => html.push_str(&rendered),
-                                    Err(_) => html
-                                        .push_str(&highlight_code(&buf_str, &lang_str, ss, theme)),
+                        "pagemd-callout" | "pagemd-callout+" | "pagemd-callout-"
+                        | "pagemd-details" | "pagemd-details+" | "pagemd-details-" => {
+                            match parse_internal_block_info(&lang_info) {
+                                Some(InternalFence::Callout { kind, title, fold }) => {
+                                    match render_callout(
+                                        &kind,
+                                        &title,
+                                        &buf_str,
+                                        fold,
+                                        &mut CalloutRenderContext {
+                                            base_dir,
+                                            math_font_size,
+                                            font_dir,
+                                            ss,
+                                            ts,
+                                            footnotes,
+                                            depth,
+                                            client_mermaid,
+                                            footnote_display,
+                                            extracted_footnotes,
+                                        },
+                                    ) {
+                                        Ok(rendered) => html.push_str(&rendered),
+                                        Err(_) => html.push_str(&highlight_code(
+                                            &buf_str, &lang_str, ss, theme,
+                                        )),
+                                    }
                                 }
-                            } else {
-                                html.push_str(&highlight_code(&buf_str, &lang_str, ss, theme));
+                                Some(InternalFence::Details { title, open }) => {
+                                    match render_details(
+                                        &title,
+                                        &buf_str,
+                                        open,
+                                        &mut CalloutRenderContext {
+                                            base_dir,
+                                            math_font_size,
+                                            font_dir,
+                                            ss,
+                                            ts,
+                                            footnotes,
+                                            depth,
+                                            client_mermaid,
+                                            footnote_display,
+                                            extracted_footnotes,
+                                        },
+                                    ) {
+                                        Ok(rendered) => html.push_str(&rendered),
+                                        Err(_) => html.push_str(&highlight_code(
+                                            &buf_str, &lang_str, ss, theme,
+                                        )),
+                                    }
+                                }
+                                None => {
+                                    html.push_str(&highlight_code(&buf_str, &lang_str, ss, theme));
+                                }
                             }
                         }
                         _ => {

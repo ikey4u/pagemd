@@ -38,30 +38,98 @@ pub fn callout_label(kind: &str) -> &'static str {
     }
 }
 
-fn parse_callout_marker(text: &str) -> Option<(String, String)> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldState {
+    Open,
+    Closed,
+}
+
+pub enum InternalFence {
+    Callout {
+        kind: String,
+        title: String,
+        fold: Option<FoldState>,
+    },
+    Details {
+        title: String,
+        open: bool,
+    },
+}
+
+fn split_fold_suffix(token: &str) -> (&str, Option<FoldState>) {
+    if let Some(base) = token.strip_suffix('+') {
+        if !base.is_empty() {
+            return (base, Some(FoldState::Open));
+        }
+    }
+    if let Some(base) = token.strip_suffix('-') {
+        if !base.is_empty() {
+            return (base, Some(FoldState::Closed));
+        }
+    }
+    (token, None)
+}
+
+fn unquote_title(title: &str) -> String {
+    let title = title.trim();
+    title
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| title.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(title)
+        .to_string()
+}
+
+fn parse_callout_marker(text: &str) -> Option<(String, String, Option<FoldState>)> {
     let trimmed = text.trim();
     if !trimmed.starts_with("[!") {
         return None;
     }
     let end = trimmed.find(']')?;
-    let raw_kind = trimmed.get(2..end)?.trim_end_matches(['+', '-']);
+    let inner = trimmed.get(2..end)?;
+    let (raw_kind, inner_fold) = split_fold_suffix(inner.trim());
     let kind = canonical_callout_kind(raw_kind)?.to_string();
-    let title = trimmed[end + 1..].trim().to_string();
-    Some((kind, title))
+    let rest = &trimmed[end + 1..];
+    let (after_fold, title_src) = if rest.starts_with('+') {
+        (Some(FoldState::Open), &rest[1..])
+    } else if rest.starts_with('-') {
+        (Some(FoldState::Closed), &rest[1..])
+    } else {
+        (None, rest)
+    };
+    Some((
+        kind,
+        title_src.trim().to_string(),
+        after_fold.or(inner_fold),
+    ))
 }
 
-fn parse_admonition_info(text: &str) -> Option<(String, String)> {
+fn is_details_kind(kind: &str) -> bool {
+    matches!(kind, "details" | "fold" | "collapse")
+}
+
+fn parse_details_info(text: &str) -> Option<(FoldState, String)> {
     let trimmed = text.trim();
     let mut parts = trimmed.splitn(2, char::is_whitespace);
-    let kind = canonical_callout_kind(parts.next()?)?.to_string();
-    let title = parts.next().unwrap_or("").trim();
-    let title = title
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .or_else(|| title.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-        .unwrap_or(title)
-        .to_string();
-    Some((kind, title))
+    let head = parts.next()?.to_ascii_lowercase();
+    let (base, fold) = split_fold_suffix(&head);
+    if !is_details_kind(base) {
+        return None;
+    }
+    let open = match fold {
+        Some(FoldState::Open) => FoldState::Open,
+        _ => FoldState::Closed,
+    };
+    Some((open, unquote_title(parts.next().unwrap_or(""))))
+}
+
+fn parse_admonition_info(text: &str) -> Option<(String, String, Option<FoldState>)> {
+    let trimmed = text.trim();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let head = parts.next()?.to_ascii_lowercase();
+    let (base, fold) = split_fold_suffix(&head);
+    let kind = canonical_callout_kind(base)?.to_string();
+    Some((kind, unquote_title(parts.next().unwrap_or("")), fold))
 }
 
 fn strip_blockquote_marker(line: &str) -> Option<&str> {
@@ -115,14 +183,47 @@ fn fence_safe_text(text: &str) -> String {
     text.replace('`', "'")
 }
 
-fn internal_callout_fence(kind: &str, title: &str, content: &str) -> String {
+fn internal_callout_fence(
+    kind: &str,
+    title: &str,
+    content: &str,
+    fold: Option<FoldState>,
+) -> String {
     let safe_title = fence_safe_text(title);
     let title_suffix = if safe_title.is_empty() {
         String::new()
     } else {
         format!(" {safe_title}")
     };
-    let header = format!("pagemd-callout {kind}{title_suffix}");
+    let tag = match fold {
+        Some(FoldState::Open) => "pagemd-callout+",
+        Some(FoldState::Closed) => "pagemd-callout-",
+        None => "pagemd-callout",
+    };
+    let header = format!("{tag} {kind}{title_suffix}");
+    let fence = "`".repeat(code_fence_length(&[content, &header]));
+    let mut out = format!("{fence}{header}\n");
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
+fn internal_details_fence(open: FoldState, title: &str, content: &str) -> String {
+    let safe_title = fence_safe_text(title);
+    let tag = if matches!(open, FoldState::Open) {
+        "pagemd-details+"
+    } else {
+        "pagemd-details"
+    };
+    let header = if safe_title.is_empty() {
+        tag.to_string()
+    } else {
+        format!("{tag} {safe_title}")
+    };
     let fence = "`".repeat(code_fence_length(&[content, &header]));
     let mut out = format!("{fence}{header}\n");
     out.push_str(content);
@@ -192,6 +293,62 @@ fn attach_trailing_callout_structure(content: &mut String, lines: &[&str], i: &m
             break;
         }
     }
+}
+
+fn collect_indented_admonition_content(lines: &[&str], i: &mut usize) -> String {
+    let mut content = String::new();
+    while *i < lines.len() {
+        let line = lines[*i];
+        if line.trim().is_empty() {
+            content.push('\n');
+            *i += 1;
+        } else if let Some(stripped) = line.strip_prefix("    ") {
+            content.push_str(stripped);
+            content.push('\n');
+            *i += 1;
+        } else if let Some(stripped) = line.strip_prefix('\t') {
+            content.push_str(stripped);
+            content.push('\n');
+            *i += 1;
+        } else if leading_spaces(line) > 0 {
+            content.push_str(line.trim_start());
+            content.push('\n');
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+    content
+}
+
+fn is_colon_fence_open(line: &str) -> bool {
+    let Some(rest) = line.trim().strip_prefix(":::") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    !rest.is_empty()
+        && (parse_details_info(rest).is_some() || parse_admonition_info(rest).is_some())
+}
+
+fn collect_colon_fence_content(lines: &[&str], i: &mut usize) -> String {
+    let mut content = String::new();
+    let mut depth = 1usize;
+    while *i < lines.len() {
+        let trimmed = lines[*i].trim();
+        if trimmed == ":::" {
+            depth -= 1;
+            if depth == 0 {
+                *i += 1;
+                break;
+            }
+        } else if is_colon_fence_open(lines[*i]) {
+            depth += 1;
+        }
+        content.push_str(lines[*i]);
+        content.push('\n');
+        *i += 1;
+    }
+    content
 }
 
 fn collect_blockquote_callout_content(lines: &[&str], i: &mut usize) -> String {
@@ -413,11 +570,11 @@ pub fn preprocess_markdown_extensions(source: &str) -> String {
 
     while i < lines.len() {
         if let Some(first) = strip_blockquote_marker(lines[i]) {
-            if let Some((kind, title)) = parse_callout_marker(first) {
+            if let Some((kind, title, fold)) = parse_callout_marker(first) {
                 i += 1;
                 let mut content = collect_blockquote_callout_content(&lines, &mut i);
                 attach_trailing_callout_structure(&mut content, &lines, &mut i);
-                out.push_str(&internal_callout_fence(&kind, &title, &content));
+                out.push_str(&internal_callout_fence(&kind, &title, &content, fold));
                 continue;
             }
         }
@@ -458,50 +615,35 @@ pub fn preprocess_markdown_extensions(source: &str) -> String {
         }
 
         if let Some(rest) = trimmed.strip_prefix(":::") {
-            if let Some((kind, title)) = parse_admonition_info(rest) {
+            if let Some((open, title)) = parse_details_info(rest) {
                 i += 1;
-                let mut content = String::new();
-                while i < lines.len() && lines[i].trim() != ":::" {
-                    content.push_str(lines[i]);
-                    content.push('\n');
-                    i += 1;
-                }
-                if i < lines.len() {
-                    i += 1;
-                }
+                let mut content = collect_colon_fence_content(&lines, &mut i);
                 attach_trailing_callout_structure(&mut content, &lines, &mut i);
-                out.push_str(&internal_callout_fence(&kind, &title, &content));
+                out.push_str(&internal_details_fence(open, &title, &content));
+                continue;
+            }
+            if let Some((kind, title, fold)) = parse_admonition_info(rest) {
+                i += 1;
+                let mut content = collect_colon_fence_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_callout_fence(&kind, &title, &content, fold));
                 continue;
             }
         }
 
         if let Some(rest) = trimmed.strip_prefix("!!!") {
-            if let Some((kind, title)) = parse_admonition_info(rest) {
+            if let Some((open, title)) = parse_details_info(rest) {
                 i += 1;
-                let mut content = String::new();
-                while i < lines.len() {
-                    let line = lines[i];
-                    if line.trim().is_empty() {
-                        content.push('\n');
-                        i += 1;
-                    } else if let Some(stripped) = line.strip_prefix("    ") {
-                        content.push_str(stripped);
-                        content.push('\n');
-                        i += 1;
-                    } else if let Some(stripped) = line.strip_prefix('\t') {
-                        content.push_str(stripped);
-                        content.push('\n');
-                        i += 1;
-                    } else if leading_spaces(line) > 0 {
-                        content.push_str(line.trim_start());
-                        content.push('\n');
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
+                let mut content = collect_indented_admonition_content(&lines, &mut i);
                 attach_trailing_callout_structure(&mut content, &lines, &mut i);
-                out.push_str(&internal_callout_fence(&kind, &title, &content));
+                out.push_str(&internal_details_fence(open, &title, &content));
+                continue;
+            }
+            if let Some((kind, title, fold)) = parse_admonition_info(rest) {
+                i += 1;
+                let mut content = collect_indented_admonition_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_callout_fence(&kind, &title, &content, fold));
                 continue;
             }
         }
@@ -514,14 +656,34 @@ pub fn preprocess_markdown_extensions(source: &str) -> String {
     out
 }
 
-pub fn parse_internal_callout_info(info: &str) -> Option<(String, String)> {
-    let mut parts = info.trim().splitn(3, char::is_whitespace);
-    if parts.next()? != "pagemd-callout" {
-        return None;
+pub fn parse_internal_block_info(info: &str) -> Option<InternalFence> {
+    let info = info.trim();
+    let (tag, rest) = info
+        .split_once(char::is_whitespace)
+        .map(|(tag, rest)| (tag, rest.trim()))
+        .unwrap_or((info, ""));
+    match tag {
+        "pagemd-details" | "pagemd-details-" => Some(InternalFence::Details {
+            title: rest.to_string(),
+            open: false,
+        }),
+        "pagemd-details+" => Some(InternalFence::Details {
+            title: rest.to_string(),
+            open: true,
+        }),
+        "pagemd-callout" | "pagemd-callout+" | "pagemd-callout-" => {
+            let fold = match tag {
+                "pagemd-callout+" => Some(FoldState::Open),
+                "pagemd-callout-" => Some(FoldState::Closed),
+                _ => None,
+            };
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let kind = parts.next()?.to_string();
+            let title = parts.next().unwrap_or("").trim().to_string();
+            Some(InternalFence::Callout { kind, title, fold })
+        }
+        _ => None,
     }
-    let kind = parts.next()?.to_string();
-    let title = parts.next().unwrap_or("").trim().to_string();
-    Some((kind, title))
 }
 
 #[cfg(test)]
@@ -611,6 +773,40 @@ mod tests {
         assert!(out.contains("| --- | --- |"));
         assert!(out.contains("Item[^tbl]."));
         assert!(out.contains("[^tbl]: Footnote."));
+    }
+
+    #[test]
+    fn details_fence_becomes_internal_block() {
+        let out = preprocess_markdown_extensions(":::details Secrets\nHidden **body**.\n:::\n");
+        assert!(out.contains("pagemd-details Secrets"));
+        assert!(out.contains("Hidden **body**."));
+        assert!(!out.contains(":::details"));
+    }
+
+    #[test]
+    fn details_plus_starts_open() {
+        let out = preprocess_markdown_extensions(":::details+ Open me\nShown.\n:::\n");
+        assert!(out.contains("pagemd-details+ Open me"));
+    }
+
+    #[test]
+    fn github_callout_fold_markers_are_preserved() {
+        let closed = preprocess_markdown_extensions("> [!NOTE]- Folded\n> Secret.\n");
+        assert!(closed.contains("pagemd-callout- note Folded"));
+        let open = preprocess_markdown_extensions("> [!TIP]+ Open fold\n> Visible.\n");
+        assert!(open.contains("pagemd-callout+ tip Open fold"));
+        let inside = preprocess_markdown_extensions("> [!WARNING-] Inside\n> Body.\n");
+        assert!(inside.contains("pagemd-callout- warning Inside"));
+    }
+
+    #[test]
+    fn nested_details_keep_inner_fence() {
+        let out = preprocess_markdown_extensions(
+            ":::details Outer\n:::details Inner\nsecret\n:::\nstill outer\n:::\n",
+        );
+        assert!(out.contains("pagemd-details Outer"));
+        assert!(out.contains(":::details Inner"));
+        assert!(out.contains("still outer"));
     }
 
     #[test]

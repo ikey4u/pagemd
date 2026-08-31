@@ -23,6 +23,7 @@ fn main() {
     let manifest_dir = Path::new(&manifest_dir_path);
     println!("cargo:rerun-if-changed=assets/typst-packages/manifest.toml");
     println!("cargo:rustc-env=PAGEMD_MERMAID_VERSION={MERMAID_VERSION}");
+    println!("cargo:rustc-env=PAGEMD_TAILWIND_BROWSER_VERSION={TAILWINDCSS_BROWSER_VERSION}");
     prepare_diagram_tailwind_browser();
     prepare_mermaid_browser();
 

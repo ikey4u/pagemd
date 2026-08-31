@@ -72,7 +72,7 @@ PageMD converts one or more Markdown files into a single HTML document, embeds t
 - Renders `mermaid` / `mmd` diagrams as inline SVG.
 - Fetches `plantuml` / `puml` / `uml` diagrams during conversion and embeds the returned SVG.
 - Renders `diagram html` fenced blocks as styled HTML/SVG (Tailwind utilities supported; recommended for AI-generated diagrams).
-- Supports GitHub-style callouts, fenced admonitions, and indented admonitions.
+- Supports GitHub-style callouts, fenced admonitions, indented admonitions, and collapsible `:::details` / `[!NOTE]-` folds.
 - Live-preview Markdown in the browser with hot reload (`pagemd view`).
 - Provides a full conversion fixture at `examples/BASIC.md`.
 

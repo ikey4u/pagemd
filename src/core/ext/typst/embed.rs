@@ -63,15 +63,17 @@ Diagrams — prefer these for AI-generated visuals:
   Fence languages: plantuml, puml, uml
 
   ```diagram html
-  <div class=\"rounded-3xl border border-slate-200 bg-white p-6\">
-    <svg viewBox=\"0 0 640 240\" class=\"w-full\" role=\"img\" aria-label=\"Architecture\">
-      <!-- nodes, connectors, labels -->
-    </svg>
+  <div class=\"rounded-3xl border border-slate-200 bg-sky-50 p-6\">
+    <div class=\"text-xs font-bold uppercase tracking-wider text-sky-700\">Architecture</div>
+    <div class=\"mt-2 grid grid-cols-2 gap-3\">
+      <div class=\"rounded-xl bg-white p-3 font-semibold\">Markdown</div>
+      <div class=\"rounded-xl bg-white p-3 font-semibold\">diagram html</div>
+    </div>
   </div>
   ```
-  Raw HTML/SVG inside a diagram container. Tailwind utility classes work via an
-  embedded @tailwindcss/browser runtime (included only when a document uses this fence).
-  Best choice for architecture, UI mockups, and precise layouts — give explicit SVG/HTML.
+  Raw HTML/SVG inside a diagram container. Tailwind utilities are scoped to
+  `.diagram-html-display` (Preflight is skipped so host chrome is not restyled).
+  Best choice for architecture, UI mockups, and precise layouts.
 
 Callouts / admonitions:
   GitHub-style blockquote marker:
@@ -79,9 +81,15 @@ Callouts / admonitions:
     > Body supports **Markdown** and inline math.
 
   Fenced admonition:
-    :::tip Optional title
-    Body text
-    :::
+  :::tip Optional title
+  Body text
+  :::
+
+  Foldable section (collapsed by default; `:::details+` starts open):
+
+  :::details Optional title
+  Nested Markdown body
+  :::
 
   Indented admonition:
     !!! warning \"Title\"

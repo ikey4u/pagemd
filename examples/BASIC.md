@@ -28,16 +28,17 @@ This paragraph includes **strong text**, *emphasis*, `inline code`, a [link](htt
 - [x] Completed task
 - [ ] Pending task
 
-## Rich Tables
+## Tables
 
-| Feature | Syntax | Alignment | Status | Score | Notes |
-|---|---|:---:|---|---:|---|
-| Tables | `| cell |` | Center | Ready | 100 | Zebra rows, hover state, borders, and responsive overflow are styled. |
-| Code | `` `inline` `` | Center | Ready | 96 | Inline code inside cells is rendered as a compact badge. |
-| Math | `$x+y$` | Center | Ready | 94 | Inline math works inside table cells: $x+y$. |
-| Callouts | `> [!NOTE]` | Center | Ready | 92 | Use callouts outside tables for richer block content. |
-| Diagrams | `mermaid` / `plantuml` / `typst` / `diagram html` | Center | Ready | 90 | Diagram blocks are rendered as embedded graphics or styled HTML. |
-| Footnotes | `[^id]` | Center | Ready | 95 | Hover a superscript to preview; see **Footnotes** section below. |
+GFM pipe tables. Alignment is set in the delimiter row: `:---` left, `:---:` center, `---:` right.
+
+| Left `:---` | Center `:---:` | Right `---:` |
+|:---|:---:|---:|
+| `` `code` `` | `\| cell \|` | $x+y$ |
+
+A `|` inside a cell must be written `\|` (also inside `` `code` ``). Cells take inline Markdown (code, math, links, footnotes). Callouts and diagram fences are blocks — keep them outside the table.
+
+The HTML output adds zebra rows, hover, borders, and horizontal scroll when the table is wider than the viewport.
 
 ## Footnotes
 
@@ -148,32 +149,32 @@ flowchart TB
 
   subgraph Preview["Live preview"]
     direction TB
-    Server[Preview server] --> Browser[Browser DOM]
+    Lib[PreviewLibrary] --> Shell[Lazy HTML shell]
+    Shell --> Browser[Browser DOM]
     Browser --> MermaidJS[mermaid.js]
-    MermaidJS --> Bake[Bake SVG on export]
+    Browser --> Tw["/__assets/ Tailwind compiler"]
   end
 
   subgraph Export["Static export"]
     direction TB
-    Pipeline[render_markdown] --> Engines
-    Engines --> Merman[merman headless SVG]
+    Pipeline[render_markdown_with_depth] --> Engines
+    Engines --> Merman[merman SVG]
     Engines --> PlantUML[PlantUML SVG]
     Engines --> Typst[Typst SVG]
-    Engines --> HtmlDiag[diagram html]
+    Engines --> HtmlDiag[diagram html + inlined Tailwind]
     Merman --> Bundle[Single HTML]
     PlantUML --> Bundle
     Typst --> Bundle
     HtmlDiag --> Bundle
   end
 
-  View --> Server
+  View --> Lib
   CLI --> Pipeline
-  Bake --> Bundle
 
   classDef accent fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
   classDef result fill:#ecfdf5,stroke:#059669,color:#065f46
   class View,CLI,Bundle accent
-  class Bake,Merman result
+  class Merman,HtmlDiag result
 ```
 
 Sequence diagram with alt / loop / notes:
@@ -215,6 +216,11 @@ classDiagram
   class HtmlExportOptions {
     +bool embed_workspace_script
     +bool client_mermaid_runtime
+    +bool lazy_sections
+  }
+  class PreviewLibrary {
+    +shell_html(embed)
+    +section_payload(id)
   }
   class Document {
     +String title
@@ -223,16 +229,12 @@ classDiagram
   class HeadlessRenderer {
     +render_svg_sync(text) Option~String~
   }
-  class PreviewServer {
-    +serve_html()
-    +serve_mermaid_js()
-  }
 
   ConvertOptions --> Document : build
   HtmlExportOptions --> Document : wrap HTML
-  Document --> HeadlessRenderer : CLI mermaid path
-  Document --> PreviewServer : view mermaid path
-  PreviewServer ..> HeadlessRenderer : export button bakes SVG
+  Document --> HeadlessRenderer : convert mermaid path
+  PreviewLibrary --> Document : view lazy shell
+  PreviewLibrary ..> HeadlessRenderer : --export bakes SVG
 ```
 
 State diagram for preview lifecycle:
@@ -331,103 +333,159 @@ Plain Typst (no package) also works:
 
 ## HTML Diagram
 
-The `diagram html` fence renders raw HTML with the Tailwind utility bundle embedded into the PageMD binary.
+The `diagram html` fence renders raw HTML. Tailwind utilities are compiled in the browser, scoped to `.diagram-html-display` so they do not restyle the PageMD chrome.
+
+Architecture (convert vs view, engines, artifacts):
 
 ```diagram html
-<div class="relative mx-auto max-w-5xl rounded-3xl border border-slate-200 bg-white p-6">
-  <div class="relative rounded-3xl border border-sky-200 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6">
-    <svg viewBox="0 0 960 650" role="img" aria-label="PageMD rendering architecture" class="w-full">
-      <defs>
-        <linearGradient id="pagemd-card" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0%" stop-color="#ffffff"/>
-          <stop offset="100%" stop-color="#f8fafc"/>
-        </linearGradient>
-        <linearGradient id="pagemd-core" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0%" stop-color="#e0f2fe"/>
-          <stop offset="100%" stop-color="#eef2ff"/>
-        </linearGradient>
-        <marker id="pagemd-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-          <path d="M1,1 L7,4 L1,7 Z" fill="#0284c7"/>
-        </marker>
-        <marker id="pagemd-arrow-muted" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-          <path d="M1,1 L7,4 L1,7 Z" fill="#94a3b8"/>
-        </marker>
-      </defs>
+<div class="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-sky-50 p-5 shadow-sm">
+  <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <div class="text-xs font-bold uppercase tracking-[0.24em] text-sky-700">PageMD runtime</div>
+      <div class="mt-1 text-2xl font-extrabold text-slate-900">One renderer, two artifacts</div>
+    </div>
+    <div class="rounded-full border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-800">CLI · View · Library · Browser</div>
+  </div>
 
-      <rect x="32" y="28" width="896" height="590" rx="28" fill="#ffffff" opacity="0.72"/>
-      <rect x="32" y="28" width="896" height="590" rx="28" fill="none" stroke="#dbeafe"/>
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div class="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-indigo-700">Convert</div>
+      <div class="mt-1 font-bold text-slate-900">pagemd -i / -d</div>
+      <div class="mt-2 text-sm leading-6 text-slate-600">Eager sections · Mermaid via merman · Tailwind inlined</div>
+    </div>
+    <div class="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-sky-700">Preview</div>
+      <div class="mt-1 font-bold text-slate-900">pagemd view</div>
+      <div class="mt-2 text-sm leading-6 text-slate-600">PreviewLibrary · lazy /__section/N · /__assets/ runtimes</div>
+    </div>
+    <div class="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-violet-700">Library</div>
+      <div class="mt-1 font-bold text-slate-900">render_to_html</div>
+      <div class="mt-2 text-sm leading-6 text-slate-600">Same core stack as the CLI; optional embedded chrome</div>
+    </div>
+    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-slate-500">Browser</div>
+      <div class="mt-1 font-bold text-slate-900">pagemd browser</div>
+      <div class="mt-2 text-sm leading-6 text-slate-600">CDP REPL / script · session Markdown · /pmd preview</div>
+    </div>
+  </div>
 
-      <text x="64" y="76" fill="#0369a1" font-size="13" font-weight="700" letter-spacing="3">RUNTIME FLOW</text>
-      <text x="64" y="104" fill="#0f172a" font-size="24" font-weight="800">One renderer, multiple diagram engines, one portable HTML artifact</text>
+  <div class="my-4 flex items-center gap-2 text-slate-400">
+    <div class="h-px flex-1 bg-slate-200"></div>
+    <span class="text-xs font-bold">resolve_inputs · RenderResources</span>
+    <div class="h-px flex-1 bg-slate-200"></div>
+  </div>
 
-      <g>
-        <rect x="70" y="145" width="190" height="82" rx="18" fill="url(#pagemd-card)" stroke="#cbd5e1"/>
-        <text x="92" y="177" fill="#0f172a" font-size="16" font-weight="800">CLI / View</text>
-        <text x="92" y="202" fill="#64748b" font-size="12">input files, directories,</text>
-        <text x="92" y="220" fill="#64748b" font-size="12">export target, preview server</text>
+  <div class="rounded-2xl border border-sky-300 bg-gradient-to-br from-sky-50 to-indigo-50 p-4 text-center">
+    <div class="text-xs font-bold uppercase tracking-wider text-sky-800">Core renderer</div>
+    <div class="mt-1 text-xl font-extrabold text-slate-900">render_markdown_with_depth</div>
+    <div class="mt-1 text-sm text-slate-600">pulldown-cmark · PageMD extensions · fenced-block dispatch</div>
+  </div>
 
-        <rect x="310" y="145" width="190" height="82" rx="18" fill="url(#pagemd-card)" stroke="#cbd5e1"/>
-        <text x="332" y="177" fill="#0f172a" font-size="16" font-weight="800">Input Resolver</text>
-        <text x="332" y="202" fill="#64748b" font-size="12">dedupe Markdown files</text>
-        <text x="332" y="220" fill="#64748b" font-size="12">and establish base paths</text>
+  <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+    <div class="rounded-xl border border-slate-200 bg-white p-3">
+      <div class="text-xs font-bold text-slate-500">Markdown</div>
+      <div class="mt-1 font-semibold text-slate-800">Headings, tables, links, inlined resources</div>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3">
+      <div class="text-xs font-bold text-slate-500">Math · Callouts · Footnotes</div>
+      <div class="mt-1 font-semibold text-slate-800">KaTeX SVG · GitHub / ::: / !!! · section-scoped notes</div>
+    </div>
+    <div class="rounded-xl border border-cyan-200 bg-cyan-50 p-3">
+      <div class="text-xs font-bold text-cyan-700">Mermaid</div>
+      <div class="mt-1 font-semibold text-slate-800">Convert: merman SVG · View: mermaid.js</div>
+    </div>
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div class="text-xs font-bold text-amber-700">PlantUML</div>
+      <div class="mt-1 font-semibold text-slate-800">Fetched at convert time, SVG embedded</div>
+    </div>
+    <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+      <div class="text-xs font-bold text-emerald-700">Typst</div>
+      <div class="mt-1 font-semibold text-slate-800">Offline @preview packages via rust-embed</div>
+    </div>
+    <div class="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+      <div class="text-xs font-bold text-indigo-700">diagram html</div>
+      <div class="mt-1 font-semibold text-slate-800">Tailwind utilities scoped to this fence</div>
+    </div>
+  </div>
 
-        <rect x="550" y="145" width="340" height="82" rx="18" fill="url(#pagemd-card)" stroke="#cbd5e1"/>
-        <text x="572" y="177" fill="#0f172a" font-size="16" font-weight="800">Render Resources</text>
-        <text x="572" y="202" fill="#64748b" font-size="12">syntax themes, KaTeX fonts, bundled Typst packages,</text>
-        <text x="572" y="220" fill="#64748b" font-size="12">and diagram Tailwind CSS from build.rs</text>
-      </g>
+  <div class="my-4 flex items-center gap-2 text-slate-400">
+    <div class="h-px flex-1 bg-slate-200"></div>
+    <span class="text-xs font-bold">HTML builder</span>
+    <div class="h-px flex-1 bg-slate-200"></div>
+  </div>
 
-      <path d="M260 186 H300" stroke="#0284c7" stroke-width="2" stroke-linecap="round" marker-end="url(#pagemd-arrow)"/>
-      <path d="M500 186 H540" stroke="#0284c7" stroke-width="2" stroke-linecap="round" marker-end="url(#pagemd-arrow)"/>
-      <path d="M405 227 V254 Q405 270 421 270 H480 V282" fill="none" stroke="#0284c7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow)"/>
-      <path d="M720 227 V254 Q720 270 704 270 H480 V282" fill="none" stroke="#0284c7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow)"/>
+  <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+    <div class="rounded-xl border border-slate-200 bg-white p-3 text-center">
+      <div class="text-xs font-bold text-slate-500">Workspace</div>
+      <div class="mt-1 font-semibold text-slate-800">Topbar · file nav · outline · theme</div>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3 text-center">
+      <div class="text-xs font-bold text-slate-500">Multi-file view</div>
+      <div class="mt-1 font-semibold text-slate-800">lazy_sections placeholders until click</div>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3 text-center">
+      <div class="text-xs font-bold text-slate-500">Scripts</div>
+      <div class="mt-1 font-semibold text-slate-800">Lightbox · footnotes · mermaid · Tailwind</div>
+    </div>
+  </div>
 
-      <g>
-        <rect x="240" y="282" width="480" height="92" rx="24" fill="url(#pagemd-core)" stroke="#93c5fd" stroke-width="1.5"/>
-        <text x="480" y="318" text-anchor="middle" fill="#075985" font-size="13" font-weight="700" letter-spacing="2">CORE RENDERER</text>
-        <text x="480" y="348" text-anchor="middle" fill="#0f172a" font-size="24" font-weight="800">render_markdown_with_depth</text>
-        <text x="480" y="368" text-anchor="middle" fill="#475569" font-size="12">Pulldown events + PageMD extensions + fenced-block dispatch</text>
-      </g>
+  <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+    <div class="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3">
+      <div class="text-xs font-bold uppercase tracking-wider text-cyan-800">Export artifact</div>
+      <div class="mt-1 font-extrabold text-slate-900">Self-contained HTML</div>
+      <div class="mt-1 text-sm leading-6 text-slate-600">Mermaid baked to SVG · diagram Tailwind inlined · no live-reload</div>
+    </div>
+    <div class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+      <div class="text-xs font-bold uppercase tracking-wider text-emerald-800">Preview artifact</div>
+      <div class="mt-1 font-extrabold text-slate-900">Hot-reload workspace</div>
+      <div class="mt-1 text-sm leading-6 text-slate-600">Shell always ships mermaid.js + Tailwind compiler for later lazy files</div>
+    </div>
+  </div>
+</div>
+```
 
-      <path d="M480 374 V404" stroke="#0284c7" stroke-width="2" stroke-linecap="round" marker-end="url(#pagemd-arrow)"/>
+Convert vs view for diagrams that need a browser runtime:
 
-      <g>
-        <rect x="72" y="430" width="168" height="82" rx="18" fill="url(#pagemd-card)" stroke="#c7d2fe"/>
-        <text x="156" y="462" text-anchor="middle" fill="#4338ca" font-size="14" font-weight="800">Markdown</text>
-        <text x="156" y="486" text-anchor="middle" fill="#64748b" font-size="12">headings, tables,</text>
-        <text x="156" y="504" text-anchor="middle" fill="#64748b" font-size="12">links, resources</text>
+```diagram html
+<div class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+  <div class="mb-4">
+    <div class="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Fence runtimes</div>
+    <div class="mt-1 text-xl font-extrabold text-slate-900">Mermaid and diagram html take different paths</div>
+  </div>
 
-        <rect x="282" y="430" width="168" height="82" rx="18" fill="url(#pagemd-card)" stroke="#c7d2fe"/>
-        <text x="366" y="462" text-anchor="middle" fill="#4338ca" font-size="14" font-weight="800">Math + Callouts</text>
-        <text x="366" y="486" text-anchor="middle" fill="#64748b" font-size="12">LaTeX SVG and</text>
-        <text x="366" y="504" text-anchor="middle" fill="#64748b" font-size="12">nested Markdown bodies</text>
+  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+    <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-slate-500">pagemd convert</div>
+      <div class="mt-3 space-y-2">
+        <div class="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2">
+          <div class="text-xs font-bold text-cyan-700">mermaid / mmd</div>
+          <div class="mt-0.5 text-sm font-semibold text-slate-800">merman HeadlessRenderer → SVG in the file</div>
+        </div>
+        <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+          <div class="text-xs font-bold text-indigo-700">diagram html</div>
+          <div class="mt-0.5 text-sm font-semibold text-slate-800">Raw HTML + inlined @tailwindcss/browser</div>
+        </div>
+      </div>
+    </div>
+    <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div class="text-xs font-bold uppercase tracking-wider text-slate-500">pagemd view</div>
+      <div class="mt-3 space-y-2">
+        <div class="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2">
+          <div class="text-xs font-bold text-cyan-700">mermaid / mmd</div>
+          <div class="mt-0.5 text-sm font-semibold text-slate-800">data-mermaid-client placeholder · /__assets/mermaid.min.js</div>
+        </div>
+        <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+          <div class="text-xs font-bold text-indigo-700">diagram html</div>
+          <div class="mt-0.5 text-sm font-semibold text-slate-800">Scoped utilities · /__assets/ on lazy shells</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-        <rect x="510" y="430" width="168" height="82" rx="18" fill="url(#pagemd-card)" stroke="#c7d2fe"/>
-        <text x="594" y="462" text-anchor="middle" fill="#4338ca" font-size="14" font-weight="800">Diagram Engines</text>
-        <text x="594" y="486" text-anchor="middle" fill="#64748b" font-size="12">Mermaid, PlantUML,</text>
-        <text x="594" y="504" text-anchor="middle" fill="#64748b" font-size="12">Typst, diagram html</text>
-
-        <rect x="720" y="430" width="168" height="82" rx="18" fill="url(#pagemd-card)" stroke="#c7d2fe"/>
-        <text x="804" y="462" text-anchor="middle" fill="#4338ca" font-size="14" font-weight="800">HTML Builder</text>
-        <text x="804" y="486" text-anchor="middle" fill="#64748b" font-size="12">CSS, favicon, nav,</text>
-        <text x="804" y="504" text-anchor="middle" fill="#64748b" font-size="12">outline, scripts</text>
-      </g>
-
-      <path d="M480 404 H156 V420" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow-muted)"/>
-      <path d="M480 404 H366 V420" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow-muted)"/>
-      <path d="M480 404 H594 V420" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow-muted)"/>
-      <path d="M480 404 H804 V420" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow-muted)"/>
-      <path d="M678 471 H710" stroke="#0284c7" stroke-width="2" stroke-linecap="round" marker-end="url(#pagemd-arrow)"/>
-
-      <path d="M804 512 V532 Q804 542 794 542 H748 V548" fill="none" stroke="#0284c7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow)"/>
-      <path d="M804 532 Q804 542 794 542 H212 V548" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#pagemd-arrow-muted)"/>
-
-      <rect x="110" y="548" width="204" height="42" rx="21" fill="#ecfeff" stroke="#67e8f9"/>
-      <text x="212" y="574" text-anchor="middle" fill="#155e75" font-size="13" font-weight="800">Export: single HTML file</text>
-
-      <rect x="646" y="548" width="204" height="42" rx="21" fill="#f0fdf4" stroke="#86efac"/>
-      <text x="748" y="574" text-anchor="middle" fill="#166534" font-size="13" font-weight="800">Preview: hot reload browser</text>
-    </svg>
+  <div class="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
+    <span class="font-bold">Lazy multi-file shell:</span>
+    later files are empty placeholders, so Mermaid and Tailwind runtimes ship even when the first open file has no diagrams.
   </div>
 </div>
 ```
@@ -497,6 +555,25 @@ This fenced admonition is converted into a styled callout block.
 
 !!! important "Indented admonition"
     This indented admonition is also converted into a styled callout block.
+
+## Folding
+
+Collapsed by default. Click the summary to expand. Nested Markdown is rendered inside.
+
+:::details Implementation notes
+Hidden until opened: **bold**, `code`, and a list.
+
+- `:::details Title` … `:::`
+- `:::details+ Title` starts expanded
+- `> [!NOTE]-` / `> [!NOTE]+` make a callout foldable
+:::
+
+:::details+ Open by default
+This block starts expanded because the fence is `:::details+`.
+:::
+
+> [!TIP]- Foldable callout
+> The `-` after `[!TIP]` collapses the callout. Use `+` to start it open.
 
 ## Embedded Resources
 

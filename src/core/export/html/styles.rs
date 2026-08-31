@@ -1024,6 +1024,87 @@ blockquote p:last-child {
   --callout-accent: var(--color-callout-muted);
 }
 
+.md-fold-chevron {
+  display: inline-block;
+  width: 0.42rem;
+  height: 0.42rem;
+  margin-right: 0.15rem;
+  border-right: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.md-details,
+details.callout-fold {
+  cursor: default;
+}
+
+.md-details-summary,
+details.callout-fold > .callout-title {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.md-details-summary::-webkit-details-marker,
+details.callout-fold > .callout-title::-webkit-details-marker {
+  display: none;
+}
+
+.md-details-summary::marker,
+details.callout-fold > .callout-title::marker {
+  content: "";
+}
+
+.md-details[open] > .md-details-summary .md-fold-chevron,
+details.callout-fold[open] > .callout-title .md-fold-chevron {
+  transform: rotate(45deg);
+}
+
+.md-details {
+  margin: 1.25rem 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.md-details-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.7rem 1rem;
+  color: var(--color-heading);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+details.callout-fold:not([open]) > .callout-title {
+  padding-bottom: 0.75rem;
+}
+
+.md-details-summary:hover {
+  background: var(--color-hover);
+}
+
+.md-details-body {
+  padding: 0 1rem 0.9rem 1.85rem;
+  color: var(--color-text);
+  border-top: 1px solid var(--color-border);
+}
+
+.md-details-body > :first-child {
+  margin-top: 0.75rem;
+}
+
+.md-details-body > :last-child {
+  margin-bottom: 0;
+}
+
 ul, ol {
   padding-left: 1.75rem;
   margin-bottom: 1rem;
@@ -1290,6 +1371,9 @@ img {
 .diagram-html-display {
   margin: 1.5rem 0;
   overflow-x: auto;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--color-text);
 }
 
 .diagram-html-canvas {
@@ -1548,5 +1632,16 @@ input[type="checkbox"] {
   }
   pre { white-space: pre-wrap; word-break: break-all; }
   a { color: var(--color-text); }
+  details.md-details,
+  details.callout-fold {
+    display: block;
+  }
+  details.md-details > .md-details-body,
+  details.callout-fold > .callout-body {
+    display: block !important;
+  }
+  .md-fold-chevron {
+    display: none;
+  }
 }
 "#;

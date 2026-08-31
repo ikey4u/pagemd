@@ -79,6 +79,38 @@ fn diagram_html_tailwind_browser_js() -> &'static str {
         .expect("bundled diagram Tailwind browser runtime must be UTF-8")
 }
 
+/// Scope utilities to `.diagram-html-display` and skip Preflight.
+///
+/// The host page already has a universal `*` margin/padding reset and classes
+/// like `.container` that would otherwise collide with Tailwind. Nesting plus
+/// `important` lets diagram utilities win inside the fence without restyling
+/// the workspace chrome.
+const DIAGRAM_HTML_TAILWIND_INPUT_CSS: &str = r#"@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme) important;
+@layer utilities {
+  .diagram-html-display {
+    @tailwind utilities;
+  }
+}
+"#;
+
+fn diagram_html_runtime_tags(use_preview_assets: bool) -> String {
+    let config =
+        format!("<style type=\"text/tailwindcss\">\n{DIAGRAM_HTML_TAILWIND_INPUT_CSS}</style>\n");
+    let script = if use_preview_assets {
+        format!(
+            "<script src=\"/__assets/diagram-html-tailwind-browser.js?v={}\" data-pagemd-diagram-html></script>\n",
+            env!("PAGEMD_TAILWIND_BROWSER_VERSION")
+        )
+    } else {
+        format!(
+            "<script data-pagemd-diagram-html>\n{}\n</script>\n",
+            script_escape(diagram_html_tailwind_browser_js())
+        )
+    };
+    format!("{config}{script}")
+}
+
 fn mermaid_runtime_tags() -> String {
     // Bust browser cache when the bundled Mermaid version changes. Older Mermaid
     // builds fail to lex Chinese quadrantChart axis labels.
@@ -370,21 +402,22 @@ pub fn build_html_with_nav(
         ""
     };
 
+    // Lazy shells only embed the active section. Later files may still contain
+    // `diagram html` fences or Mermaid, so those runtimes cannot be gated on
+    // currently inlined HTML.
     let diagram_script = if allow_scripts
-        && body_sections
-            .iter()
-            .any(|section| section.html.contains(DIAGRAM_HTML_MARKER))
+        && (opts.lazy_sections
+            || body_sections
+                .iter()
+                .any(|section| section.html.contains(DIAGRAM_HTML_MARKER)))
     {
-        format!(
-            "<script>\n{}\n</script>\n",
-            script_escape(diagram_html_tailwind_browser_js())
-        )
+        // Multi-file live preview (`lazy_sections`) serves the compiler from
+        // `/__assets/` so the shell stays small. Convert / single-file / export
+        // inline it so the HTML stays self-contained.
+        diagram_html_runtime_tags(opts.lazy_sections)
     } else {
         String::new()
     };
-
-    // Lazy shells only embed the active section. Later files may still contain
-    // Mermaid, so the runtime cannot be gated on currently inlined HTML.
     let mermaid_script = if allow_scripts
         && opts.client_mermaid_runtime
         && (opts.lazy_sections

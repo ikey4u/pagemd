@@ -29,6 +29,10 @@ use super::live;
 use super::ViewOptions;
 
 const MERMAID_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
+const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/diagram-html-tailwind-browser.js"
+));
 
 pub struct RenderRequest {
     pub inputs: Vec<PathBuf>,
@@ -244,6 +248,10 @@ impl PreviewEngine {
             .route("/", get(index_handler))
             .route("/__events", get(events_handler))
             .route("/__assets/mermaid.min.js", get(mermaid_asset_handler))
+            .route(
+                "/__assets/diagram-html-tailwind-browser.js",
+                get(diagram_html_tailwind_asset_handler),
+            )
             .route("/__section/{id}", get(section_handler))
             .route("/__export", get(export_handler))
             .with_state(Arc::clone(&self.state))
@@ -727,6 +735,14 @@ async fn export_handler(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn mermaid_asset_handler() -> Response {
+    preview_js_asset(MERMAID_JS)
+}
+
+async fn diagram_html_tailwind_asset_handler() -> Response {
+    preview_js_asset(DIAGRAM_HTML_TAILWIND_BROWSER_JS)
+}
+
+fn preview_js_asset(body: &'static [u8]) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -736,7 +752,7 @@ async fn mermaid_asset_handler() -> Response {
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
-    (StatusCode::OK, headers, MERMAID_JS).into_response()
+    (StatusCode::OK, headers, body).into_response()
 }
 
 async fn events_handler(

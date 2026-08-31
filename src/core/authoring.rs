@@ -35,6 +35,7 @@ Callouts:
 - `> [!NOTE] Title` then body lines (also TIP/WARNING/DANGER/IMPORTANT/…)
 - `:::tip Title` … `:::`
 - `!!! warning \"Title\"` indented body
+- Fold: `:::details Title` … `:::` (`:::details+` starts open); `[!NOTE]-` / `[!NOTE]+` make a callout collapsible
 
 Prefer one clear figure over a wall of prose; callouts for caveats; tables for comparisons. \
 Do not invent file contents; cite pack paths when answering about materials.\
@@ -65,6 +66,7 @@ mod tests {
         assert!(help.contains("diagram html"));
         assert!(help.contains("plantuml") || help.contains("typst"));
         assert!(help.contains("[!NOTE]"));
+        assert!(help.contains(":::details"));
         assert!(help.contains("$E=mc^2$") || help.contains("Math:"));
         assert!(help.contains("footnote") || help.contains("[^id]"));
     }

@@ -175,6 +175,21 @@
     finish(buildExportHtml());
   }
 
+  function appendDiagramHtmlRuntime(doc) {
+    if (!document.querySelector('style[type="text/tailwindcss"]')) {
+      var input = doc.querySelector('style[type="text/tailwindcss"]');
+      if (input) {
+        document.head.appendChild(document.importNode(input, true));
+      }
+    }
+    if (!document.querySelector("[data-pagemd-diagram-html]")) {
+      var runtime = doc.querySelector("[data-pagemd-diagram-html]");
+      if (runtime) {
+        document.head.appendChild(document.importNode(runtime, true));
+      }
+    }
+  }
+
   function appendMermaidRuntime(doc) {
     return new Promise(function (resolve) {
       var pending = 0;
@@ -246,6 +261,7 @@
     restoreScrollState(scrollState);
 
     // Keep mermaid runtime in <head> across hot reloads; wait for load before init.
+    appendDiagramHtmlRuntime(doc);
     appendMermaidRuntime(doc).then(function () {
       if (typeof window.PageMDInitMermaid === "function") {
         window.PageMDInitMermaid();

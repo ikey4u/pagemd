@@ -992,9 +992,73 @@ fn diagram_html_tailwind_browser_runtime_is_embedded_when_needed() {
         footnotes: Vec::new(),
     };
     let html = build_html("Title", &[section], "PG");
-    assert!(html.contains("<script>"));
-    assert!(html.contains("tailwind"));
-    assert!(html.contains("diagram-html-display"));
+    assert!(html.contains("data-pagemd-diagram-html"));
+    assert!(html.contains("type=\"text/tailwindcss\""));
+    assert!(html.contains("@import \"tailwindcss/theme.css\" layer(theme) important"));
+    assert!(html.contains("@tailwind utilities"));
+    assert!(html.contains(".diagram-html-display"));
+    assert!(
+        !html.contains("/__assets/diagram-html-tailwind-browser.js"),
+        "portable HTML must inline the Tailwind runtime"
+    );
+}
+
+#[test]
+fn lazy_workspace_html_ships_diagram_html_runtime_without_inlined_diagrams() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "A".to_string(),
+                html: "<p>no diagram</p>".to_string(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+            RenderedSection {
+                title: "B".to_string(),
+                html: String::new(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["a.md".to_string(), "b.md".to_string()]),
+        None,
+        &pagemd::core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: true,
+            lazy_sections: true,
+            ..Default::default()
+        },
+    );
+    assert!(html.contains("data-lazy-section=\"2\""));
+    assert!(html.contains("/__assets/diagram-html-tailwind-browser.js?v="));
+    assert!(html.contains("type=\"text/tailwindcss\""));
+    assert!(html.contains("data-pagemd-diagram-html"));
+}
+
+#[test]
+fn eager_html_without_diagram_html_does_not_ship_tailwind_runtime() {
+    let html = build_html_with_nav(
+        "Title",
+        &[RenderedSection {
+            title: "A".to_string(),
+            html: "<p>no diagram</p>".to_string(),
+            outline: Vec::new(),
+            footnotes: Vec::new(),
+        }],
+        "PG",
+        None,
+        None,
+        &pagemd::core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: true,
+            lazy_sections: false,
+            ..Default::default()
+        },
+    );
+    assert!(!html.contains("data-pagemd-diagram-html"));
+    assert!(!html.contains("type=\"text/tailwindcss\""));
 }
 
 #[test]
@@ -1037,7 +1101,8 @@ fn library_render_to_html_matches_full_document() {
 fn github_callout_renders_admonition() {
     let html = render_html("> [!NOTE] Custom title\n> This is **important**.\n");
     assert_eq!(callout_count(&html), 1);
-    assert!(html.contains("class=\"callout callout-note\""));
+    assert!(html.contains("<div class=\"callout callout-note\">"));
+    assert!(!html.contains("<details class=\"callout"));
     assert!(html.contains("Custom title"));
     assert!(html.contains("<strong>important</strong>"));
     assert!(!html.contains("<blockquote>"));
@@ -1050,6 +1115,69 @@ fn fenced_admonition_renders_nested_markdown() {
     assert!(html.contains("class=\"callout callout-warning\""));
     assert!(html.contains("Pay attention"));
     assert!(html.contains("<code>pagemd</code>"));
+}
+
+#[test]
+fn details_fence_renders_collapsed_section() {
+    let html = render_html(":::details Secrets\nHidden **body**.\n:::\n");
+    assert!(html.contains("<details class=\"md-details\">"));
+    assert!(!html.contains("<details class=\"md-details\" open"));
+    assert!(html.contains("Secrets"));
+    assert!(html.contains("<strong>body</strong>"));
+    assert!(html.contains("class=\"md-details-body\""));
+}
+
+#[test]
+fn details_plus_renders_open_section() {
+    let html = render_html(":::details+ Shown\nVisible.\n:::\n");
+    assert!(html.contains("<details class=\"md-details\" open>"));
+    assert!(html.contains("Shown"));
+    assert!(html.contains("Visible."));
+}
+
+#[test]
+fn github_callout_fold_marker_renders_details() {
+    let html = render_html("> [!NOTE]- Folded note\n> Inner **text**.\n");
+    assert!(html.contains("<details class=\"callout callout-note callout-fold\">"));
+    assert!(!html.contains("<details class=\"callout callout-note callout-fold\" open"));
+    assert!(html.contains("Folded note"));
+    assert!(html.contains("<strong>text</strong>"));
+    assert!(!html.contains("<blockquote>"));
+}
+
+#[test]
+fn github_callout_fold_open_marker_starts_expanded() {
+    let html = render_html("> [!TIP]+ Open fold\n> Still a tip.\n");
+    assert!(html.contains("<details class=\"callout callout-tip callout-fold\" open>"));
+    assert!(html.contains("Open fold"));
+}
+
+#[test]
+fn details_alias_and_indented_fence_render() {
+    let fold = render_html(":::fold Alias\nHidden.\n:::\n");
+    assert!(fold.contains("<details class=\"md-details\">"));
+    assert!(fold.contains("Alias"));
+    let indented = render_html("!!! details \"Indented\"\n    Body **here**.\n");
+    assert!(indented.contains("<details class=\"md-details\">"));
+    assert!(indented.contains("Indented"));
+    assert!(indented.contains("<strong>here</strong>"));
+}
+
+#[test]
+fn nested_details_fences_render_inner_section() {
+    let html = render_html(":::details Outer\n:::details Inner\nsecret\n:::\nstill outer\n:::\n");
+    assert_eq!(html.matches("<details class=\"md-details\">").count(), 2);
+    assert!(html.contains("Outer"));
+    assert!(html.contains("Inner"));
+    assert!(html.contains("secret"));
+    assert!(html.contains("still outer"));
+}
+
+#[test]
+fn fenced_callout_fold_suffix_renders_details() {
+    let html = render_html(":::tip- Collapsed tip\nHidden **md**.\n:::\n");
+    assert!(html.contains("<details class=\"callout callout-tip callout-fold\">"));
+    assert!(html.contains("<strong>md</strong>"));
 }
 
 #[test]
