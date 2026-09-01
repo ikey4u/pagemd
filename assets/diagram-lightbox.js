@@ -243,11 +243,16 @@
     clone.style.width = "max-content";
     clone.style.maxWidth = "none";
     clone.style.minWidth = "0";
+    // Tailwind utilities are nested under .diagram-html-display. The overlay
+    // lives on document.body, so the clone must keep that ancestor class.
+    var wrapper = document.createElement("div");
+    wrapper.className = "diagram-html-display";
+    wrapper.appendChild(clone);
     var pageRect = canvas.getBoundingClientRect();
     var svg = canvas.querySelector("svg");
     var natural = svg ? svgNaturalSize(svg) : null;
     return {
-      element: clone,
+      element: wrapper,
       objectUrl: null,
       width: Math.max(natural ? natural.w : 0, pageRect.width, canvas.scrollWidth, 1),
       height: Math.max(natural ? natural.h : 0, pageRect.height, canvas.scrollHeight, 1),

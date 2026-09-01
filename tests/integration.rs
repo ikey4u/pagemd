@@ -1004,6 +1004,20 @@ fn diagram_html_tailwind_browser_runtime_is_embedded_when_needed() {
 }
 
 #[test]
+fn diagram_lightbox_keeps_html_clone_inside_tailwind_scope() {
+    let section = RenderedSection {
+        title: String::new(),
+        html: render_html("```diagram html\n<div class=\"rounded-xl\">Node</div>\n```\n"),
+        outline: Vec::new(),
+        footnotes: Vec::new(),
+    };
+    let html = build_html("Title", &[section], "PG");
+    assert!(html.contains("data-pagemd-diagram-lightbox"));
+    // Overlay is mounted on document.body; utilities are nested under this class.
+    assert!(html.contains("wrapper.className = \"diagram-html-display\""));
+}
+
+#[test]
 fn lazy_workspace_html_ships_diagram_html_runtime_without_inlined_diagrams() {
     let html = build_html_with_nav(
         "Title",

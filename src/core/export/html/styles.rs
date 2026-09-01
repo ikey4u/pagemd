@@ -450,6 +450,19 @@ html.pagemd-lightbox-open {
   pointer-events: none;
 }
 
+.pagemd-lightbox-content > .diagram-html-display {
+  margin: 0;
+  overflow: visible;
+  max-width: none;
+}
+
+.pagemd-lightbox-content .diagram-html-canvas {
+  width: max-content;
+  max-width: none;
+  min-width: 0;
+  padding: 0;
+}
+
 .pagemd-lightbox-close {
   position: fixed;
   top: 1rem;
