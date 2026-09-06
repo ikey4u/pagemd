@@ -475,6 +475,25 @@ fn setup_watcher(
     Ok(state)
 }
 
+fn recursive_watch_covers(state: &WatchState, path: &Path) -> bool {
+    path.ancestors().skip(1).any(|ancestor| {
+        !ancestor.as_os_str().is_empty() && state.watched.get(ancestor) == Some(&true)
+    })
+}
+
+fn unwatch_covered_descendants(state: &mut WatchState, root: &Path) {
+    let descendants: Vec<PathBuf> = state
+        .watched
+        .keys()
+        .filter(|path| *path != root && path.starts_with(root))
+        .cloned()
+        .collect();
+    for path in descendants {
+        let _ = state.debouncer.watcher().unwatch(&path);
+        state.watched.remove(&path);
+    }
+}
+
 fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Result<()> {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !canonical.exists() {
@@ -482,6 +501,13 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
     }
 
     let want_recursive = recursive && canonical.is_dir();
+    // A recursive scan root already delivers nested create/modify/delete events.
+    // Re-watching every Markdown file, nested folder, or sibling `assets/` dir
+    // makes `--dir docs` look like it is also monitoring those extra paths.
+    if recursive_watch_covers(state, &canonical) {
+        return Ok(());
+    }
+
     if let Some(&already_recursive) = state.watched.get(&canonical) {
         if already_recursive || !want_recursive {
             return Ok(());
@@ -514,8 +540,12 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
     let mode_label = if want_recursive { "recursive" } else { "path" };
     eprintln!("  watch [{mode_label}] {}", canonical.display());
 
+    if want_recursive {
+        unwatch_covered_descendants(state, &canonical);
+    }
+
     // When watching a file, also watch its parent (shallow) for new sibling assets.
-    // If the parent is already recursive (scan root), this is a no-op.
+    // Skipped when an ancestor scan root is already recursive.
     if canonical.is_file() {
         if let Some(parent) = canonical.parent() {
             if !parent.as_os_str().is_empty() {
@@ -528,9 +558,11 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
 }
 
 fn sync_watches(state: &mut WatchState, paths: &[PathBuf]) -> Result<()> {
-    // Register directories first so recursive mode wins before file parents attach.
-    let (dirs, files): (Vec<&PathBuf>, Vec<&PathBuf>) =
+    // Register shallower directories first so recursive scan roots cover nested
+    // files/dirs before they can attach their own watches.
+    let (mut dirs, files): (Vec<&PathBuf>, Vec<&PathBuf>) =
         paths.iter().partition(|path| path.is_dir());
+    dirs.sort_by_key(|path| path.components().count());
     for path in dirs {
         register_watch(state, path, true)?;
     }
@@ -855,14 +887,72 @@ mod watch_tests {
         let root = root.canonicalize().unwrap();
         assert_eq!(state.watched.get(&root), Some(&false));
 
-        sync_watches(&mut state, &[root.clone(), file]).unwrap();
+        sync_watches(&mut state, &[root.clone(), file.clone()]).unwrap();
+        let file = file.canonicalize().unwrap();
         assert_eq!(
             state.watched.get(&root),
             Some(&true),
             "scan root must upgrade to recursive so nested create/delete events arrive"
         );
+        assert!(
+            !state.watched.contains_key(&file),
+            "files under a recursive scan root must not keep a separate watch"
+        );
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recursive_scan_root_skips_nested_paths_but_keeps_external_assets() {
+        let root = temp_dir("watch-covered");
+        let nested = root.join("guide");
+        fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("a.md");
+        fs::write(&file, "# A\n").unwrap();
+        let asset_dir = nested.join("assets");
+        fs::create_dir_all(&asset_dir).unwrap();
+        let asset = asset_dir.join("pic.png");
+        fs::write(&asset, b"png").unwrap();
+
+        let outside = temp_dir("watch-outside");
+        let outside_asset = outside.join("logo.png");
+        fs::write(&outside_asset, b"png").unwrap();
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state = setup_watcher(
+            vec![
+                root.clone(),
+                file.clone(),
+                asset_dir.clone(),
+                asset.clone(),
+                outside_asset.clone(),
+            ],
+            tx,
+        )
+        .unwrap();
+
+        let root = root.canonicalize().unwrap();
+        let nested = nested.canonicalize().unwrap();
+        let file = file.canonicalize().unwrap();
+        let asset_dir = asset_dir.canonicalize().unwrap();
+        let asset = asset.canonicalize().unwrap();
+        let outside = outside.canonicalize().unwrap();
+        let outside_asset = outside_asset.canonicalize().unwrap();
+
+        assert_eq!(state.watched.get(&root), Some(&true));
+        assert!(
+            !state.watched.contains_key(&nested),
+            "nested folders under the scan root must not appear as extra watches"
+        );
+        assert!(!state.watched.contains_key(&file));
+        assert!(!state.watched.contains_key(&asset_dir));
+        assert!(!state.watched.contains_key(&asset));
+        assert_eq!(state.watched.get(&outside_asset), Some(&false));
+        assert_eq!(state.watched.get(&outside), Some(&false));
+        assert_eq!(state.watched.len(), 3);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
