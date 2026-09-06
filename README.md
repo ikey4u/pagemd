@@ -14,6 +14,22 @@ let html = render_to_html("# Hello", &RenderOptions::default())?;
 
 Browser extension documentation is available at `extension/README.md`.
 
+## Installation
+
+Install the CLI from git. Pass `--locked` so Cargo uses the repository `Cargo.lock` instead of re-resolving crates:
+
+```bash
+cargo install --git https://github.com/ikey4u/pagemd --locked
+```
+
+`--locked` is required. Without it, Cargo may pull incompatible pre-release versions of the Mermaid renderer stack (`merman` / `merman-core` / `merman-render`) and the build fails.
+
+From a local clone:
+
+```bash
+cargo install --path . --locked
+```
+
 ## Browser
 
 `pagemd browser` drives Chrome over the Chrome DevTools Protocol. It has two subcommands:
