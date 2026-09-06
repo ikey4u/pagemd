@@ -26,6 +26,7 @@ use tokio::task::JoinHandle as TokioJoinHandle;
 
 use super::library::SharedPreviewLibrary;
 use super::live;
+use super::resources::WatchPlan;
 use super::ViewOptions;
 
 const MERMAID_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
@@ -41,13 +42,8 @@ pub struct RenderRequest {
 }
 
 pub enum RenderResult {
-    Ok {
-        html: String,
-        extra_watch_paths: Vec<PathBuf>,
-    },
-    Err {
-        html: String,
-    },
+    Ok { html: String, watch_plan: WatchPlan },
+    Err { html: String },
 }
 
 #[derive(Clone)]
@@ -55,7 +51,7 @@ pub struct HostedPreviewOptions {
     pub host: String,
     pub port: u16,
     pub inputs: Vec<PathBuf>,
-    pub watch_paths: Vec<PathBuf>,
+    pub watch_plan: WatchPlan,
     pub export_path: Option<PathBuf>,
     pub library: Option<SharedPreviewLibrary>,
 }
@@ -66,7 +62,7 @@ impl From<ViewOptions> for HostedPreviewOptions {
             host: options.host,
             port: options.port,
             inputs: options.inputs,
-            watch_paths: options.watch_paths,
+            watch_plan: options.watch_plan,
             export_path: options.export_path,
             library: options.library,
         }
@@ -145,7 +141,7 @@ fn is_content_change_event(event: &notify::Event) -> bool {
 
 struct PreviewEngineOptions {
     inputs: Vec<PathBuf>,
-    watch_paths: Vec<PathBuf>,
+    watch_plan: WatchPlan,
     export_path: Option<PathBuf>,
     library: Option<SharedPreviewLibrary>,
 }
@@ -154,7 +150,7 @@ impl From<HostedPreviewOptions> for PreviewEngineOptions {
     fn from(options: HostedPreviewOptions) -> Self {
         Self {
             inputs: options.inputs,
-            watch_paths: options.watch_paths,
+            watch_plan: options.watch_plan,
             export_path: options.export_path,
             library: options.library,
         }
@@ -186,12 +182,9 @@ impl PreviewEngine {
             inputs: options.inputs.clone(),
             changed_paths: Vec::new(),
         });
-        let (initial_html, initial_extra, export_initial) = match first {
-            RenderResult::Ok {
-                html,
-                extra_watch_paths,
-            } => (html, extra_watch_paths, true),
-            RenderResult::Err { html } => (html, Vec::new(), false),
+        let (initial_html, watch_plan, export_initial) = match first {
+            RenderResult::Ok { html, watch_plan } => (html, watch_plan, true),
+            RenderResult::Err { html } => (html, options.watch_plan, false),
         };
 
         let state = Arc::new(AppState {
@@ -213,9 +206,7 @@ impl PreviewEngine {
         let shutdown = Arc::new(AtomicBool::new(false));
         let (render_tx, render_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
 
-        let mut watch_paths = options.watch_paths.clone();
-        watch_paths.extend(initial_extra);
-        let watch_state = Arc::new(Mutex::new(setup_watcher(watch_paths, render_tx.clone())?));
+        let watch_state = Arc::new(Mutex::new(setup_watcher(watch_plan, render_tx.clone())?));
         let watch_weak = Arc::downgrade(&watch_state);
 
         let render_worker = spawn_render_worker(
@@ -448,7 +439,7 @@ pub fn run(
 }
 
 fn setup_watcher(
-    paths: Vec<PathBuf>,
+    plan: WatchPlan,
     render_tx: std::sync::mpsc::Sender<Vec<PathBuf>>,
 ) -> Result<WatchState> {
     let config = notify_debouncer_mini::Config::default().with_timeout(Duration::from_millis(300));
@@ -471,7 +462,7 @@ fn setup_watcher(
         debouncer,
         watched: HashMap::new(),
     };
-    sync_watches(&mut state, &paths)?;
+    sync_watches(&mut state, &plan)?;
     Ok(state)
 }
 
@@ -481,19 +472,6 @@ fn recursive_watch_covers(state: &WatchState, path: &Path) -> bool {
     })
 }
 
-fn unwatch_covered_descendants(state: &mut WatchState, root: &Path) {
-    let descendants: Vec<PathBuf> = state
-        .watched
-        .keys()
-        .filter(|path| *path != root && path.starts_with(root))
-        .cloned()
-        .collect();
-    for path in descendants {
-        let _ = state.debouncer.watcher().unwatch(&path);
-        state.watched.remove(&path);
-    }
-}
-
 fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Result<()> {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !canonical.exists() {
@@ -501,9 +479,6 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
     }
 
     let want_recursive = recursive && canonical.is_dir();
-    // A recursive scan root already delivers nested create/modify/delete events.
-    // Re-watching every Markdown file, nested folder, or sibling `assets/` dir
-    // makes `--dir docs` look like it is also monitoring those extra paths.
     if recursive_watch_covers(state, &canonical) {
         return Ok(());
     }
@@ -512,9 +487,6 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
         if already_recursive || !want_recursive {
             return Ok(());
         }
-        // File watches also attach their parent as NonRecursive. If that parent is
-        // later registered as a scan root, upgrade so nested create/delete events
-        // are delivered.
         if let Err(err) = state.debouncer.watcher().unwatch(&canonical) {
             eprintln!(
                 "  watch upgrade unwatch warning for {}: {err}",
@@ -539,41 +511,44 @@ fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Resul
 
     let mode_label = if want_recursive { "recursive" } else { "path" };
     eprintln!("  watch [{mode_label}] {}", canonical.display());
-
-    if want_recursive {
-        unwatch_covered_descendants(state, &canonical);
-    }
-
-    // When watching a file, also watch its parent (shallow) for new sibling assets.
-    // Skipped when an ancestor scan root is already recursive.
-    if canonical.is_file() {
-        if let Some(parent) = canonical.parent() {
-            if !parent.as_os_str().is_empty() {
-                register_watch(state, parent, false)?;
-            }
-        }
-    }
-
     Ok(())
 }
 
-fn sync_watches(state: &mut WatchState, paths: &[PathBuf]) -> Result<()> {
-    // Register shallower directories first so recursive scan roots cover nested
-    // files/dirs before they can attach their own watches.
-    let (mut dirs, files): (Vec<&PathBuf>, Vec<&PathBuf>) =
-        paths.iter().partition(|path| path.is_dir());
-    dirs.sort_by_key(|path| path.components().count());
-    for path in dirs {
-        register_watch(state, path, true)?;
+fn sync_watches(state: &mut WatchState, plan: &WatchPlan) -> Result<()> {
+    let mut desired: HashMap<PathBuf, bool> = HashMap::new();
+    let mut recursive = plan.recursive.clone();
+    recursive.sort_by_key(|path| path.components().count());
+    for root in recursive {
+        let root = root.canonicalize().unwrap_or(root);
+        if root.exists() {
+            desired.insert(root, true);
+        }
     }
-    for path in files {
-        register_watch(state, path, false)?;
+    for path in &plan.paths {
+        let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !path.exists() {
+            continue;
+        }
+        if desired
+            .iter()
+            .any(|(root, recursive)| *recursive && path != *root && path.starts_with(root))
+        {
+            continue;
+        }
+        desired.entry(path).or_insert(false);
+    }
+
+    let mut to_register: Vec<(PathBuf, bool)> =
+        desired.iter().map(|(p, r)| (p.clone(), *r)).collect();
+    to_register.sort_by_key(|(path, recursive)| (!*recursive, path.components().count()));
+    for (path, recursive) in &to_register {
+        register_watch(state, path, *recursive)?;
     }
 
     let stale: Vec<PathBuf> = state
         .watched
         .keys()
-        .filter(|path| !path.exists())
+        .filter(|path| !desired.contains_key(*path) || !path.exists())
         .cloned()
         .collect();
     for path in stale {
@@ -627,14 +602,11 @@ fn spawn_render_worker(
             }
 
             match result {
-                RenderResult::Ok {
-                    html,
-                    extra_watch_paths,
-                } => {
+                RenderResult::Ok { html, watch_plan } => {
                     commit_html(&state, html, true);
                     if let Some(watch_state) = watch_state.upgrade() {
                         if let Ok(mut guard) = watch_state.lock() {
-                            if let Err(err) = sync_watches(&mut guard, &extra_watch_paths) {
+                            if let Err(err) = sync_watches(&mut guard, &watch_plan) {
                                 eprintln!("Watch registration error: {err:#}");
                             }
                         }
@@ -876,42 +848,54 @@ mod watch_tests {
     }
 
     #[test]
-    fn file_parent_watch_can_upgrade_to_recursive_scan_root() {
+    fn scan_root_replaces_loose_file_watches() {
         let root = temp_dir("watch-upgrade");
         let file = root.join("a.md");
         fs::write(&file, "# A\n").unwrap();
 
         let (tx, _rx) = std::sync::mpsc::channel();
-        // Register the file first (same order as the old bug: parent becomes NonRecursive).
-        let mut state = setup_watcher(vec![file.clone()], tx).unwrap();
-        let root = root.canonicalize().unwrap();
-        assert_eq!(state.watched.get(&root), Some(&false));
-
-        sync_watches(&mut state, &[root.clone(), file.clone()]).unwrap();
+        let mut state = setup_watcher(
+            WatchPlan {
+                recursive: Vec::new(),
+                paths: vec![file.clone()],
+            },
+            tx,
+        )
+        .unwrap();
         let file = file.canonicalize().unwrap();
-        assert_eq!(
-            state.watched.get(&root),
-            Some(&true),
-            "scan root must upgrade to recursive so nested create/delete events arrive"
+        let root = root.canonicalize().unwrap();
+        assert_eq!(state.watched.get(&file), Some(&false));
+        assert!(
+            !state.watched.contains_key(&root),
+            "file preview must not attach the parent directory"
         );
+
+        sync_watches(
+            &mut state,
+            &WatchPlan {
+                recursive: vec![root.clone()],
+                paths: vec![file.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(state.watched.get(&root), Some(&true));
         assert!(
             !state.watched.contains_key(&file),
             "files under a recursive scan root must not keep a separate watch"
         );
+        assert_eq!(state.watched.len(), 1);
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn recursive_scan_root_skips_nested_paths_but_keeps_external_assets() {
+    fn registrar_drops_nested_paths_and_asset_parents() {
         let root = temp_dir("watch-covered");
         let nested = root.join("guide");
         fs::create_dir_all(&nested).unwrap();
         let file = nested.join("a.md");
         fs::write(&file, "# A\n").unwrap();
-        let asset_dir = nested.join("assets");
-        fs::create_dir_all(&asset_dir).unwrap();
-        let asset = asset_dir.join("pic.png");
+        let asset = nested.join("pic.png");
         fs::write(&asset, b"png").unwrap();
 
         let outside = temp_dir("watch-outside");
@@ -920,13 +904,15 @@ mod watch_tests {
 
         let (tx, _rx) = std::sync::mpsc::channel();
         let state = setup_watcher(
-            vec![
-                root.clone(),
-                file.clone(),
-                asset_dir.clone(),
-                asset.clone(),
-                outside_asset.clone(),
-            ],
+            WatchPlan {
+                recursive: vec![root.clone()],
+                paths: vec![
+                    file.clone(),
+                    nested.clone(),
+                    asset.clone(),
+                    outside_asset.clone(),
+                ],
+            },
             tx,
         )
         .unwrap();
@@ -934,22 +920,20 @@ mod watch_tests {
         let root = root.canonicalize().unwrap();
         let nested = nested.canonicalize().unwrap();
         let file = file.canonicalize().unwrap();
-        let asset_dir = asset_dir.canonicalize().unwrap();
         let asset = asset.canonicalize().unwrap();
         let outside = outside.canonicalize().unwrap();
         let outside_asset = outside_asset.canonicalize().unwrap();
 
         assert_eq!(state.watched.get(&root), Some(&true));
-        assert!(
-            !state.watched.contains_key(&nested),
-            "nested folders under the scan root must not appear as extra watches"
-        );
+        assert!(!state.watched.contains_key(&nested));
         assert!(!state.watched.contains_key(&file));
-        assert!(!state.watched.contains_key(&asset_dir));
         assert!(!state.watched.contains_key(&asset));
         assert_eq!(state.watched.get(&outside_asset), Some(&false));
-        assert_eq!(state.watched.get(&outside), Some(&false));
-        assert_eq!(state.watched.len(), 3);
+        assert!(
+            !state.watched.contains_key(&outside),
+            "external embed parent directories must not be attached"
+        );
+        assert_eq!(state.watched.len(), 2);
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();

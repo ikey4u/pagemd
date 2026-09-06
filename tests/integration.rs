@@ -314,7 +314,9 @@ fn export_html_restores_workspace_script_for_preview_render() {
 #[tokio::test(flavor = "multi_thread")]
 async fn hosted_preview_starts_inside_tokio_runtime() {
     use pagemd::app::preview::error::{build_preview_error_html, preview_html_opts};
-    use pagemd::app::preview::{HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
+    use pagemd::app::preview::{
+        HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult, WatchPlan,
+    };
     use pagemd::core::{export_with_resources, prepare_resources, ConvertOptions, OutputFormat};
 
     let dir = temp_test_dir("hosted-preview");
@@ -340,7 +342,10 @@ async fn hosted_preview_starts_inside_tokio_runtime() {
             host: "127.0.0.1".to_string(),
             port: 0,
             inputs: vec![session_path.clone()],
-            watch_paths: vec![session_path.clone()],
+            watch_plan: WatchPlan {
+                recursive: Vec::new(),
+                paths: vec![session_path.clone()],
+            },
             export_path: None,
             library: None,
         },
@@ -352,7 +357,7 @@ async fn hosted_preview_starts_inside_tokio_runtime() {
         ) {
             Ok(document) => RenderResult::Ok {
                 html: document.html,
-                extra_watch_paths: Vec::new(),
+                watch_plan: WatchPlan::default(),
             },
             Err(err) => RenderResult::Err {
                 html: build_preview_error_html(&err),

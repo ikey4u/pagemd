@@ -6,8 +6,7 @@ use anyhow::{Context, Result};
 
 use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
 use crate::app::preview::{
-    collect_initial_watch_paths, collect_render_watch_paths, HostedPreview, HostedPreviewOptions,
-    RenderRequest, RenderResult,
+    collect_watch_plan, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult, WatchPlan,
 };
 use crate::core::{
     export_with_resources, prepare_resources, resolve_inputs, ConvertOptions, HtmlExportOptions,
@@ -58,11 +57,8 @@ impl SessionPreview {
                     .with_context(|| format!("create {}", session_path.display()))?;
             }
 
-            let source = fs::read_to_string(&session_path)
-                .with_context(|| format!("read {}", session_path.display()))?;
             let inputs = vec![session_path.clone()];
-            let watch_paths =
-                collect_initial_watch_paths(&inputs, &[(session_path.clone(), source)]);
+            let watch_plan = collect_watch_plan(&inputs, &[]);
 
             let convert_opts = ConvertOptions {
                 inputs: inputs.clone(),
@@ -90,7 +86,7 @@ impl SessionPreview {
                     host: "127.0.0.1".to_string(),
                     port: 0,
                     inputs,
-                    watch_paths,
+                    watch_plan,
                     export_path: None,
                     library: None,
                 },
@@ -133,16 +129,16 @@ fn render_session(ctx: &SessionRenderContext) -> RenderResult {
         Some(ctx.session_path.as_path()),
     ) {
         Ok(document) => {
-            let extra_watch_paths = match resolve_inputs(&ctx.convert_opts) {
-                Ok(resolved) => collect_render_watch_paths(&resolved.files, &resolved.directories),
+            let watch_plan = match resolve_inputs(&ctx.convert_opts) {
+                Ok(resolved) => collect_watch_plan(&resolved.files, &resolved.directories),
                 Err(err) => {
                     eprintln!("Watch path refresh warning: {err:#}");
-                    Vec::new()
+                    WatchPlan::default()
                 }
             };
             RenderResult::Ok {
                 html: document.html,
-                extra_watch_paths,
+                watch_plan,
             }
         }
         Err(err) => {

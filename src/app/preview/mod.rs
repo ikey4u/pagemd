@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub use library::{lock_library, PreviewLibrary, SectionPayload, SharedPreviewLibrary};
 pub use live::ensure_export_html;
 pub use live::wrap_for_preview;
-pub use resources::{collect_initial_watch_paths, collect_render_watch_paths};
+pub use resources::{collect_watch_plan, WatchPlan};
 pub use server::{run, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
 
 #[derive(Clone)]
@@ -17,7 +17,7 @@ pub struct ViewOptions {
     pub host: String,
     pub port: u16,
     pub inputs: Vec<PathBuf>,
-    pub watch_paths: Vec<PathBuf>,
+    pub watch_plan: WatchPlan,
     pub open_browser: bool,
     pub export_path: Option<PathBuf>,
     pub library: Option<SharedPreviewLibrary>,

@@ -1,25 +1,74 @@
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
-const ASSET_DIR_NAMES: &[&str] = &["assets", "images", "img", "static", "media", "figures"];
+/// Local files pagemd actually inlines. Navigation links to source
+/// (`.swift`, `.md`, …) are not part of the preview and must not be watched.
+const EMBEDDABLE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif", "css", "js", "mjs", "woff",
+    "woff2", "ttf", "otf", "mp4", "webm", "ogg",
+];
 
-fn markdown_link_re() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"!?\[[^\]]*\]\(([^)]+)\)").expect("markdown link regex"))
+const DISCOVER_SOURCE_LIMIT: usize = 64;
+
+/// Minimum watch set that can change the rendered preview.
+///
+/// * `recursive` — corpus roots (`--dir` / directory inputs). Nested files are
+///   already covered; they are never listed separately.
+/// * `paths` — loose Markdown inputs and embeddable resources that live
+///   **outside** those roots. Files only; their parent directories are not
+///   attached (that is what pulled `ios/` into a `docs/` preview).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WatchPlan {
+    pub recursive: Vec<PathBuf>,
+    pub paths: Vec<PathBuf>,
 }
 
-fn html_attr_re() -> &'static Regex {
+impl WatchPlan {
+    pub fn is_empty(&self) -> bool {
+        self.recursive.is_empty() && self.paths.is_empty()
+    }
+}
+
+fn markdown_image_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)").expect("markdown image regex"))
+}
+
+fn html_embed_attr_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"(?:src|href|poster)\s*=\s*["']([^"']+)["']"#).expect("html attr regex")
+        Regex::new(r#"(?:src|poster)\s*=\s*["']([^"']+)["']"#).expect("html embed attr regex")
+    })
+}
+
+fn html_link_href_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?is)<link\b[^>]*?\shref\s*=\s*["']([^"']+)["']"#)
+            .expect("html link href regex")
     })
 }
 
 fn css_url_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"url\(\s*['"]?([^'")]+)['"]?\s*\)"#).expect("css url regex"))
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_embeddable_resource(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            EMBEDDABLE_EXTS
+                .iter()
+                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+        })
 }
 
 fn is_local_reference(reference: &str) -> bool {
@@ -33,8 +82,18 @@ fn is_local_reference(reference: &str) -> bool {
         && !reference.starts_with("javascript:")
 }
 
+fn covered_by_root(path: &Path, roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .any(|root| path != root && path.starts_with(root))
+}
+
 fn resolve_local_path(reference: &str, base_dir: &Path) -> Option<PathBuf> {
-    let reference = reference.trim();
+    let reference = reference
+        .trim()
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(reference);
     if !is_local_reference(reference) {
         return None;
     }
@@ -46,42 +105,44 @@ fn resolve_local_path(reference: &str, base_dir: &Path) -> Option<PathBuf> {
     } else {
         base_dir.join(reference)
     };
-    let path = path.canonicalize().unwrap_or(path);
-    if path.exists() {
+    let path = canonical(&path);
+    if path.exists() && is_embeddable_resource(&path) {
         Some(path)
     } else {
         None
     }
 }
 
-/// Collect local resource paths referenced in Markdown / raw HTML fragments.
-pub fn discover_from_sources(sources: &[(PathBuf, String)]) -> Vec<PathBuf> {
+fn insert_discovered(paths: &mut HashSet<PathBuf>, reference: &str, base_dir: &Path) {
+    if let Some(path) = resolve_local_path(reference, base_dir) {
+        paths.insert(path);
+    }
+}
+
+fn discover_embeddable_resources(sources: &[(PathBuf, String)]) -> Vec<PathBuf> {
     let mut paths = HashSet::new();
 
     for (input, source) in sources {
         let base_dir = input.parent().unwrap_or_else(|| Path::new("."));
 
-        for cap in markdown_link_re().captures_iter(source) {
+        for cap in markdown_image_re().captures_iter(source) {
             if let Some(reference) = cap.get(1) {
-                if let Some(path) = resolve_local_path(reference.as_str(), base_dir) {
-                    paths.insert(path);
-                }
+                insert_discovered(&mut paths, reference.as_str(), base_dir);
             }
         }
-
-        for cap in html_attr_re().captures_iter(source) {
+        for cap in html_embed_attr_re().captures_iter(source) {
             if let Some(reference) = cap.get(1) {
-                if let Some(path) = resolve_local_path(reference.as_str(), base_dir) {
-                    paths.insert(path);
-                }
+                insert_discovered(&mut paths, reference.as_str(), base_dir);
             }
         }
-
+        for cap in html_link_href_re().captures_iter(source) {
+            if let Some(reference) = cap.get(1) {
+                insert_discovered(&mut paths, reference.as_str(), base_dir);
+            }
+        }
         for cap in css_url_re().captures_iter(source) {
             if let Some(reference) = cap.get(1) {
-                if let Some(path) = resolve_local_path(reference.as_str(), base_dir) {
-                    paths.insert(path);
-                }
+                insert_discovered(&mut paths, reference.as_str(), base_dir);
             }
         }
     }
@@ -89,81 +150,57 @@ pub fn discover_from_sources(sources: &[(PathBuf, String)]) -> Vec<PathBuf> {
     paths.into_iter().collect()
 }
 
-/// Initial watch set: input files, sibling assets, common asset subdirectories, and discovered paths.
-pub fn collect_initial_watch_paths(
-    inputs: &[PathBuf],
-    sources: &[(PathBuf, String)],
-) -> Vec<PathBuf> {
-    let mut paths = HashSet::new();
-
-    for input in inputs {
-        let canonical = input.canonicalize().unwrap_or_else(|_| input.clone());
-        paths.insert(canonical.clone());
-
-        let parent = input.parent().unwrap_or_else(|| Path::new("."));
-        if !parent.as_os_str().is_empty() {
-            let parent = parent
-                .canonicalize()
-                .unwrap_or_else(|_| parent.to_path_buf());
-            for name in ASSET_DIR_NAMES {
-                let dir = parent.join(name);
-                if dir.is_dir() {
-                    paths.insert(dir.canonicalize().unwrap_or(dir));
-                }
-            }
-        }
+fn load_sources(files: &[PathBuf]) -> Vec<(PathBuf, String)> {
+    if files.len() > DISCOVER_SOURCE_LIMIT {
+        return Vec::new();
     }
-
-    for path in discover_from_sources(sources) {
-        paths.insert(path);
-    }
-
-    paths.into_iter().collect()
+    files
+        .iter()
+        .filter_map(|input| {
+            fs::read_to_string(input)
+                .ok()
+                .map(|source| (input.clone(), source))
+        })
+        .collect()
 }
 
-/// Additional paths to watch after a successful render (deduped by the caller).
-pub fn discover_watch_paths(inputs: &[PathBuf]) -> anyhow::Result<Vec<PathBuf>> {
-    let mut sources = Vec::new();
-    for input in inputs {
-        let source = std::fs::read_to_string(input).map_err(|err| {
-            std::io::Error::new(
-                err.kind(),
-                format!("Cannot read {}: {err}", input.display()),
-            )
-        })?;
-        sources.push((input.clone(), source));
-    }
-    Ok(discover_from_sources(&sources))
-}
-
-/// Watch set after a successful render: current inputs, scan roots, and local assets.
+/// Collapse inputs and referenced embeddable assets into the watch plan.
 ///
-/// Scan roots must be included so nested create/delete events keep triggering reloads.
-pub fn collect_render_watch_paths(files: &[PathBuf], directories: &[PathBuf]) -> Vec<PathBuf> {
-    let mut paths = HashSet::new();
-
-    for input in files {
-        paths.insert(input.canonicalize().unwrap_or_else(|_| input.clone()));
-    }
-    for dir in directories {
-        paths.insert(dir.canonicalize().unwrap_or_else(|_| dir.clone()));
-    }
-
-    // Full-corpus asset scans are expensive; directory watches already cover nested files.
-    if files.len() <= 64 {
-        match discover_watch_paths(files) {
-            Ok(discovered) => {
-                for path in discovered {
-                    paths.insert(path);
-                }
-            }
-            Err(err) => {
-                eprintln!("Resource watch discovery warning: {err:#}");
-            }
+/// Callers pass the current corpus (`files` + scan `directories`). Markdown is
+/// read here when the corpus is small enough; scan roots already cover nested
+/// creates, so skipping discovery on huge trees does not miss in-tree edits.
+pub fn collect_watch_plan(files: &[PathBuf], directories: &[PathBuf]) -> WatchPlan {
+    let mut roots: Vec<PathBuf> = directories
+        .iter()
+        .map(|dir| canonical(dir))
+        .filter(|dir| dir.is_dir())
+        .collect();
+    roots.sort_by_key(|path| path.components().count());
+    let mut recursive = Vec::new();
+    for root in roots {
+        if !covered_by_root(&root, &recursive) {
+            recursive.push(root);
         }
     }
 
-    paths.into_iter().collect()
+    let mut paths = HashSet::new();
+    for file in files {
+        let file = canonical(file);
+        if file.exists() && !covered_by_root(&file, &recursive) {
+            paths.insert(file);
+        }
+    }
+
+    for asset in discover_embeddable_resources(&load_sources(files)) {
+        if !covered_by_root(&asset, &recursive) && !recursive.iter().any(|root| root == &asset) {
+            paths.insert(asset);
+        }
+    }
+
+    let mut paths: Vec<PathBuf> = paths.into_iter().collect();
+    paths.sort();
+    recursive.sort();
+    WatchPlan { recursive, paths }
 }
 
 #[cfg(test)]
@@ -182,23 +219,77 @@ mod tests {
     }
 
     #[test]
-    fn render_watch_paths_include_scan_roots_and_inputs() {
-        let root = temp_dir("render-watch");
-        let nested = root.join("nested");
-        std::fs::create_dir_all(&nested).unwrap();
-        let file = nested.join("doc.md");
-        std::fs::write(&file, "# Doc\n\n![img](./pic.png)\n").unwrap();
-        let asset = nested.join("pic.png");
-        std::fs::write(&asset, b"png").unwrap();
+    fn dir_preview_watches_scan_root_and_external_embeds_only() {
+        let root = temp_dir("watch-plan");
+        let docs = root.join("docs");
+        let ios = root.join("ios");
+        std::fs::create_dir_all(docs.join("guide")).unwrap();
+        std::fs::create_dir_all(&ios).unwrap();
 
-        let watches = collect_render_watch_paths(&[file.clone()], &[root.clone()]);
-        let root = root.canonicalize().unwrap();
+        let nested = docs.join("guide").join("intro.md");
+        std::fs::write(&nested, "# Intro\n\n![local](./pic.png)\n").unwrap();
+        std::fs::write(docs.join("guide/pic.png"), b"png").unwrap();
+
+        let swift = ios.join("AppModel.swift");
+        std::fs::write(&swift, "struct AppModel {}\n").unwrap();
+        let shot = ios.join("screenshot.png");
+        std::fs::write(&shot, b"png").unwrap();
+        std::fs::write(
+            docs.join("impl.md"),
+            "# Impl\n\n\
+             [AppModel.swift](../ios/AppModel.swift)\n\n\
+             <a href=\"../ios/AppModel.swift\">source</a>\n\n\
+             ![ui](../ios/screenshot.png)\n",
+        )
+        .unwrap();
+
+        let plan = collect_watch_plan(&[nested, docs.join("impl.md")], &[docs.clone()]);
+        let docs = docs.canonicalize().unwrap();
+        let shot = shot.canonicalize().unwrap();
+        let swift = swift.canonicalize().unwrap();
+        let ios = ios.canonicalize().unwrap();
+
+        assert_eq!(plan.recursive, vec![docs.clone()]);
+        assert_eq!(plan.paths, vec![shot]);
+        assert!(!plan.recursive.iter().any(|path| path == &ios));
+        assert!(!plan.paths.iter().any(|path| path == &swift));
+        assert!(!plan.paths.iter().any(|path| path == &ios));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn file_preview_watches_the_file_and_embeds_not_their_parents() {
+        let root = temp_dir("watch-file");
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let file = root.join("doc.md");
+        let sibling = root.join("pic.png");
+        let shot = other.join("shot.png");
+        std::fs::write(&sibling, b"png").unwrap();
+        std::fs::write(&shot, b"png").unwrap();
+        std::fs::write(
+            &file,
+            "# Doc\n\n![a](./pic.png)\n\n![b](./other/shot.png)\n",
+        )
+        .unwrap();
+
+        let plan = collect_watch_plan(&[file.clone()], &[]);
         let file = file.canonicalize().unwrap();
-        let asset = asset.canonicalize().unwrap();
+        let sibling = sibling.canonicalize().unwrap();
+        let shot = shot.canonicalize().unwrap();
+        let other = other.canonicalize().unwrap();
+        let root = root.canonicalize().unwrap();
 
-        assert!(watches.iter().any(|path| path == &root));
-        assert!(watches.iter().any(|path| path == &file));
-        assert!(watches.iter().any(|path| path == &asset));
+        assert!(plan.recursive.is_empty());
+        assert!(plan.paths.contains(&file));
+        assert!(plan.paths.contains(&sibling));
+        assert!(plan.paths.contains(&shot));
+        assert!(!plan.paths.contains(&root), "do not watch the file parent");
+        assert!(
+            !plan.paths.contains(&other),
+            "do not watch the asset parent"
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

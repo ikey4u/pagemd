@@ -175,28 +175,7 @@ fn run_view(args: &ViewArgs) -> Result<()> {
     let resources = prepare_resources(&convert_opts)?;
     let title_hint = resolved.files.first().cloned();
     let html_opts = preview_html_opts();
-
-    // Avoid reading hundreds of files just to discover asset refs at boot; scan
-    // roots already cover nested creates, and post-render discovery still runs.
-    let boot_sources: Vec<(PathBuf, String)> = if resolved.files.len() <= 32 {
-        resolved
-            .files
-            .iter()
-            .map(|input| {
-                let source = fs::read_to_string(input)
-                    .with_context(|| format!("Cannot read {}", input.display()))?;
-                Ok((input.clone(), source))
-            })
-            .collect::<Result<_>>()?
-    } else {
-        Vec::new()
-    };
-
-    let mut watch_paths = resolved.directories.clone();
-    watch_paths.extend(preview::collect_initial_watch_paths(
-        &resolved.files,
-        &boot_sources,
-    ));
+    let watch_plan = preview::collect_watch_plan(&resolved.files, &resolved.directories);
 
     let library = std::sync::Arc::new(std::sync::Mutex::new(preview::PreviewLibrary::new(
         convert_opts.clone(),
@@ -211,7 +190,7 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             host: args.host.clone(),
             port: args.port,
             inputs: resolved.files.clone(),
-            watch_paths,
+            watch_plan,
             open_browser: !args.no_open,
             export_path: None,
             library: Some(std::sync::Arc::clone(&library)),
@@ -245,20 +224,16 @@ fn run_view(args: &ViewArgs) -> Result<()> {
                             Err(err) => eprintln!("Export render error: {err:#}"),
                         }
                     }
-                    let extra_watch_paths = match resolve_inputs(&convert_opts) {
-                        Ok(resolved) => preview::collect_render_watch_paths(
-                            &resolved.files,
-                            &resolved.directories,
-                        ),
+                    let watch_plan = match resolve_inputs(&convert_opts) {
+                        Ok(resolved) => {
+                            preview::collect_watch_plan(&resolved.files, &resolved.directories)
+                        }
                         Err(err) => {
                             eprintln!("Watch path refresh warning: {err:#}");
-                            Vec::new()
+                            preview::WatchPlan::default()
                         }
                     };
-                    preview::RenderResult::Ok {
-                        html,
-                        extra_watch_paths,
-                    }
+                    preview::RenderResult::Ok { html, watch_plan }
                 }
                 Err(err) => {
                     eprintln!("Render error: {err:#}");
