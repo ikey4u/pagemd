@@ -11,7 +11,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::response::{Html, IntoResponse, Response};
@@ -715,7 +715,44 @@ async fn section_handler(
     }
 }
 
-async fn export_handler(State(state): State<Arc<AppState>>) -> Response {
+#[derive(serde::Deserialize)]
+struct ExportQuery {
+    /// Comma-separated 1-based section ids (`doc-1` → `1`). Omitted means every page.
+    docs: Option<String>,
+}
+
+fn parse_export_docs(raw: Option<&str>) -> std::result::Result<Option<Vec<usize>>, String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.eq_ignore_ascii_case("all") {
+        return Ok(None);
+    }
+    let mut ids = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let id: usize = part
+            .parse()
+            .map_err(|_| format!("invalid section id: {part}"))?;
+        ids.push(id);
+    }
+    if ids.is_empty() {
+        return Err("no sections selected".to_string());
+    }
+    Ok(Some(ids))
+}
+
+async fn export_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ExportQuery>,
+) -> Response {
+    let docs = match parse_export_docs(query.docs.as_deref()) {
+        Ok(docs) => docs,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
     let Some(library) = state.library.as_ref() else {
         // Fall back to current shell HTML when no library is attached.
         let html = state
@@ -727,7 +764,7 @@ async fn export_handler(State(state): State<Arc<AppState>>) -> Response {
     };
 
     let html = match library.lock() {
-        Ok(mut guard) => guard.full_html(),
+        Ok(mut guard) => guard.export_html(docs.as_deref()),
         Err(_) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, "library lock poisoned").into_response();
         }

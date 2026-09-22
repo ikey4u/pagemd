@@ -50,6 +50,7 @@ impl PreviewLibrary {
     ) -> Self {
         // Multi-file view uses lazy placeholders; single-file keeps eager body.
         html_opts.lazy_sections = true;
+        html_opts.preview_runtime_assets = true;
         Self {
             convert_opts,
             html_opts,
@@ -193,11 +194,27 @@ impl PreviewLibrary {
 
     /// Full SingleFile-style HTML (all sections embedded).
     pub fn full_html(&mut self) -> Result<String> {
+        self.export_html(None)
+    }
+
+    /// Self-contained HTML for every file, or for the given 1-based section ids.
+    ///
+    /// `None` exports the whole library. A subset contains only those pages, in
+    /// file order, with no lazy placeholders for the rest.
+    pub fn export_html(&mut self, one_based: Option<&[usize]>) -> Result<String> {
         self.sync_files()?;
-        self.ensure_all()?;
+        if self.files.is_empty() {
+            anyhow::bail!("No Markdown files found.");
+        }
+        let indices = match one_based {
+            None => (0..self.files.len()).collect::<Vec<_>>(),
+            Some(ids) => normalize_export_ids(ids, self.files.len())?,
+        };
+        self.ensure_indices(&indices)?;
         let mut opts = self.html_opts.clone();
         opts.lazy_sections = false;
-        let doc = self.document_for_shell(&(0..self.files.len()).collect::<Vec<_>>());
+        opts.preview_runtime_assets = false;
+        let doc = self.document_for_indices(&indices)?;
         Ok(export_document(&doc, OutputFormat::Html, &opts)?.html)
     }
 
@@ -275,6 +292,71 @@ impl PreviewLibrary {
             input_paths: self.files.clone(),
         }
     }
+
+    fn document_for_indices(&self, indices: &[usize]) -> Result<Document> {
+        let mut sections = Vec::with_capacity(indices.len());
+        let mut nav_labels = Vec::with_capacity(indices.len());
+        let mut input_paths = Vec::with_capacity(indices.len());
+        let mut doc_title = if indices.len() == 1 {
+            String::new()
+        } else {
+            self.convert_opts.title.clone().unwrap_or_default()
+        };
+
+        for &index in indices {
+            let path = self
+                .files
+                .get(index)
+                .context("section index out of range")?;
+            let cached = self
+                .cache
+                .get(index)
+                .and_then(|entry| entry.as_ref())
+                .context("section cache miss after ensure")?;
+            if doc_title.is_empty() && !cached.section.title.is_empty() {
+                doc_title = cached.section.title.clone();
+            }
+            nav_labels.push(cached.label.clone());
+            sections.push(cached.section.clone());
+            input_paths.push(path.clone());
+        }
+
+        if doc_title.is_empty() {
+            doc_title = input_paths
+                .first()
+                .and_then(|path| path.file_stem())
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("Document")
+                .to_string();
+        }
+
+        let icon_label = resolve_icon_label(&self.convert_opts, &input_paths);
+        Ok(Document {
+            title: doc_title,
+            icon_label,
+            sections,
+            nav_labels,
+            input_paths,
+        })
+    }
+}
+
+fn normalize_export_ids(ids: &[usize], len: usize) -> Result<Vec<usize>> {
+    if ids.is_empty() {
+        anyhow::bail!("no sections selected");
+    }
+    let mut indices = Vec::with_capacity(ids.len());
+    for id in ids {
+        if *id == 0 || *id > len {
+            anyhow::bail!("section {id} out of range");
+        }
+        let index = id - 1;
+        if !indices.contains(&index) {
+            indices.push(index);
+        }
+    }
+    indices.sort_unstable();
+    Ok(indices)
 }
 
 fn stub_section(label: &str) -> Section {
@@ -469,6 +551,53 @@ mod tests {
     }
 
     #[test]
+    fn full_html_inlines_mermaid_instead_of_preview_asset_url() {
+        let dir = temp_dir("export-mermaid");
+        let a = dir.join("a.md");
+        fs::write(
+            &a,
+            "# Alpha\n\n```mermaid\nflowchart TB\n  src[ExportNodeSrc] --> dst[ExportNodeDst]\n```\n",
+        )
+        .unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = crate::core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let html = lib.full_html().unwrap();
+        assert!(html.contains("data-mermaid-client"), "{html}");
+        assert!(html.contains("ExportNodeDst"));
+        assert!(
+            !html.contains("/__assets/mermaid.min.js"),
+            "exported HTML cannot depend on the preview server"
+        );
+        assert!(html.contains("<script data-pagemd-mermaid>"));
+        assert!(html.contains("__esbuild_esm_mermaid_nm"));
+        assert!(html.contains("data-pagemd-mermaid-init"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn lazy_shell_keeps_diagram_html_runtime_when_fence_is_in_a_lazy_section() {
         let dir = temp_dir("lazy-diagram-html");
         let a = dir.join("a.md");
@@ -523,6 +652,42 @@ mod tests {
             payload.html
         );
         assert!(payload.html.contains("LazyHtmlNode"), "{}", payload.html);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn export_html_can_emit_one_page_or_several() {
+        let dir = temp_dir("export-pages");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        let c = dir.join("c.md");
+        fs::write(&a, "# Alpha\n\nbody-a\n").unwrap();
+        fs::write(&b, "# Beta\n\nbody-b\n").unwrap();
+        fs::write(&c, "# Gamma\n\nbody-c\n").unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            ..ConvertOptions::default()
+        };
+        let resources = crate::core::prepare_resources(&convert_opts).unwrap();
+        let mut lib =
+            PreviewLibrary::new(convert_opts, HtmlExportOptions::default(), resources, None);
+
+        let one = lib.export_html(Some(&[2])).unwrap();
+        assert!(one.contains("body-b"), "{one}");
+        assert!(!one.contains("body-a"));
+        assert!(!one.contains("body-c"));
+        assert!(!one.contains("data-lazy-section=\""));
+        assert!(one.contains("<title>Beta</title>") || one.contains(">Beta<"));
+
+        let some = lib.export_html(Some(&[3, 1])).unwrap();
+        assert!(some.contains("body-a") && some.contains("body-c"));
+        assert!(!some.contains("body-b"));
+        assert!(some.find("body-a") < some.find("body-c"));
+
+        let all = lib.export_html(None).unwrap();
+        assert!(all.contains("body-a") && all.contains("body-b") && all.contains("body-c"));
 
         fs::remove_dir_all(dir).unwrap();
     }

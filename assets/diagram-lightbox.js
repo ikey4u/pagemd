@@ -11,6 +11,16 @@
     ".diagram-html-display",
   ].join(",");
 
+  // Chrome, formulas, and the overlay itself are not content figures.
+  var SKIP_MEDIA = [
+    ".pagemd-lightbox",
+    ".doc-topbar",
+    ".doc-sidebar",
+    ".doc-outline",
+    ".math-inline",
+    ".math-display",
+  ].join(",");
+
   var MIN_SCALE = 0.2;
   var MAX_SCALE = 8;
   var ZOOM_FACTOR = 1.15;
@@ -94,11 +104,16 @@
     var vh = state.viewport.clientHeight || window.innerHeight;
     var cw = measured.width;
     var ch = measured.height;
-    // Double-click means enlarge: fill most of the viewport (no 2x cap).
-    var fit = Math.min((vw * 0.96) / cw, (vh * 0.9) / ch);
+    // Fill the viewport when that enlarges the figure. Never start smaller
+    // than the size already on the page (tall images used to shrink).
+    var contain = Math.min((vw * 0.96) / cw, (vh * 0.9) / ch);
+    var pageScale = 0;
+    if (state.pageWidth > 0 && state.pageHeight > 0) {
+      pageScale = Math.min(state.pageWidth / cw, state.pageHeight / ch);
+    }
     state.contentWidth = cw;
     state.contentHeight = ch;
-    state.scale = clamp(fit, MIN_SCALE, MAX_SCALE);
+    state.scale = clamp(Math.max(contain, pageScale), MIN_SCALE, MAX_SCALE);
     // Flexbox centers the content; keep pan at origin on fit/reset.
     state.x = 0;
     state.y = 0;
@@ -261,19 +276,88 @@
     };
   }
 
+  function isSvgElement(node) {
+    return !!(
+      node &&
+      node.localName === "svg" &&
+      node.namespaceURI === "http://www.w3.org/2000/svg"
+    );
+  }
+
+  function outermostSvg(node) {
+    if (!node || !node.closest) {
+      return null;
+    }
+    var svg = isSvgElement(node) ? node : node.closest("svg");
+    if (!isSvgElement(svg)) {
+      return null;
+    }
+    var parent = svg.parentElement;
+    while (parent && parent.closest) {
+      var outer = parent.closest("svg");
+      if (!isSvgElement(outer)) {
+        break;
+      }
+      svg = outer;
+      parent = svg.parentElement;
+    }
+    return svg;
+  }
+
+  function displayedBox(sourceRoot) {
+    var media = sourceRoot;
+    if (!isSvgElement(sourceRoot) && sourceRoot.tagName !== "IMG") {
+      media = sourceRoot.querySelector("svg, img") || sourceRoot;
+    }
+    var rect = media.getBoundingClientRect();
+    return { width: rect.width || 0, height: rect.height || 0 };
+  }
+
+  // Keep the SVG in the document so currentColor and page CSS still apply.
+  function createContentSvgPreview(svg) {
+    var size = svgNaturalSize(svg);
+    var clone = rewriteSvgIds(svg.cloneNode(true));
+    clone.querySelectorAll("script").forEach(function (node) {
+      if (node.parentNode) {
+        node.parentNode.removeChild(node);
+      }
+    });
+    var computed = window.getComputedStyle(svg);
+    clone.style.color = computed.color;
+    clone.style.fontFamily = computed.fontFamily;
+    clone.style.fontSize = computed.fontSize;
+    clone.style.fontWeight = computed.fontWeight;
+    clone.setAttribute("width", String(size.w));
+    clone.setAttribute("height", String(size.h));
+    clone.style.width = size.w + "px";
+    clone.style.height = size.h + "px";
+    clone.style.maxWidth = "none";
+    clone.style.maxHeight = "none";
+    return {
+      element: clone,
+      objectUrl: null,
+      width: size.w,
+      height: size.h,
+      waitForLoad: false,
+    };
+  }
+
   function createPreviewFromRoot(sourceRoot) {
-    if (sourceRoot.classList.contains("diagram-html-display")) {
+    if (sourceRoot.classList && sourceRoot.classList.contains("diagram-html-display")) {
       return createHtmlDiagramPreview(sourceRoot);
+    }
+    if (isSvgElement(sourceRoot)) {
+      return createContentSvgPreview(sourceRoot);
     }
     var svg = sourceRoot.querySelector("svg");
     if (svg) {
       return createSvgPreview(svg);
     }
-    var img = sourceRoot.querySelector("img");
+    var img = sourceRoot.tagName === "IMG" ? sourceRoot : sourceRoot.querySelector("img");
     if (img && img.getAttribute("src")) {
       var preview = document.createElement("img");
       preview.className = "pagemd-lightbox-raster";
-      preview.alt = img.getAttribute("alt") || "Diagram";
+      preview.alt = img.getAttribute("alt") || "Image";
       preview.decoding = "async";
       preview.src = img.currentSrc || img.src;
       var width = img.naturalWidth || img.clientWidth || 800;
@@ -298,6 +382,7 @@
     if (!preview) {
       return;
     }
+    var pageBox = displayedBox(sourceRoot);
     closeLightbox();
 
     var overlay = document.createElement("div");
@@ -341,6 +426,8 @@
       objectUrl: preview.objectUrl,
       contentWidth: preview.width,
       contentHeight: preview.height,
+      pageWidth: pageBox.width,
+      pageHeight: pageBox.height,
       scale: 1,
       x: 0,
       y: 0,
@@ -383,7 +470,7 @@
         }, 120);
       }
     } else {
-      requestAnimationFrame(finishOpen);
+      finishOpen();
     }
 
     function onWheel(event) {
@@ -499,10 +586,48 @@
     active = state;
   }
 
+  function contentMediaRoot(target) {
+    if (!target || !target.closest) {
+      return null;
+    }
+    var diagram = target.closest(SELECTOR);
+    if (diagram) {
+      if (diagram.classList.contains("mermaid-error") || diagram.classList.contains("plantuml-error")) {
+        return null;
+      }
+      return diagram;
+    }
+    if (target.closest(SKIP_MEDIA)) {
+      return null;
+    }
+    var img = target.closest("img");
+    if (img && img.getAttribute("src")) {
+      return img;
+    }
+    return outermostSvg(target);
+  }
+
   function decorateDiagrams(root) {
     var scope = root || document;
     scope.querySelectorAll(SELECTOR).forEach(function (node) {
       if (node.classList.contains("mermaid-error") || node.classList.contains("plantuml-error")) {
+        return;
+      }
+      if (!node.getAttribute("title")) {
+        node.setAttribute("title", "Double-click to enlarge");
+      }
+    });
+    scope.querySelectorAll("img, svg").forEach(function (node) {
+      if (node.closest(SELECTOR) || node.closest(SKIP_MEDIA)) {
+        return;
+      }
+      if (node.tagName === "IMG" && !node.getAttribute("src")) {
+        return;
+      }
+      if (node.localName === "svg" && !isSvgElement(node)) {
+        return;
+      }
+      if (isSvgElement(node) && node.parentElement && node.parentElement.closest("svg")) {
         return;
       }
       if (!node.getAttribute("title")) {
@@ -515,8 +640,8 @@
     if (event.defaultPrevented || active) {
       return;
     }
-    var root = event.target && event.target.closest ? event.target.closest(SELECTOR) : null;
-    if (!root || root.classList.contains("mermaid-error") || root.classList.contains("plantuml-error")) {
+    var root = contentMediaRoot(event.target);
+    if (!root) {
       return;
     }
     event.preventDefault();

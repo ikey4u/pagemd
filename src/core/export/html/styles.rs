@@ -305,7 +305,7 @@ html[data-theme="dark"] .doc-theme-icon-sun {
   top: calc(100% + 0.35rem);
   right: 0;
   z-index: 50;
-  width: 14rem;
+  width: 18rem;
   padding: 0.55rem;
   border: 1px solid var(--doc-chrome-border);
   border-radius: 0.55rem;
@@ -352,6 +352,46 @@ html[data-theme="dark"] .doc-theme-icon-sun {
 
 .doc-settings-action .doc-topbar-icon {
   flex: 0 0 auto;
+}
+
+.doc-export-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.doc-export-actions .doc-settings-action {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+.doc-export-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 11rem;
+  margin: 0.45rem 0;
+  overflow: auto;
+}
+
+.doc-export-page {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.2rem 0.15rem;
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.doc-export-page input {
+  margin: 0.2rem 0 0;
+  flex: 0 0 auto;
+}
+
+.doc-export-page span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .doc-settings-action-text-light {
@@ -1212,6 +1252,7 @@ img {
   border-radius: var(--radius);
   display: block;
   margin: 1rem 0;
+  cursor: zoom-in;
 }
 
 .math-inline {
@@ -1242,6 +1283,18 @@ img {
   height: auto;
   width: auto;
   max-width: 100%;
+}
+
+.container svg {
+  cursor: zoom-in;
+}
+
+.math-inline svg,
+.math-display svg,
+.doc-topbar svg,
+.doc-sidebar svg,
+.doc-outline svg {
+  cursor: auto;
 }
 
 .math-error {

@@ -875,7 +875,12 @@ fn mermaid_client_mode_emits_source_placeholder() {
             ..Default::default()
         },
     );
-    assert!(html.contains("/__assets/mermaid.min.js?v="));
+    assert!(
+        !html.contains("/__assets/mermaid.min.js"),
+        "standalone HTML must inline mermaid.js"
+    );
+    assert!(html.contains("<script data-pagemd-mermaid>"));
+    assert!(html.contains("__esbuild_esm_mermaid_nm"));
     assert!(html.contains("data-pagemd-mermaid-init"));
 }
 
@@ -903,6 +908,7 @@ fn lazy_workspace_html_ships_mermaid_runtime_without_inlined_diagrams() {
         &pagemd::core::HtmlExportOptions {
             embed_workspace_script: true,
             client_mermaid_runtime: true,
+            preview_runtime_assets: true,
             lazy_sections: true,
             ..Default::default()
         },
@@ -1020,6 +1026,25 @@ fn diagram_lightbox_keeps_html_clone_inside_tailwind_scope() {
     assert!(html.contains("data-pagemd-diagram-lightbox"));
     // Overlay is mounted on document.body; utilities are nested under this class.
     assert!(html.contains("wrapper.className = \"diagram-html-display\""));
+}
+
+#[test]
+fn content_images_and_svgs_use_the_diagram_lightbox() {
+    let section = RenderedSection {
+        title: String::new(),
+        html: "<p><img src=\"photo.png\" alt=\"photo\"></p>\n<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"></svg>\n".to_string(),
+        outline: Vec::new(),
+        footnotes: Vec::new(),
+    };
+    let html = build_html("Title", &[section], "PG");
+    assert!(html.contains("data-pagemd-diagram-lightbox"));
+    assert!(html.contains("function contentMediaRoot"));
+    assert!(html.contains("target.closest(\"img\")"));
+    assert!(html.contains("function outermostSvg"));
+    assert!(html.contains("function createContentSvgPreview"));
+    assert!(html.contains("state.pageWidth"));
+    assert!(html.contains(".math-inline"));
+    assert!(html.contains(".doc-topbar"));
 }
 
 #[test]

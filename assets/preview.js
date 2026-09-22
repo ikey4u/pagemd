@@ -32,22 +32,114 @@
     window.scrollTo(0, state.windowY);
   }
 
+  function exportAction(label, scope) {
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "doc-settings-action";
+    button.setAttribute("data-export-html", "");
+    button.setAttribute("data-export-scope", scope);
+    var text = document.createElement("span");
+    text.className = "doc-settings-action-text";
+    text.textContent = label;
+    button.appendChild(text);
+    return button;
+  }
+
   function ensureExportControls() {
     var slot = document.querySelector("[data-settings-export-slot]");
     if (!slot || slot.getAttribute("data-export-ready") === "1") {
       return;
     }
     slot.setAttribute("data-export-ready", "1");
-    slot.innerHTML =
-      '<div class="doc-settings-label">Export</div>' +
-      '<button type="button" class="doc-settings-action" data-export-html>' +
-      '<span class="doc-settings-action-text">HTML</span>' +
-      "</button>";
+    slot.textContent = "";
+
+    var heading = document.createElement("div");
+    heading.className = "doc-settings-label";
+    heading.textContent = "Export";
+    slot.appendChild(heading);
+
+    var panels = document.querySelectorAll("[data-doc-panel]");
+    if (panels.length <= 1) {
+      slot.appendChild(exportAction("HTML", "all"));
+      return;
+    }
+
+    var actions = document.createElement("div");
+    actions.className = "doc-export-actions";
+    actions.appendChild(exportAction("Current", "current"));
+    actions.appendChild(exportAction("All", "all"));
+    slot.appendChild(actions);
+
+    var list = document.createElement("div");
+    list.className = "doc-export-pages";
+    list.setAttribute("data-export-pages", "");
+    Array.prototype.forEach.call(panels, function (panel) {
+      var number = (panel.id || "").replace(/^doc-/, "");
+      var item = document.createElement("label");
+      item.className = "doc-export-page";
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = number;
+      input.checked = panel.classList.contains("is-active");
+      var span = document.createElement("span");
+      span.textContent = panel.getAttribute("data-panel-title") || panel.id || "Page";
+      item.appendChild(input);
+      item.appendChild(span);
+      list.appendChild(item);
+    });
+    slot.appendChild(list);
+    slot.appendChild(exportAction("Selected", "selected"));
   }
 
-  function suggestedExportName() {
-    var title = (document.title || "document").trim() || "document";
-    return title.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-") + ".html";
+  function sanitizeFileName(title) {
+    var name = (title || "document").trim() || "document";
+    return name.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-");
+  }
+
+  function panelNumber(panel) {
+    var number = panel && panel.id ? panel.id.replace(/^doc-/, "") : "";
+    return /^\d+$/.test(number) ? number : "";
+  }
+
+  function panelTitle(panel) {
+    if (!panel) {
+      return "";
+    }
+    return panel.getAttribute("data-panel-title") || panel.id || "";
+  }
+
+  function collectExportIds(scope) {
+    var panels = document.querySelectorAll("[data-doc-panel]");
+    if (!panels.length || scope === "all") {
+      return null;
+    }
+    if (scope === "current") {
+      var active = document.querySelector("[data-doc-panel].is-active") || panels[0];
+      var number = panelNumber(active);
+      return number ? [number] : null;
+    }
+    var ids = [];
+    document.querySelectorAll("[data-export-pages] input:checked").forEach(function (input) {
+      if (input.value) {
+        ids.push(input.value);
+      }
+    });
+    return ids;
+  }
+
+  function exportFileName(scope, ids) {
+    var base = document.title || "document";
+    if (ids && ids.length) {
+      var titles = ids.map(function (id) {
+        return panelTitle(document.getElementById("doc-" + id));
+      }).filter(Boolean);
+      if (titles.length === 1) {
+        base = titles[0];
+      } else if (scope === "selected" && titles.length > 1) {
+        base = (document.title || "document") + "-" + titles.length + "-pages";
+      }
+    }
+    return sanitizeFileName(base) + ".html";
   }
 
   function bakeMermaid(root) {
@@ -76,8 +168,33 @@
       });
   }
 
-  function buildExportHtml() {
+  function buildExportHtml(ids) {
     var clone = document.documentElement.cloneNode(true);
+    if (ids && ids.length) {
+      var keep = Object.create(null);
+      ids.forEach(function (id) {
+        keep[String(id)] = true;
+      });
+      clone.querySelectorAll("[data-doc-panel]").forEach(function (panel) {
+        var number = (panel.id || "").replace(/^doc-/, "");
+        if (!keep[number] && panel.parentNode) {
+          panel.parentNode.removeChild(panel);
+        }
+      });
+      clone.querySelectorAll("[data-doc-target]").forEach(function (link) {
+        var number = (link.getAttribute("data-doc-target") || "").replace(/^doc-/, "");
+        var row = link.closest(".doc-nav-row, li") || link;
+        if (!keep[number] && row.parentNode) {
+          row.parentNode.removeChild(row);
+        }
+      });
+      clone.querySelectorAll("[data-outline-for]").forEach(function (outline) {
+        var number = (outline.getAttribute("data-outline-for") || "").replace(/^doc-/, "");
+        if (!keep[number] && outline.parentNode) {
+          outline.parentNode.removeChild(outline);
+        }
+      });
+    }
     bakeMermaid(clone);
 
     clone.querySelectorAll("[data-pagemd-live-preview]").forEach(function (node) {
@@ -125,13 +242,13 @@
       trigger.setAttribute("aria-busy", "true");
     }
 
-    var finish = function (html) {
+    var finish = function (html, fileName) {
       try {
         var blob = new Blob([html], { type: "text/html;charset=utf-8" });
         var url = URL.createObjectURL(blob);
         var anchor = document.createElement("a");
         anchor.href = url;
-        anchor.download = suggestedExportName();
+        anchor.download = fileName || exportFileName("all", null);
         anchor.rel = "noopener";
         anchor.style.display = "none";
         document.body.appendChild(anchor);
@@ -151,28 +268,44 @@
       }
     };
 
-    var needsServerExport = !!document.querySelector("[data-lazy-section], [data-lazy-loaded]");
-    if (needsServerExport) {
-      fetch("/__export", { cache: "no-store" })
-        .then(function (response) {
-          if (!response.ok) {
-            throw new Error("export failed (" + response.status + ")");
-          }
-          return response.text();
-        })
-        .then(finish)
-        .catch(function (err) {
+    var scope = trigger && trigger.getAttribute("data-export-scope") || "all";
+    var ids = collectExportIds(scope);
+    if (ids && !ids.length) {
+      window.alert("Select at least one page.");
+      if (trigger) {
+        trigger.disabled = false;
+        trigger.removeAttribute("aria-busy");
+      }
+      return;
+    }
+    var fileName = exportFileName(scope, ids);
+    var exportUrl = "/__export";
+    if (ids && ids.length) {
+      exportUrl += "?docs=" + ids.join(",");
+    }
+
+    fetch(exportUrl, { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("export failed (" + response.status + ")");
+        }
+        return response.text();
+      })
+      .then(function (html) {
+        finish(html, fileName);
+      })
+      .catch(function (err) {
+        if (document.querySelector("[data-lazy-section]")) {
           console.error("[pagemd] Export HTML failed", err);
           window.alert("Export failed. See the browser console for details.");
           if (trigger) {
             trigger.disabled = false;
             trigger.removeAttribute("aria-busy");
           }
-        });
-      return;
-    }
-
-    finish(buildExportHtml());
+          return;
+        }
+        finish(buildExportHtml(ids), fileName);
+      });
   }
 
   function appendDiagramHtmlRuntime(doc) {

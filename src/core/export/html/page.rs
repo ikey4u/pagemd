@@ -73,6 +73,11 @@ const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
     "/diagram-html-tailwind-browser.js"
 ));
 const MERMAID_INIT_JS: &str = include_str!("../../../../assets/mermaid-init.js");
+const MERMAID_BROWSER_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
+
+fn mermaid_browser_js() -> &'static str {
+    std::str::from_utf8(MERMAID_BROWSER_JS).expect("bundled mermaid.js must be UTF-8")
+}
 
 fn diagram_html_tailwind_browser_js() -> &'static str {
     std::str::from_utf8(DIAGRAM_HTML_TAILWIND_BROWSER_JS)
@@ -111,13 +116,23 @@ fn diagram_html_runtime_tags(use_preview_assets: bool) -> String {
     format!("{config}{script}")
 }
 
-fn mermaid_runtime_tags() -> String {
-    // Bust browser cache when the bundled Mermaid version changes. Older Mermaid
-    // builds fail to lex Chinese quadrantChart axis labels.
+fn mermaid_runtime_tags(use_preview_assets: bool) -> String {
+    // Live preview loads the bundle from the preview server. Exported HTML is
+    // opened on its own, so the same bundle has to be inlined or diagrams stay
+    // as source text.
+    let script = if use_preview_assets {
+        format!(
+            "<script src=\"/__assets/mermaid.min.js?v={}\" data-pagemd-mermaid></script>\n",
+            env!("PAGEMD_MERMAID_VERSION")
+        )
+    } else {
+        format!(
+            "<script data-pagemd-mermaid>\n{}\n</script>\n",
+            script_escape(mermaid_browser_js())
+        )
+    };
     format!(
-        "<script src=\"/__assets/mermaid.min.js?v={}\" data-pagemd-mermaid></script>\n\
-<script data-pagemd-mermaid-init>\n{}\n</script>\n",
-        env!("PAGEMD_MERMAID_VERSION"),
+        "{script}<script data-pagemd-mermaid-init>\n{}\n</script>\n",
         script_escape(MERMAID_INIT_JS)
     )
 }
@@ -425,7 +440,7 @@ pub fn build_html_with_nav(
                 .iter()
                 .any(|section| section.html.contains(MERMAID_CLIENT_MARKER)))
     {
-        mermaid_runtime_tags()
+        mermaid_runtime_tags(opts.preview_runtime_assets)
     } else {
         String::new()
     };
@@ -553,6 +568,9 @@ pub struct HtmlExportOptions {
     pub embed_workspace_script: bool,
     /// Serve official mermaid.js for client-side diagram rendering (view mode).
     pub client_mermaid_runtime: bool,
+    /// Load mermaid.js (and keep preview URLs) from `/__assets/` instead of inlining.
+    /// Live preview only. Exported HTML must leave this false so it renders offline.
+    pub preview_runtime_assets: bool,
     /// When true, empty section bodies are emitted as lazy placeholders (`data-lazy-section`).
     pub lazy_sections: bool,
     pub chrome: WorkspaceChrome,
@@ -570,6 +588,8 @@ impl Default for HtmlExportOptions {
             // Match CLI convert / SingleFile export defaults.
             embed_workspace_script: true,
             client_mermaid_runtime: false,
+            // Portable HTML inlines mermaid.js. The preview server opts into URLs.
+            preview_runtime_assets: false,
             lazy_sections: false,
             chrome: WorkspaceChrome::Auto,
             scripts: ScriptEmbed::Full,
@@ -591,6 +611,7 @@ impl HtmlExportOptions {
         Self {
             embed_workspace_script: false,
             client_mermaid_runtime: false,
+            preview_runtime_assets: false,
             lazy_sections: false,
             chrome: WorkspaceChrome::ContentOnly,
             scripts: ScriptEmbed::None,
