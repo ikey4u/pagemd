@@ -1,8 +1,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use merman::svg::HeadlessRenderer;
-use merman::MermaidConfig;
+use merman::svg::SvgRenderOptions;
+use merman::{
+    Engine, MermaidConfig, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest,
+};
 
 use crate::core::util::html_escape;
 
@@ -37,15 +39,27 @@ pub fn render_mermaid(code: &str) -> Result<String> {
         "pagemd-mermaid-{}",
         MERMAID_DIAGRAM_ID.fetch_add(1, Ordering::Relaxed)
     );
-    let renderer = HeadlessRenderer::new()
-        .with_diagram_id(&id)
-        .with_site_config(mermaid_site_config());
-    let svg = renderer
-        .render_svg_sync(code.trim())
-        .context("Failed to render Mermaid diagram")?
-        .context("Mermaid diagram produced no SVG output")?;
+    let renderer =
+        Renderer::new().with_engine(Engine::new().with_site_config(mermaid_site_config()));
+    let output = renderer
+        .render(RenderRequest::svg(
+            code.trim(),
+            OperationControl::new(),
+            SvgRequest {
+                options: SvgRenderOptions {
+                    diagram_id: Some(id),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ))
+        .context("Failed to render Mermaid diagram")?;
+    let RenderOutput::Svg(Some(svg)) = output else {
+        anyhow::bail!("Mermaid diagram produced no SVG output");
+    };
     Ok(format!(
-        "<div class=\"mermaid-display\"><div class=\"mermaid-canvas\">{svg}</div></div>\n"
+        "<div class=\"mermaid-display\"><div class=\"mermaid-canvas\">{}</div></div>\n",
+        svg.svg()
     ))
 }
 

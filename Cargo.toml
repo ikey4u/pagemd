@@ -29,11 +29,16 @@ clap = { version = "4.6", features = ["derive"] }
 pulldown-cmark = { version = "0.13", features = [] }
 syntect = "5.3"
 base64 = "0.22"
-# Pre-release: pin the merman layout stack exactly. `cargo update` can otherwise
-# pull a newer dugong/manatee while leaving merman-render behind (API skew).
-merman = "=0.8.0-alpha.5"
-dugong = "=0.8.0-alpha.5"
-manatee = "=0.8.0-alpha.5"
+# Pre-release: pin the merman layout stack exactly. `cargo install` (no --locked)
+# and `cargo update` can otherwise mix merman-render with a newer merman-core.
+merman = { version = "=0.8.0-alpha.6", features = ["complete-svg-elk"] }
+merman-core = "=0.8.0-alpha.6"
+merman-render = "=0.8.0-alpha.6"
+merman-layout-elk = "=0.8.0-alpha.6"
+merman-elk-layered = "=0.8.0-alpha.6"
+dugong = "=0.8.0-alpha.6"
+dugong-graphlib = "=0.8.0-alpha.6"
+manatee = "=0.8.0-alpha.6"
 plantuml_encoding = "2.0.3"
 regex = "1.12"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
