@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::core::export::html::favicon::favicon_link_tag;
 use crate::core::export::html::nav_tree::{
-    build_nav_tree, common_path_prefix, nav_entries_have_tree, relativize_to_root,
-    render_flat_nav_html, render_nav_tree_html,
+    build_nav_tree, common_path_prefix, nav_root_label, relativize_to_root, render_nav_tree_html,
+    root_nav_tree,
 };
 use crate::core::model::RenderedSection;
 use crate::core::util::{html_escape, script_escape};
@@ -205,13 +205,11 @@ fn build_file_sidebar(
     body_sections: &[RenderedSection],
     nav_labels: Option<&[String]>,
     input_paths: Option<&[PathBuf]>,
+    document_title: &str,
 ) -> String {
     let entries = build_nav_entries(body_sections, nav_labels, input_paths);
-    let nav_items = if nav_entries_have_tree(&entries) {
-        render_nav_tree_html(&build_nav_tree(&entries), 0)
-    } else {
-        render_flat_nav_html(&entries, 0)
-    };
+    let root_name = nav_root_label(input_paths, document_title);
+    let nav_items = render_nav_tree_html(&root_nav_tree(build_nav_tree(&entries), &root_name), 0);
 
     format!(
         "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\">\n\
@@ -278,7 +276,6 @@ fn build_topbar(initial_title: &str, use_file_sidebar: bool) -> String {
 <div class=\"doc-settings-label\">Theme</div>\n\
 <button type=\"button\" class=\"doc-settings-action\" data-theme-toggle aria-label=\"Switch to dark theme\" title=\"Dark\" aria-pressed=\"false\">{moon}<span class=\"doc-settings-action-text\">Dark</span>{sun}<span class=\"doc-settings-action-text doc-settings-action-text-light\">Light</span></button>\n\
 </div>\n\
-<div class=\"doc-settings-section\" data-settings-export-slot></div>\n\
 </div>\n\
 </div>\n\
 </div>\n\
@@ -296,6 +293,7 @@ fn build_workspace_layout(
     input_paths: Option<&[PathBuf]>,
     use_file_sidebar: bool,
     embed_workspace_script: bool,
+    document_title: &str,
 ) -> (String, String, String, String) {
     let outline_nav = build_outline_nav(body_sections);
     let workspace_class = if use_file_sidebar {
@@ -304,7 +302,7 @@ fn build_workspace_layout(
         "doc-workspace doc-workspace-single outline-hidden"
     };
     let file_sidebar = if use_file_sidebar {
-        build_file_sidebar(body_sections, nav_labels, input_paths)
+        build_file_sidebar(body_sections, nav_labels, input_paths, document_title)
     } else {
         String::new()
     };
@@ -402,6 +400,7 @@ pub fn build_html_with_nav(
             input_paths,
             use_file_sidebar,
             embed_workspace,
+            title,
         )
     } else {
         (String::new(), String::new(), String::new(), String::new())

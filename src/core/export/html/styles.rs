@@ -354,44 +354,88 @@ html[data-theme="dark"] .doc-theme-icon-sun {
   flex: 0 0 auto;
 }
 
-.doc-export-actions {
-  display: flex;
-  gap: 0.35rem;
+input.doc-nav-check[type="checkbox"] {
+  display: none;
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin: 0;
+  accent-color: var(--color-nav-active-bar);
 }
 
-.doc-export-actions .doc-settings-action {
-  flex: 1 1 0;
-  justify-content: center;
+.doc-sidebar.is-exporting input.doc-nav-check[type="checkbox"] {
+  display: inline-block;
 }
 
-.doc-export-pages {
+.doc-sidebar.is-exporting {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  max-height: 11rem;
-  margin: 0.45rem 0;
+  overflow: hidden;
+  padding-bottom: 0.45rem;
+}
+
+.doc-sidebar.is-exporting .doc-nav {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
 }
 
-.doc-export-page {
+.doc-sidebar.is-exporting .doc-nav-copy {
+  display: none;
+}
+
+.doc-sidebar.is-exporting .doc-nav-link {
+  padding-right: 0.72rem;
+}
+
+.doc-export-bar {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0.15rem 0;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--doc-chrome-border);
+}
+
+.doc-sidebar.is-exporting .doc-export-bar {
   display: flex;
-  align-items: flex-start;
-  gap: 0.4rem;
-  padding: 0.2rem 0.15rem;
-  color: var(--color-text);
-  font-size: 0.8125rem;
-  line-height: 1.35;
+}
+
+.doc-export-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--color-muted);
+}
+
+.doc-export-confirm {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-nav-active-bar);
+  color: #fff;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.2;
+  padding: 0.28rem 0.55rem;
   cursor: pointer;
 }
 
-.doc-export-page input {
-  margin: 0.2rem 0 0;
-  flex: 0 0 auto;
+.doc-export-confirm:hover,
+.doc-export-confirm:focus-visible {
+  filter: brightness(1.08);
+  outline: none;
 }
 
-.doc-export-page span {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.doc-export-confirm:disabled {
+  opacity: 0.4;
+  cursor: default;
+  filter: none;
 }
 
 .doc-settings-action-text-light {
@@ -735,17 +779,26 @@ html.pagemd-lightbox-open {
   white-space: nowrap;
 }
 
+.doc-nav-folder[data-nav-root] > .doc-nav-folder-row .doc-nav-folder-label {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
 .doc-nav-file {
   list-style: none;
 }
 
 .doc-nav-row {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
 }
 
 .doc-nav-link {
   position: relative;
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   overflow: hidden;
   min-width: 0;

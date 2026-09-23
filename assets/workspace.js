@@ -540,8 +540,12 @@
       return;
     }
 
-    // Export is handled by the live-preview script; keep the panel open.
-    if (event.target && event.target.closest && event.target.closest("[data-export-html]")) {
+    // Export selection is owned by the live-preview script.
+    if (
+      event.target &&
+      event.target.closest &&
+      event.target.closest("[data-export-toggle], [data-export-confirm], [data-export-bar], [data-nav-check]")
+    ) {
       return;
     }
 

@@ -66,12 +66,6 @@ pub fn relativize_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-pub fn nav_entries_have_tree(entries: &[(PathBuf, usize, String)]) -> bool {
-    entries
-        .iter()
-        .any(|(path, _, _)| path.components().count() > 1)
-}
-
 pub fn build_nav_tree(entries: &[(PathBuf, usize, String)]) -> Vec<NavTreeNode> {
     let mut grouped: BTreeMap<String, Vec<(PathBuf, usize, String)>> = BTreeMap::new();
 
@@ -158,6 +152,58 @@ fn node_sort_key(node: &NavTreeNode) -> (u8, String) {
     }
 }
 
+/// Directory name shared by every file, or `fallback` when the files do not
+/// share a parent directory. A multi-file document uses this as its single
+/// navigation root.
+pub fn nav_root_label(paths: Option<&[PathBuf]>, fallback: &str) -> String {
+    let fallback = {
+        let trimmed = fallback.trim();
+        if trimmed.is_empty() {
+            "Document"
+        } else {
+            trimmed
+        }
+    };
+    let Some(paths) = paths.filter(|paths| !paths.is_empty()) else {
+        return fallback.to_string();
+    };
+    let Some(prefix) = common_path_prefix(paths) else {
+        return fallback.to_string();
+    };
+    // One path's common prefix is the file itself; the document root is its folder.
+    let dir = if paths.len() == 1 {
+        prefix.parent().map(Path::to_path_buf).unwrap_or(prefix)
+    } else {
+        prefix
+    };
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Wrap a forest in one folder so every document nav has a single root.
+pub fn root_nav_tree(nodes: Vec<NavTreeNode>, name: &str) -> Vec<NavTreeNode> {
+    if nodes.is_empty() {
+        return nodes;
+    }
+    let name = {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            "Document"
+        } else {
+            trimmed
+        }
+    };
+    vec![NavTreeNode::Folder {
+        id: ".".to_string(),
+        name: name.to_string(),
+        children: nodes,
+    }]
+}
+
 pub fn render_nav_tree_html(nodes: &[NavTreeNode], active_index: usize) -> String {
     if nodes.is_empty() {
         return String::new();
@@ -177,31 +223,17 @@ fn render_nav_tree_node(node: &NavTreeNode, active_index: usize) -> String {
             let child_html = render_nav_tree_html(children, active_index);
             let escaped_id = html_escape(id);
             let escaped_name = html_escape(name);
+            let root_attr = if id == "." { " data-nav-root" } else { "" };
             format!(
-                "<li class=\"doc-nav-folder is-expanded\" data-nav-folder=\"{escaped_id}\">\n<div class=\"doc-nav-folder-row\"><button type=\"button\" class=\"doc-nav-folder-toggle\" aria-expanded=\"true\" aria-label=\"Toggle {escaped_name} folder\"><span class=\"doc-nav-folder-chevron\" aria-hidden=\"true\"></span></button><span class=\"doc-nav-folder-label\">{escaped_name}</span></div>\n{child_html}</li>\n"
+                "<li class=\"doc-nav-folder is-expanded\" data-nav-node data-nav-folder=\"{escaped_id}\"{root_attr}>\n<div class=\"doc-nav-folder-row\"><button type=\"button\" class=\"doc-nav-folder-toggle\" aria-expanded=\"true\" aria-label=\"Toggle {escaped_name} folder\"><span class=\"doc-nav-folder-chevron\" aria-hidden=\"true\"></span></button><span class=\"doc-nav-folder-label\">{escaped_name}</span></div>\n{child_html}</li>\n"
             )
         }
         NavTreeNode::File {
             section_index,
             label,
             copy_path,
-        } => render_file_row(*section_index, label, copy_path, active_index, true),
+        } => render_file_row(*section_index, label, copy_path, active_index),
     }
-}
-
-pub fn render_flat_nav_html(entries: &[(PathBuf, usize, String)], active_index: usize) -> String {
-    entries
-        .iter()
-        .map(|(path, section_index, label)| {
-            render_file_row(
-                *section_index,
-                label,
-                &nav_copy_path(path),
-                active_index,
-                false,
-            )
-        })
-        .collect()
 }
 
 fn render_file_row(
@@ -209,7 +241,6 @@ fn render_file_row(
     label: &str,
     copy_path: &str,
     active_index: usize,
-    wrap_li: bool,
 ) -> String {
     let doc_id = section_index + 1;
     let active = if section_index == active_index {
@@ -219,14 +250,9 @@ fn render_file_row(
     };
     let escaped_label = html_escape(label);
     let escaped_copy_path = html_escape(copy_path);
-    let row = format!(
-        "<div class=\"doc-nav-row\"><a class=\"doc-nav-link{active}\" href=\"#doc-{doc_id}\" data-doc-target=\"doc-{doc_id}\" title=\"{escaped_copy_path}\"><span class=\"doc-nav-label\">{escaped_label}</span></a><button type=\"button\" class=\"doc-nav-copy\" data-copy-label=\"{escaped_copy_path}\" aria-label=\"Copy path {escaped_copy_path}\" title=\"Copy path\">Copy</button></div>\n"
-    );
-    if wrap_li {
-        format!("<li class=\"doc-nav-file\">{row}</li>\n")
-    } else {
-        row
-    }
+    format!(
+        "<li class=\"doc-nav-file\" data-nav-node><div class=\"doc-nav-row\"><a class=\"doc-nav-link{active}\" href=\"#doc-{doc_id}\" data-doc-target=\"doc-{doc_id}\" title=\"{escaped_copy_path}\"><span class=\"doc-nav-label\">{escaped_label}</span></a><button type=\"button\" class=\"doc-nav-copy\" data-copy-label=\"{escaped_copy_path}\" aria-label=\"Copy path {escaped_copy_path}\" title=\"Copy path\">Copy</button></div></li>\n"
+    )
 }
 
 #[cfg(test)]
@@ -249,5 +275,33 @@ mod tests {
         assert_eq!(tree.len(), 2);
         assert!(matches!(tree[0], NavTreeNode::Folder { .. }));
         assert!(matches!(tree[1], NavTreeNode::File { .. }));
+
+        let rooted = root_nav_tree(tree, "docs");
+        assert_eq!(rooted.len(), 1);
+        match &rooted[0] {
+            NavTreeNode::Folder { id, name, children } => {
+                assert_eq!(id, ".");
+                assert_eq!(name, "docs");
+                assert_eq!(children.len(), 2);
+            }
+            NavTreeNode::File { .. } => panic!("document root must be a folder"),
+        }
+    }
+
+    #[test]
+    fn nav_root_label_uses_the_shared_directory() {
+        let paths = vec![
+            PathBuf::from("/project/docs/readme.md"),
+            PathBuf::from("/project/docs/guide/start.md"),
+        ];
+        assert_eq!(nav_root_label(Some(&paths), "Title"), "docs");
+        assert_eq!(
+            nav_root_label(
+                Some(&[PathBuf::from("a.md"), PathBuf::from("b.md")]),
+                "Title"
+            ),
+            "Title"
+        );
+        assert_eq!(nav_root_label(None, "  "), "Document");
     }
 }

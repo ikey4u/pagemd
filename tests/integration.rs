@@ -247,6 +247,15 @@ fn tree_nav_uses_directory_structure_with_tmp_paths() {
     )
     .unwrap();
 
+    let root_name = dir.file_name().and_then(|name| name.to_str()).unwrap();
+    assert!(output.html.contains("data-nav-root"), "{}", output.html);
+    assert!(
+        output.html.contains(&format!(
+            "class=\"doc-nav-folder-label\">{root_name}</span>"
+        )),
+        "{}",
+        output.html
+    );
     assert!(output.html.contains("data-nav-folder=\"guide\""));
     assert!(output.html.contains("class=\"doc-nav-tree\""));
 
@@ -403,9 +412,10 @@ fn single_file_html_includes_outline_workspace() {
     assert!(html.contains("data-doc-title"));
     assert!(html.contains("data-theme-toggle"));
     assert!(html.contains("data-settings-toggle"));
-    assert!(html.contains("data-settings-export-slot"));
-    // Preview injects a Download HTML control; convert/export HTML must not.
-    // workspace.js may mention [data-export-html] as a click selector — that is fine.
+    // Export controls are injected by the live-preview script, not baked into HTML.
+    // workspace.js may mention the selector so clicks do not fall through.
+    assert!(!html.contains("data-settings-export-slot"));
+    assert!(!html.contains("data-export-toggle=\"\""));
     assert!(!html.contains("data-export-ready"));
     assert!(
         !html.contains("<button type=\"button\" class=\"doc-settings-action\" data-export-html>")
@@ -485,6 +495,10 @@ fn multi_file_html_includes_standalone_sidebar() {
     assert!(html.contains("data-doc-title"));
     assert!(html.contains("data-theme-toggle"));
     assert!(html.contains("doc-theme-icon-moon"));
+    assert!(html.contains("data-nav-root"));
+    assert!(html.contains("data-nav-folder=\".\""));
+    assert!(html.contains("class=\"doc-nav-folder-label\">Title</span>"));
+    assert!(html.contains("data-nav-node"));
     assert!(html.contains("data-doc-target=\"doc-1\""));
     assert!(html.contains("class=\"doc-nav-label\""));
     assert!(html.contains("class=\"doc-nav-copy\""));
@@ -530,6 +544,9 @@ fn multi_file_tree_sidebar_renders_folders() {
     );
 
     assert!(html.contains("class=\"doc-nav-tree\""));
+    assert!(html.contains("data-nav-root"));
+    assert!(html.contains("data-nav-folder=\".\""));
+    assert!(html.contains("class=\"doc-nav-folder-label\">docs</span>"));
     assert!(html.contains("data-nav-folder=\"guide\""));
     assert!(html.contains(
         "id=\"doc-1\" data-doc-panel data-panel-title=\"readme.md\" data-doc-path=\"readme.md\""
@@ -565,6 +582,19 @@ fn live_preview_restores_active_lazy_panel_after_reload() {
 
     assert!(script.contains("var activeId = activePanel ? activePanel.id : \"\""));
     assert!(script.contains("window.PageMDActivatePanelById(activeId)"));
+}
+
+#[test]
+fn live_preview_export_selects_nav_trees_from_the_topbar() {
+    let script = include_str!("../assets/preview.js");
+
+    assert!(script.contains("data-export-toggle"));
+    assert!(script.contains(".doc-topbar-start"));
+    assert!(script.contains("insertAdjacentElement(\"afterend\", button)"));
+    assert!(script.contains("data-nav-check"));
+    assert!(script.contains("function applyTreeCheck"));
+    assert!(script.contains("function toggleNode"));
+    assert!(!script.contains("data-settings-export-slot"));
 }
 
 #[test]
