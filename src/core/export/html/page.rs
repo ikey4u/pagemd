@@ -1,14 +1,17 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::export::html::favicon::favicon_link_tag;
-use crate::core::export::html::nav_tree::{
-    build_nav_tree, common_path_prefix, nav_root_label, relativize_to_root, render_nav_tree_html,
-    root_nav_tree,
-};
-use crate::core::model::RenderedSection;
-use crate::core::util::{html_escape, script_escape};
-
 use super::styles::CSS;
+use crate::core::{
+    export::html::{
+        favicon::favicon_link_tag,
+        nav_tree::{
+            build_nav_tree, common_path_prefix, nav_root_label,
+            relativize_to_root, render_nav_tree_html, root_nav_tree,
+        },
+    },
+    model::RenderedSection,
+    util::{html_escape, script_escape},
+};
 
 pub fn section_label(path: &Path) -> String {
     path.file_name()
@@ -54,7 +57,11 @@ pub fn outline_list_inner(section: &RenderedSection) -> String {
     }
 }
 
-pub fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &str) -> String {
+pub fn build_html(
+    title: &str,
+    body_sections: &[RenderedSection],
+    icon_label: &str,
+) -> String {
     build_html_with_nav(
         title,
         body_sections,
@@ -67,16 +74,20 @@ pub fn build_html(title: &str, body_sections: &[RenderedSection], icon_label: &s
 
 const DIAGRAM_HTML_MARKER: &str = "class=\"diagram-html-display\"";
 const MERMAID_CLIENT_MARKER: &str = "data-mermaid-client";
-const FOOTNOTE_MARKER: &str = crate::core::export::html::footnotes::FOOTNOTE_MARKER;
+const FOOTNOTE_MARKER: &str =
+    crate::core::export::html::footnotes::FOOTNOTE_MARKER;
 const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/diagram-html-tailwind-browser.js"
 ));
-const MERMAID_INIT_JS: &str = include_str!("../../../../assets/mermaid-init.js");
-const MERMAID_BROWSER_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
+const MERMAID_INIT_JS: &str =
+    include_str!("../../../../assets/mermaid-init.js");
+const MERMAID_BROWSER_JS: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
 
 fn mermaid_browser_js() -> &'static str {
-    std::str::from_utf8(MERMAID_BROWSER_JS).expect("bundled mermaid.js must be UTF-8")
+    std::str::from_utf8(MERMAID_BROWSER_JS)
+        .expect("bundled mermaid.js must be UTF-8")
 }
 
 fn diagram_html_tailwind_browser_js() -> &'static str {
@@ -174,11 +185,15 @@ fn build_nav_entries(
         .collect()
 }
 
-fn document_relative_path(input_paths: Option<&[PathBuf]>, index: usize) -> Option<String> {
+fn document_relative_path(
+    input_paths: Option<&[PathBuf]>,
+    index: usize,
+) -> Option<String> {
     let paths = input_paths?;
     let path = paths.get(index)?;
     let root = common_path_prefix(paths)?;
-    relativize_to_root(path, &root).map(|path| path.to_string_lossy().replace('\\', "/"))
+    relativize_to_root(path, &root)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
 }
 
 fn section_panel_title(
@@ -209,7 +224,10 @@ fn build_file_sidebar(
 ) -> String {
     let entries = build_nav_entries(body_sections, nav_labels, input_paths);
     let root_name = nav_root_label(input_paths, document_title);
-    let nav_items = render_nav_tree_html(&root_nav_tree(build_nav_tree(&entries), &root_name), 0);
+    let nav_items = render_nav_tree_html(
+        &root_nav_tree(build_nav_tree(&entries), &root_name),
+        0,
+    );
 
     format!(
         "<aside class=\"doc-sidebar doc-pane\" aria-label=\"Markdown files\">\n\
@@ -260,7 +278,8 @@ fn build_topbar(initial_title: &str, use_file_sidebar: bool) -> String {
             topbar_icon("files")
         )
     } else {
-        "<span class=\"doc-topbar-spacer\" aria-hidden=\"true\"></span>".to_string()
+        "<span class=\"doc-topbar-spacer\" aria-hidden=\"true\"></span>"
+            .to_string()
     };
     let escaped_title = html_escape(initial_title);
     format!(
@@ -302,7 +321,12 @@ fn build_workspace_layout(
         "doc-workspace doc-workspace-single outline-hidden"
     };
     let file_sidebar = if use_file_sidebar {
-        build_file_sidebar(body_sections, nav_labels, input_paths, document_title)
+        build_file_sidebar(
+            body_sections,
+            nav_labels,
+            input_paths,
+            document_title,
+        )
     } else {
         String::new()
     };
@@ -381,7 +405,8 @@ pub fn build_html_with_nav(
             })
             .collect()
     } else if use_outline_workspace {
-        let panel_title = html_escape(&section_panel_title(&body_sections[0], 0, nav_labels));
+        let panel_title =
+            html_escape(&section_panel_title(&body_sections[0], 0, nav_labels));
         format!(
             "<section class=\"doc-section doc-panel is-active\" id=\"doc-1\" data-doc-panel data-panel-title=\"{panel_title}\">\n{}</section>\n",
             body_sections[0].html
@@ -391,20 +416,22 @@ pub fn build_html_with_nav(
     };
 
     let allow_scripts = matches!(opts.scripts, ScriptEmbed::Full);
-    let embed_workspace = allow_scripts && opts.embed_workspace_script && !content_only;
+    let embed_workspace =
+        allow_scripts && opts.embed_workspace_script && !content_only;
 
-    let (layout_open, layout_close, nav_html, script_html) = if use_outline_workspace {
-        build_workspace_layout(
-            body_sections,
-            nav_labels,
-            input_paths,
-            use_file_sidebar,
-            embed_workspace,
-            title,
-        )
-    } else {
-        (String::new(), String::new(), String::new(), String::new())
-    };
+    let (layout_open, layout_close, nav_html, script_html) =
+        if use_outline_workspace {
+            build_workspace_layout(
+                body_sections,
+                nav_labels,
+                input_paths,
+                use_file_sidebar,
+                embed_workspace,
+                title,
+            )
+        } else {
+            (String::new(), String::new(), String::new(), String::new())
+        };
     let container_class = if use_outline_workspace {
         "container container-with-sidebar"
     } else {
@@ -466,8 +493,9 @@ pub fn build_html_with_nav(
         ThemeMode::Persist | ThemeMode::Host => "",
     };
 
-    let theme_script = if allow_scripts && matches!(opts.theme, ThemeMode::Persist) {
-        r#"<script>
+    let theme_script =
+        if allow_scripts && matches!(opts.theme, ThemeMode::Persist) {
+            r#"<script>
 (function () {
   try {
     var theme = localStorage.getItem("pagemd.workspace.v1.theme");
@@ -478,10 +506,10 @@ pub fn build_html_with_nav(
 })();
 </script>
 "#
-        .to_string()
-    } else {
-        String::new()
-    };
+            .to_string()
+        } else {
+            String::new()
+        };
 
     let extra_css = opts.extra_css.as_deref().unwrap_or("");
 

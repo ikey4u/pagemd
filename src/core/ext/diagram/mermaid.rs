@@ -1,9 +1,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use merman::svg::SvgRenderOptions;
 use merman::{
-    Engine, MermaidConfig, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest,
+    svg::SvgRenderOptions, Engine, MermaidConfig, OperationControl,
+    RenderOutput, RenderRequest, Renderer, SvgRequest,
 };
 
 use crate::core::util::html_escape;
@@ -39,8 +39,8 @@ pub fn render_mermaid(code: &str) -> Result<String> {
         "pagemd-mermaid-{}",
         MERMAID_DIAGRAM_ID.fetch_add(1, Ordering::Relaxed)
     );
-    let renderer =
-        Renderer::new().with_engine(Engine::new().with_site_config(mermaid_site_config()));
+    let renderer = Renderer::new()
+        .with_engine(Engine::new().with_site_config(mermaid_site_config()));
     let output = renderer
         .render(RenderRequest::svg(
             code.trim(),

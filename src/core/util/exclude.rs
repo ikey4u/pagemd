@@ -88,7 +88,10 @@ fn glob_match_segments(pattern: Vec<&str>, text: Vec<&str>) -> bool {
                 return true;
             }
             for index in 0..=text.len() {
-                if glob_match_segments(pattern[1..].to_vec(), text[index..].to_vec()) {
+                if glob_match_segments(
+                    pattern[1..].to_vec(),
+                    text[index..].to_vec(),
+                ) {
                     return true;
                 }
             }
@@ -116,7 +119,8 @@ fn segment_match_chars(pattern: &[char], text: &[char]) -> bool {
         (None, None) => true,
         (Some('*'), None) => segment_match_chars(&pattern[1..], text),
         (Some('*'), Some(_)) => {
-            segment_match_chars(&pattern[1..], text) || segment_match_chars(pattern, &text[1..])
+            segment_match_chars(&pattern[1..], text)
+                || segment_match_chars(pattern, &text[1..])
         }
         (Some(expected), Some(actual)) if expected == actual => {
             segment_match_chars(&pattern[1..], &text[1..])
@@ -137,12 +141,22 @@ mod tests {
             "*.tmp.md".to_string(),
         ]);
 
-        assert!(matcher.should_skip_dir(Path::new("/root/node_modules"), Path::new("/root")));
-        assert!(
-            matcher.should_skip_file(Path::new("/root/drafts/old/readme.md"), Path::new("/root"))
-        );
-        assert!(matcher.should_skip_file(Path::new("/root/notes.tmp.md"), Path::new("/root")));
-        assert!(!matcher.should_skip_file(Path::new("/root/guide/readme.md"), Path::new("/root")));
+        assert!(matcher.should_skip_dir(
+            Path::new("/root/node_modules"),
+            Path::new("/root")
+        ));
+        assert!(matcher.should_skip_file(
+            Path::new("/root/drafts/old/readme.md"),
+            Path::new("/root")
+        ));
+        assert!(matcher.should_skip_file(
+            Path::new("/root/notes.tmp.md"),
+            Path::new("/root")
+        ));
+        assert!(!matcher.should_skip_file(
+            Path::new("/root/guide/readme.md"),
+            Path::new("/root")
+        ));
     }
 
     #[test]

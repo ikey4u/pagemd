@@ -153,7 +153,11 @@ impl UndoStack {
     }
 
     /// Install in-page undo runtime and clear the command stack.
-    pub async fn bind(&mut self, session: &CdpSession, _target: DomTarget) -> Result<()> {
+    pub async fn bind(
+        &mut self,
+        session: &CdpSession,
+        _target: DomTarget,
+    ) -> Result<()> {
         install(session).await?;
         set_max_depth(session, self.max_depth).await?;
         let value = call(session, "reset()").await?;
@@ -162,7 +166,11 @@ impl UndoStack {
     }
 
     /// Start recording DOM mutations (command capture).
-    pub async fn begin_record(&mut self, session: &CdpSession, target: DomTarget) -> Result<()> {
+    pub async fn begin_record(
+        &mut self,
+        session: &CdpSession,
+        target: DomTarget,
+    ) -> Result<()> {
         install(session).await?;
         set_max_depth(session, self.max_depth).await?;
         let doc_expr = doc_expr(target);
@@ -185,20 +193,32 @@ impl UndoStack {
     }
 
     /// Finish recording and push a command if anything changed.
-    pub async fn commit_record(&mut self, session: &CdpSession, _target: DomTarget) -> Result<()> {
+    pub async fn commit_record(
+        &mut self,
+        session: &CdpSession,
+        _target: DomTarget,
+    ) -> Result<()> {
         let value = call(session, "commit()").await?;
         self.depth = depth_from(&value);
         Ok(())
     }
 
     /// Revert in-progress mutations without pushing (e.g. failed eval).
-    pub async fn cancel_record(&mut self, session: &CdpSession, _target: DomTarget) -> Result<()> {
+    pub async fn cancel_record(
+        &mut self,
+        session: &CdpSession,
+        _target: DomTarget,
+    ) -> Result<()> {
         let value = call(session, "cancel()").await?;
         self.depth = depth_from(&value);
         Ok(())
     }
 
-    pub async fn undo_one(&mut self, session: &CdpSession, _target: DomTarget) -> Result<bool> {
+    pub async fn undo_one(
+        &mut self,
+        session: &CdpSession,
+        _target: DomTarget,
+    ) -> Result<bool> {
         install(session).await?;
         let value = call(session, "undoOne()").await?;
         self.depth = depth_from(&value);
@@ -208,7 +228,11 @@ impl UndoStack {
             .unwrap_or(false))
     }
 
-    pub async fn undo_all(&mut self, session: &CdpSession, _target: DomTarget) -> Result<bool> {
+    pub async fn undo_all(
+        &mut self,
+        session: &CdpSession,
+        _target: DomTarget,
+    ) -> Result<bool> {
         install(session).await?;
         let value = call(session, "undoAll()").await?;
         self.depth = depth_from(&value);

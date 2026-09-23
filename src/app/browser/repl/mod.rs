@@ -1,34 +1,40 @@
 pub(crate) mod vendor;
 
-use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
+use std::{
+    fs,
+    io::{self, Write},
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::{bail, Context, Result};
-use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::{error::ReadlineError, DefaultEditor};
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 use self::vendor::CursorRelay;
-use super::bridge::BrowserBridge;
-use super::cdp::CdpSession;
-use super::cli::BrowserDevArgs;
-use super::export::build_export_prompt;
-use super::pretty::PRETTY_PROMPT;
-use super::runtime::BrowserRuntime;
-use super::sandbox;
-use super::script::{
-    format_script_usage, load_pagemd_script, parse_run_args, run_pagemd_script, ParsedRunArgs,
+use super::{
+    bridge::BrowserBridge,
+    cdp::CdpSession,
+    cli::BrowserDevArgs,
+    export::build_export_prompt,
+    pretty::PRETTY_PROMPT,
+    runtime::BrowserRuntime,
+    sandbox,
+    script::{
+        format_script_usage, load_pagemd_script, parse_run_args,
+        run_pagemd_script, ParsedRunArgs,
+    },
+    session_md::SessionMarkdown,
+    session_preview::{self, SessionPreview},
+    snap::{self, format_snap},
+    tools::format_eval_result,
+    undo::{DomTarget, UndoStack},
+    workspace::ensure_mcp_config,
 };
-use super::session_md::SessionMarkdown;
-use super::session_preview::{self, SessionPreview};
-use super::snap::{self, format_snap};
-use super::tools::format_eval_result;
-use super::undo::{DomTarget, UndoStack};
-use super::workspace::ensure_mcp_config;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 struct ReplContext<'a> {
     session: &'a CdpSession,
@@ -57,7 +63,9 @@ pub async fn run(
     workspace: std::path::PathBuf,
 ) -> Result<()> {
     eprintln!("Connecting to page…");
-    let session = CdpSession::connect_with_hint(args.chrome.port, args.url.as_deref()).await?;
+    let session =
+        CdpSession::connect_with_hint(args.chrome.port, args.url.as_deref())
+            .await?;
     let undo = Arc::new(Mutex::new(UndoStack::new(50)));
     let sandbox_enabled = Arc::new(AtomicBool::new(false));
 
@@ -74,7 +82,9 @@ pub async fn run(
     let export_dir = std::env::current_dir()
         .context("read current working directory for /export")?
         .canonicalize()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| workspace.clone()));
+        .unwrap_or_else(|_| {
+            std::env::current_dir().unwrap_or_else(|_| workspace.clone())
+        });
     let bridge = BrowserBridge::start(
         &workspace,
         args.chrome.port,
@@ -142,14 +152,21 @@ pub async fn run(
             match handle_slash(trimmed, &mut ctx).await {
                 Ok(SlashOutcome::Continue { refresh_status }) => {
                     if refresh_status {
-                        print_status(&session, &undo, vendor.is_some(), ai_forward).await?;
+                        print_status(
+                            &session,
+                            &undo,
+                            vendor.is_some(),
+                            ai_forward,
+                        )
+                        .await?;
                     }
                     repl_prepare_next_prompt();
                 }
                 Ok(SlashOutcome::Quit) => break,
                 Ok(SlashOutcome::SetAiForward(enabled)) => {
                     ai_forward = enabled;
-                    print_status(&session, &undo, vendor.is_some(), ai_forward).await?;
+                    print_status(&session, &undo, vendor.is_some(), ai_forward)
+                        .await?;
                     repl_prepare_next_prompt();
                 }
                 Err(err) => {
@@ -202,7 +219,10 @@ enum SlashOutcome {
 
 const TERMINAL_PREVIEW_CHARS: usize = 1_200;
 
-async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutcome> {
+async fn handle_slash(
+    line: &str,
+    ctx: &mut ReplContext<'_>,
+) -> Result<SlashOutcome> {
     let mut parts = line.splitn(2, char::is_whitespace);
     let cmd = parts.next().unwrap_or("").to_ascii_lowercase();
     let rest = parts.next().unwrap_or("").trim();
@@ -318,7 +338,8 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                 }
                 Err(err) => {
                     if !no_undo {
-                        let _ = ctx.undo.cancel_record(ctx.session, target).await;
+                        let _ =
+                            ctx.undo.cancel_record(ctx.session, target).await;
                     }
                     eprintln!("eval error: {err:#}");
                 }
@@ -357,10 +378,15 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                 snap::capture_html(ctx.session, None).await?
             };
             if let Some(path) = path {
-                fs::write(&path, &html).with_context(|| format!("write {}", path.display()))?;
+                fs::write(&path, &html)
+                    .with_context(|| format!("write {}", path.display()))?;
                 println!("wrote {} ({} bytes)", path.display(), html.len());
             } else {
-                print_terminal_preview(&html, TERMINAL_PREVIEW_CHARS, "/html -o file.html");
+                print_terminal_preview(
+                    &html,
+                    TERMINAL_PREVIEW_CHARS,
+                    "/html -o file.html",
+                );
             }
             return Ok(SlashOutcome::Continue {
                 refresh_status: false,
@@ -372,10 +398,15 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             let html = snap::capture_body_html(ctx.session, None).await?;
             let md = snap::html_to_markdown(&html)?;
             if let Some(path) = path {
-                fs::write(&path, &md).with_context(|| format!("write {}", path.display()))?;
+                fs::write(&path, &md)
+                    .with_context(|| format!("write {}", path.display()))?;
                 println!("wrote {} ({} bytes)", path.display(), md.len());
             } else {
-                print_terminal_preview(&md, TERMINAL_PREVIEW_CHARS, "/md -o file.md");
+                print_terminal_preview(
+                    &md,
+                    TERMINAL_PREVIEW_CHARS,
+                    "/md -o file.md",
+                );
             }
             return Ok(SlashOutcome::Continue {
                 refresh_status: false,
@@ -471,7 +502,8 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                             .unwrap_or_else(|| "unlimited".into())
                     );
                     io::stderr().flush()?;
-                    let report = run_pagemd_script(ctx.session, &script, &opts).await?;
+                    let report =
+                        run_pagemd_script(ctx.session, &script, &opts).await?;
                     println!(
                         "Done: {} page(s) → {}\nStop reason: {}",
                         report.pages.len(),
@@ -480,7 +512,11 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
                         } else {
                             format!(
                                 "{}/",
-                                report.output.display().to_string().trim_end_matches('/')
+                                report
+                                    .output
+                                    .display()
+                                    .to_string()
+                                    .trim_end_matches('/')
                             )
                         },
                         report.stop_reason
@@ -496,7 +532,13 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
             let Some(v) = ctx.vendor else {
                 bail!("no AI backend; /pretty requires Cursor agent");
             };
-            sandbox::begin(ctx.session, ctx.session_md, ctx.sandbox_enabled, ctx.undo).await?;
+            sandbox::begin(
+                ctx.session,
+                ctx.session_md,
+                ctx.sandbox_enabled,
+                ctx.undo,
+            )
+            .await?;
             eprintln!("Sandbox active — visible tab unchanged; agent cleans hidden DOM copy.");
             eprintln!("[agent] page cleanup… (stream below; /stop to cancel)");
             io::stderr().flush()?;
@@ -516,7 +558,10 @@ async fn handle_slash(line: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutc
     }
 }
 
-async fn handle_pmd(rest: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutcome> {
+async fn handle_pmd(
+    rest: &str,
+    ctx: &mut ReplContext<'_>,
+) -> Result<SlashOutcome> {
     let live = rest.split_whitespace().any(|t| t == "--live");
     let original = rest.split_whitespace().any(|t| t == "--original");
     let open_only = rest.eq_ignore_ascii_case("open");
@@ -575,8 +620,11 @@ async fn handle_pmd(rest: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutcom
         }
     }
 
-    let preview =
-        session_preview::SessionPreview::ensure(ctx.session_preview, ctx.session_md).await?;
+    let preview = session_preview::SessionPreview::ensure(
+        ctx.session_preview,
+        ctx.session_md,
+    )
+    .await?;
 
     if !open_only {
         preview.trigger_render();
@@ -594,7 +642,9 @@ async fn handle_pmd(rest: &str, ctx: &mut ReplContext<'_>) -> Result<SlashOutcom
         println!("Page URL: {url}");
     }
     if snap.markdown.trim().is_empty() {
-        println!("(empty — run /pretty or browser_save_markdown after DOM cleanup)");
+        println!(
+            "(empty — run /pretty or browser_save_markdown after DOM cleanup)"
+        );
     } else {
         let note = if sandbox::is_enabled(ctx.sandbox_enabled) {
             "sandbox cleaned"
@@ -740,7 +790,9 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
     println!("  /back  /forward       History navigation");
     println!("  /snap                 Page summary (URL, title, outline)");
     if ai {
-        println!("  /snap send            Snap + forward context to Cursor agent");
+        println!(
+            "  /snap send            Snap + forward context to Cursor agent"
+        );
         println!(
             "  /stop                 Interrupt in-flight agent turn (same as Ctrl+C during agent)"
         );
@@ -760,7 +812,9 @@ fn print_help(ai: bool, export_dir: Option<&Path>) {
     println!("  /url  /title          Print current URL or title");
     if ai {
         println!("  /pretty               Clean DOM in sandbox (visible tab unchanged) via Cursor");
-        println!("  /export [name]        Export validated .pagemd.js to REPL cwd");
+        println!(
+            "  /export [name]        Export validated .pagemd.js to REPL cwd"
+        );
         println!();
         println!("Agent output: [thinking]/[assistant]; MCP as [agent] → pagemd-browser.browser_* (args + result)");
         println!("  Ctrl+C during agent output interrupts the turn; at the prompt Ctrl+C clears the line");

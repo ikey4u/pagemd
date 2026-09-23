@@ -28,7 +28,10 @@ pub fn default_icon_label_from_path(path: &Path) -> String {
     default_icon_label_from_text(stem)
 }
 
-pub fn resolve_icon_label(opts: &ConvertOptions, resolved_inputs: &[PathBuf]) -> String {
+pub fn resolve_icon_label(
+    opts: &ConvertOptions,
+    resolved_inputs: &[PathBuf],
+) -> String {
     if let Some(icon) = &opts.icon {
         return icon.clone();
     }

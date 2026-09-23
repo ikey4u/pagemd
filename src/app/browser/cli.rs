@@ -1,18 +1,22 @@
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::{
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::{ArgAction, Args, Subcommand};
-
-use super::cdp::CdpSession;
-use super::chrome::{self, ChromeProcess};
-use super::provider_detect;
-use super::repl;
-use super::script::{
-    default_output_for_script, format_script_usage, is_file_output, load_pagemd_script,
-    merge_params_object, parse_delay, parse_param_kv, run_pagemd_script, RunOptions,
-};
 use serde_json::{json, Value};
+
+use super::{
+    cdp::CdpSession,
+    chrome::{self, ChromeProcess},
+    provider_detect, repl,
+    script::{
+        default_output_for_script, format_script_usage, is_file_output,
+        load_pagemd_script, merge_params_object, parse_delay, parse_param_kv,
+        run_pagemd_script, RunOptions,
+    },
+};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum BrowserCommand {
@@ -207,10 +211,9 @@ impl BrowserDevArgs {
 
 impl BrowserScriptArgs {
     pub fn launch(&self) -> Result<ChromeLaunch> {
-        let url = self
-            .url
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("--url is required unless --usage"))?;
+        let url = self.url.clone().ok_or_else(|| {
+            anyhow::anyhow!("--url is required unless --usage")
+        })?;
         Ok(self.chrome.with_url(Some(url)))
     }
 
@@ -232,7 +235,8 @@ impl BrowserScriptArgs {
         };
         let mut params = json!({});
         if let Some(raw) = &self.params {
-            let patch: Value = serde_json::from_str(raw).context("invalid --params JSON")?;
+            let patch: Value =
+                serde_json::from_str(raw).context("invalid --params JSON")?;
             merge_params_object(&mut params, patch)?;
         }
         for raw in &self.param {
@@ -335,7 +339,8 @@ fn run_script(args: BrowserScriptArgs) -> Result<()> {
         .build()?;
     let result = rt.block_on(async {
         eprintln!("Connecting to page…");
-        let session = CdpSession::connect_with_hint(launch.port, Some(url)).await?;
+        let session =
+            CdpSession::connect_with_hint(launch.port, Some(url)).await?;
         let current = session.current_url().await.unwrap_or_default();
         if current.is_empty() || current == "about:blank" || current != url {
             session.navigate(url).await?;

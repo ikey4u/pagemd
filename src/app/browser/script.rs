@@ -1,11 +1,12 @@
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 
-use super::cdp::CdpSession;
-use super::snap;
+use super::{cdp::CdpSession, snap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookKind {
@@ -109,8 +110,10 @@ pub fn parse_pagemd_script(source: &str) -> Result<PagmdScript> {
         bail!("script must be plain JS (no ESM import/export)");
     }
 
-    let extract = extract_function_declaration(source, "extract")
-        .ok_or_else(|| anyhow!("script must define extract() as a function declaration"))?;
+    let extract =
+        extract_function_declaration(source, "extract").ok_or_else(|| {
+            anyhow!("script must define extract() as a function declaration")
+        })?;
     if !extract.contains("title") || !extract.contains("html") {
         bail!("extract() must return an object with title and html fields");
     }
@@ -129,14 +132,18 @@ pub fn parse_pagemd_script(source: &str) -> Result<PagmdScript> {
         navigate: extract_function_declaration(source, "navigate"),
         stop: extract_function_declaration(source, "stop"),
         usage: parse_const_string(source, "usage"),
-        default_params: parse_const_object(source, "defaultParams").unwrap_or_else(|| json!({})),
-        param_help: parse_const_object(source, "paramHelp").unwrap_or_else(|| json!({})),
+        default_params: parse_const_object(source, "defaultParams")
+            .unwrap_or_else(|| json!({})),
+        param_help: parse_const_object(source, "paramHelp")
+            .unwrap_or_else(|| json!({})),
     })
 }
 
 pub fn load_pagemd_script(path: &Path) -> Result<PagmdScript> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    parse_pagemd_script(&text).with_context(|| format!("invalid script {}", path.display()))
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read {}", path.display()))?;
+    parse_pagemd_script(&text)
+        .with_context(|| format!("invalid script {}", path.display()))
 }
 
 /// Human-readable usage for a script (params, hooks, example CLI).
@@ -174,7 +181,9 @@ pub fn format_script_usage(path: &Path, script: &PagmdScript) -> String {
         }
     }
 
-    out.push_str("\nParameters (override with --param KEY=VALUE or --params '{…}'):\n");
+    out.push_str(
+        "\nParameters (override with --param KEY=VALUE or --params '{…}'):\n",
+    );
     let defaults = script.default_params.as_object();
     let helps = script.param_help.as_object();
     let mut keys: Vec<String> = defaults
@@ -227,11 +236,17 @@ pub fn format_script_usage(path: &Path, script: &PagmdScript) -> String {
     if let Some(defaults) = defaults {
         if let Some((key, value)) = defaults.iter().next() {
             out.push_str(" \\\n");
-            out.push_str(&format!("    --param {}={}", key, shell_param_value(value)));
+            out.push_str(&format!(
+                "    --param {}={}",
+                key,
+                shell_param_value(value)
+            ));
         }
     }
     out.push('\n');
-    out.push_str("  # use -o out.md to write one combined Markdown file instead\n");
+    out.push_str(
+        "  # use -o out.md to write one combined Markdown file instead\n",
+    );
     out
 }
 
@@ -323,7 +338,11 @@ fn glob_match(haystack: &str, pattern: &str) -> bool {
 /// - Script may declare `const defaultParams = { … }` in the preamble.
 /// - Host merges CLI/host overrides: `params = Object.assign({}, defaultParams, cliParams)`.
 /// - Hooks read `params.*`. `stop(context)` also receives `context.params`.
-pub fn compile_hook(script: &PagmdScript, kind: HookKind, params: &Value) -> String {
+pub fn compile_hook(
+    script: &PagmdScript,
+    kind: HookKind,
+    params: &Value,
+) -> String {
     let preamble = extract_preamble(&script.source);
     let mut blocks = Vec::new();
     if !preamble.is_empty() {
@@ -347,7 +366,9 @@ pub fn compile_hook(script: &PagmdScript, kind: HookKind, params: &Value) -> Str
 const __r = clean();
 return __r && typeof __r === "object" ? __r : { removed: 0 };"#
         }
-        HookKind::Extract => r#"return typeof extract === "function" ? extract() : null;"#,
+        HookKind::Extract => {
+            r#"return typeof extract === "function" ? extract() : null;"#
+        }
         HookKind::Navigate => {
             r#"return typeof navigate === "function" ? navigate() : { success: false };"#
         }
@@ -420,7 +441,11 @@ pub fn merge_params_object(base: &mut Value, patch: Value) -> Result<()> {
     Ok(())
 }
 
-pub fn save_script(export_dir: &Path, filename: &str, content: &str) -> Result<PathBuf> {
+pub fn save_script(
+    export_dir: &Path,
+    filename: &str,
+    content: &str,
+) -> Result<PathBuf> {
     validate_pagemd_script(content)?;
     std::fs::create_dir_all(export_dir)
         .with_context(|| format!("create {}", export_dir.display()))?;
@@ -429,11 +454,15 @@ pub fn save_script(export_dir: &Path, filename: &str, content: &str) -> Result<P
         bail!("filename must not contain path separators");
     }
     let path = export_dir.join(&filename);
-    std::fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
+    std::fs::write(&path, content)
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
 }
 
-pub fn save_script_tool(export_dir: &Path, args: &serde_json::Value) -> Result<String> {
+pub fn save_script_tool(
+    export_dir: &Path,
+    args: &serde_json::Value,
+) -> Result<String> {
     let content = args
         .get("content")
         .and_then(|v| v.as_str())
@@ -474,8 +503,9 @@ pub async fn run_pagemd_script(
     let dir_mode = !is_file_output(&opts.output);
     let mut used_names = std::collections::HashSet::<String>::new();
     if dir_mode {
-        std::fs::create_dir_all(&opts.output)
-            .with_context(|| format!("create output dir {}", opts.output.display()))?;
+        std::fs::create_dir_all(&opts.output).with_context(|| {
+            format!("create output dir {}", opts.output.display())
+        })?;
     }
 
     loop {
@@ -492,15 +522,20 @@ pub async fn run_pagemd_script(
             let expr = compile_hook(script, HookKind::Clean, &opts.params);
             match eval_expression(session, &expr).await {
                 Ok(value) => {
-                    let removed = value.get("removed").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let removed = value
+                        .get("removed")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     eprintln!("  clean: removed {removed}");
                 }
                 Err(err) => eprintln!("  clean warning: {err:#}"),
             }
         }
 
-        let extract_expr = compile_hook(script, HookKind::Extract, &opts.params);
-        let extract_value = match eval_expression(session, &extract_expr).await {
+        let extract_expr =
+            compile_hook(script, HookKind::Extract, &opts.params);
+        let extract_value = match eval_expression(session, &extract_expr).await
+        {
             Ok(v) => v,
             Err(err) => {
                 extract_errors += 1;
@@ -516,7 +551,9 @@ pub async fn run_pagemd_script(
                 }
                 // try navigate onward
                 if !try_navigate(session, script, &opts.params).await? {
-                    stop_reason = "navigate: no more pages (after extract failure)".into();
+                    stop_reason =
+                        "navigate: no more pages (after extract failure)"
+                            .into();
                     break;
                 }
                 sleep_delay(opts.delay_ms).await;
@@ -528,7 +565,9 @@ pub async fn run_pagemd_script(
             extract_errors += 1;
             eprintln!("  extract returned null ({extract_errors}/{max_extract_errors})");
             if extract_errors >= max_extract_errors {
-                stop_reason = format!("consecutive extract nulls reached {max_extract_errors}");
+                stop_reason = format!(
+                    "consecutive extract nulls reached {max_extract_errors}"
+                );
                 break;
             }
             if script.navigate.is_none() {
@@ -536,7 +575,8 @@ pub async fn run_pagemd_script(
                 break;
             }
             if !try_navigate(session, script, &opts.params).await? {
-                stop_reason = "navigate: no more pages (after null extract)".into();
+                stop_reason =
+                    "navigate: no more pages (after null extract)".into();
                 break;
             }
             sleep_delay(opts.delay_ms).await;
@@ -593,7 +633,12 @@ pub async fn run_pagemd_script(
         );
 
         if dir_mode {
-            let file_name = unique_page_filename(pages.len(), &title, &page_url, &mut used_names);
+            let file_name = unique_page_filename(
+                pages.len(),
+                &title,
+                &page_url,
+                &mut used_names,
+            );
             let path = opts.output.join(&file_name);
             std::fs::write(&path, markdown.as_bytes())
                 .with_context(|| format!("write {}", path.display()))?;
@@ -648,7 +693,8 @@ pub async fn run_pagemd_script(
             break;
         }
         sleep_delay(opts.delay_ms).await;
-        wait_for_url_change(session, &previous, Duration::from_secs(30)).await?;
+        wait_for_url_change(session, &previous, Duration::from_secs(30))
+            .await?;
     }
 
     if !dir_mode {
@@ -676,7 +722,11 @@ pub async fn run_pagemd_script(
     })
 }
 
-async fn try_navigate(session: &CdpSession, script: &PagmdScript, params: &Value) -> Result<bool> {
+async fn try_navigate(
+    session: &CdpSession,
+    script: &PagmdScript,
+    params: &Value,
+) -> Result<bool> {
     let Some(_) = script.navigate else {
         return Ok(false);
     };
@@ -688,7 +738,10 @@ async fn try_navigate(session: &CdpSession, script: &PagmdScript, params: &Value
         .unwrap_or(false))
 }
 
-async fn eval_expression(session: &CdpSession, expression: &str) -> Result<Value> {
+async fn eval_expression(
+    session: &CdpSession,
+    expression: &str,
+) -> Result<Value> {
     session.evaluate(expression, true).await
 }
 
@@ -710,7 +763,11 @@ async fn sleep_delay(range: (u64, u64)) {
     tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
-async fn wait_for_url_change(session: &CdpSession, previous: &str, max: Duration) -> Result<()> {
+async fn wait_for_url_change(
+    session: &CdpSession,
+    previous: &str,
+    max: Duration,
+) -> Result<()> {
     let deadline = tokio::time::Instant::now() + max;
     loop {
         let current = session.current_url().await.unwrap_or_default();
@@ -863,7 +920,9 @@ fn strip_js_comments(input: &str) -> String {
             }
             if bytes[i + 1] == b'*' {
                 i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                while i + 1 < bytes.len()
+                    && !(bytes[i] == b'*' && bytes[i + 1] == b'/')
+                {
                     i += 1;
                 }
                 i = (i + 2).min(bytes.len());
@@ -1022,8 +1081,9 @@ fn find_string_end(body: &str, quote: char) -> Option<usize> {
 }
 
 fn extract_function_declaration(source: &str, name: &str) -> Option<String> {
-    let re = regex::Regex::new(&format!(r"(?m)function\s+{name}\s*\([^)]*\)\s*\{{"))
-        .expect("hook regex");
+    let re =
+        regex::Regex::new(&format!(r"(?m)function\s+{name}\s*\([^)]*\)\s*\{{"))
+            .expect("hook regex");
     let m = re.find(source)?;
     let brace_start = source[m.start()..].find('{')? + m.start();
     let brace_end = find_matching_brace(source, brace_start)?;
@@ -1100,7 +1160,9 @@ pub fn default_output_for_script(script_path: &Path, cwd: &Path) -> PathBuf {
 pub fn is_file_output(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt"))
+        .map(|e| {
+            matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt")
+        })
         .unwrap_or(false)
 }
 
@@ -1171,7 +1233,9 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
             }
             "-o" | "--output" => {
                 i += 1;
-                let path = tokens.get(i).ok_or_else(|| anyhow!("-o requires a path"))?;
+                let path = tokens
+                    .get(i)
+                    .ok_or_else(|| anyhow!("-o requires a path"))?;
                 opts.output = PathBuf::from(*path);
             }
             "--max-pages" => {
@@ -1204,10 +1268,11 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
             }
             "--params" => {
                 i += 1;
-                let raw = tokens
-                    .get(i)
-                    .ok_or_else(|| anyhow!("--params requires a JSON object"))?;
-                let patch: Value = serde_json::from_str(raw).context("invalid --params JSON")?;
+                let raw = tokens.get(i).ok_or_else(|| {
+                    anyhow!("--params requires a JSON object")
+                })?;
+                let patch: Value = serde_json::from_str(raw)
+                    .context("invalid --params JSON")?;
                 merge_params_object(&mut opts.params, patch)?;
             }
             "--no-title" => opts.include_title = false,
@@ -1223,8 +1288,9 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
         i += 1;
     }
 
-    let script_path =
-        script_path.ok_or_else(|| anyhow!("usage: /run <file.pagemd.js> [--usage] [-o out.md]"))?;
+    let script_path = script_path.ok_or_else(|| {
+        anyhow!("usage: /run <file.pagemd.js> [--usage] [-o out.md]")
+    })?;
     let script_path = if script_path.is_absolute() {
         script_path
     } else {
@@ -1237,7 +1303,9 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
         });
     }
 
-    if opts.output.as_os_str() == "pagemd-run" || opts.output.as_os_str() == "pagemd-run.md" {
+    if opts.output.as_os_str() == "pagemd-run"
+        || opts.output.as_os_str() == "pagemd-run.md"
+    {
         opts.output = default_output_for_script(&script_path, cwd);
     } else if opts.output.is_relative() {
         opts.output = cwd.join(&opts.output);
@@ -1251,8 +1319,9 @@ pub fn parse_run_args(rest: &str, cwd: &Path) -> Result<ParsedRunArgs> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
         let id = SystemTime::now()
@@ -1279,9 +1348,10 @@ function stop(context) { return { shouldStop: false }; }
     #[test]
     fn parse_requires_extract() {
         parse_pagemd_script(SAMPLE).unwrap();
-        assert!(
-            parse_pagemd_script("function extract() { return { title: 'a', html: 'b' }; }").is_ok()
-        );
+        assert!(parse_pagemd_script(
+            "function extract() { return { title: 'a', html: 'b' }; }"
+        )
+        .is_ok());
         assert!(parse_pagemd_script("const x = 1;").is_err());
     }
 
@@ -1316,7 +1386,8 @@ function stop(context) { return { shouldStop: false }; }
     #[test]
     fn parse_run_args_filter_override() {
         let cwd = Path::new("/tmp");
-        let parsed = parse_run_args("site.pagemd.js --filter /document/*", cwd).unwrap();
+        let parsed =
+            parse_run_args("site.pagemd.js --filter /document/*", cwd).unwrap();
         let ParsedRunArgs::Run { opts, .. } = parsed else {
             panic!("expected run");
         };
@@ -1426,7 +1497,8 @@ function stop(context) { return { shouldStop: false }; }
     #[test]
     fn parse_run_args_defaults_output_from_stem() {
         let cwd = Path::new("/tmp");
-        let parsed = parse_run_args("site.pagemd.js --max-pages 3", cwd).unwrap();
+        let parsed =
+            parse_run_args("site.pagemd.js --max-pages 3", cwd).unwrap();
         let ParsedRunArgs::Run { script: path, opts } = parsed else {
             panic!("expected run");
         };
@@ -1467,7 +1539,11 @@ function stop(context) { return { shouldStop: false }; }
         assert!(script.navigate.is_some());
         assert!(script.stop.is_some());
         assert!(!script.extract.is_empty());
-        let js = compile_hook(&script, HookKind::Extract, &json!({ "stopUrl": "x" }));
+        let js = compile_hook(
+            &script,
+            HookKind::Extract,
+            &json!({ "stopUrl": "x" }),
+        );
         assert!(js.contains("defaultParams"));
         assert!(js.contains("params.contentSelector") || js.contains("params"));
     }

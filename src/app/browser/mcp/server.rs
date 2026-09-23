@@ -1,5 +1,7 @@
-use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::{
+    io::{self, BufRead, Write},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -16,13 +18,18 @@ pub fn serve_stdio(workspace: &Path) -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let request: Value = serde_json::from_str(&line).context("parse MCP request")?;
-        if request.get("method").and_then(|v| v.as_str()) == Some("notifications/initialized") {
+        let request: Value =
+            serde_json::from_str(&line).context("parse MCP request")?;
+        if request.get("method").and_then(|v| v.as_str())
+            == Some("notifications/initialized")
+        {
             continue;
         }
         let id = request.get("id").cloned();
         let response = match dispatch(&client, &request) {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            Ok(result) => {
+                json!({ "jsonrpc": "2.0", "id": id, "result": result })
+            }
             Err(err) if id.is_some() => {
                 json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": err.to_string() } })
             }

@@ -43,13 +43,18 @@
 pub mod app;
 pub mod core;
 
-/// CLI / binary entrypoint (`pagemd` executable).
-pub use app::run;
+/// `CARGO_PKG_VERSION`, plus `-<git>` and `+dirty` when `build.rs` can see a git checkout.
+pub const PAGEMD_VERSION: &str = env!("PAGEMD_VERSION");
 
 pub use core::{
-    build_html, diagram_help, export_to_file, export_with_resources, html_escape, markdown_help,
-    normalize_footnote_definition_lines, prepare_resources, render, render_to_html, resolve_inputs,
-    workspace_script_tag, ConvertOptions, ExportOutput, ExtractedFootnote, FootnoteDisplay,
-    HtmlExportOptions, OutputFormat, RenderOptions, RenderResources, ResolvedInputs, ScriptEmbed,
-    ThemeMode, WorkspaceChrome, DIAGRAM_HELP, MARKDOWN_HELP, PAGEMD_LONG_ABOUT,
+    build_html, diagram_help, export_to_file, export_with_resources,
+    html_escape, markdown_help, normalize_footnote_definition_lines,
+    prepare_resources, render, render_to_html, resolve_inputs,
+    workspace_script_tag, ConvertOptions, ExportOutput, ExtractedFootnote,
+    FootnoteDisplay, HtmlExportOptions, OutputFormat, RenderOptions,
+    RenderResources, ResolvedInputs, ScriptEmbed, ThemeMode, WorkspaceChrome,
+    DIAGRAM_HELP, MARKDOWN_HELP, PAGEMD_LONG_ABOUT,
 };
+
+/// CLI / binary entrypoint (`pagemd` executable).
+pub use app::run;

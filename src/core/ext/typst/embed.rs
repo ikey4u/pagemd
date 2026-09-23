@@ -1,19 +1,19 @@
 //! Compile-time embedded `@preview` packages and runtime package resolution.
 
-use std::borrow::Cow;
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::{borrow::Cow, collections::HashSet, path::PathBuf, sync::OnceLock};
 
 use rust_embed::RustEmbed;
-use typst::diag::{FileError, FileResult};
-use typst::foundations::Bytes;
-use typst::syntax::{package::PackageSpec as TypstPackageSpec, FileId, Source};
+use typst::{
+    diag::{FileError, FileResult},
+    foundations::Bytes,
+    syntax::{package::PackageSpec as TypstPackageSpec, FileId, Source},
+};
 use typst_as_lib::file_resolver::FileResolver;
 
 use super::package::{self, PackageSpec};
 
-const MANIFEST: &str = include_str!("../../../../assets/typst-packages/manifest.toml");
+const MANIFEST: &str =
+    include_str!("../../../../assets/typst-packages/manifest.toml");
 
 /// Top-level `pagemd --help` text.
 pub const PAGEMD_LONG_ABOUT: &str = concat!(
@@ -138,12 +138,14 @@ fn bundled_index() -> &'static HashSet<(String, String)> {
 pub fn bundled_specs() -> &'static [PackageSpec] {
     static SPECS: OnceLock<Vec<PackageSpec>> = OnceLock::new();
     SPECS.get_or_init(|| {
-        package::parse_manifest(MANIFEST).expect("invalid assets/typst-packages/manifest.toml")
+        package::parse_manifest(MANIFEST)
+            .expect("invalid assets/typst-packages/manifest.toml")
     })
 }
 
 fn is_bundled(package: &TypstPackageSpec) -> bool {
-    bundled_index().contains(&(package.name.to_string(), package.version.to_string()))
+    bundled_index()
+        .contains(&(package.name.to_string(), package.version.to_string()))
 }
 
 pub fn runtime_package_cache_dir() -> PathBuf {
@@ -162,7 +164,8 @@ fn not_found(id: FileId) -> FileError {
 }
 
 fn bytes_to_source(id: FileId, bytes: &[u8]) -> FileResult<Source> {
-    let contents = std::str::from_utf8(bytes).map_err(|_| FileError::InvalidUtf8)?;
+    let contents =
+        std::str::from_utf8(bytes).map_err(|_| FileError::InvalidUtf8)?;
     let contents = contents.trim_start_matches('\u{feff}');
     Ok(Source::new(id, contents.to_owned()))
 }
@@ -178,12 +181,14 @@ impl BundledPackageResolver {
             return Err(not_found(id));
         }
 
-        let subdir = std::path::Path::new(package.name.as_str()).join(package.version.to_string());
+        let subdir = std::path::Path::new(package.name.as_str())
+            .join(package.version.to_string());
         let Some(relative) = id.vpath().resolve(&subdir) else {
             return Err(not_found(id));
         };
         let embed_path = relative.to_string_lossy().replace('\\', "/");
-        let file = BundledTypstPreview::get(&embed_path).ok_or_else(|| not_found(id))?;
+        let file = BundledTypstPreview::get(&embed_path)
+            .ok_or_else(|| not_found(id))?;
         Ok(file.data.into_owned())
     }
 }

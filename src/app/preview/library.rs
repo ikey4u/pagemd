@@ -1,19 +1,26 @@
 //! Incremental section cache for `pagemd view` (parallel render + lazy shell).
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::SystemTime,
+};
 
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use serde::Serialize;
 
-use crate::core::export::html::{outline_list_inner, resolve_icon_label, section_label};
-use crate::core::export::{export_document, HtmlExportOptions, OutputFormat};
-use crate::core::model::{Document, Section};
-use crate::core::pipeline::{render_file_section, RenderResources};
-use crate::core::{resolve_inputs, ConvertOptions};
+use crate::core::{
+    export::{
+        export_document,
+        html::{outline_list_inner, resolve_icon_label, section_label},
+        HtmlExportOptions, OutputFormat,
+    },
+    model::{Document, Section},
+    pipeline::{render_file_section, RenderResources},
+    resolve_inputs, ConvertOptions,
+};
 
 #[derive(Clone)]
 struct CachedSection {
@@ -148,7 +155,8 @@ impl PreviewLibrary {
             .par_iter()
             .map(|&index| {
                 let path = &self.files[index];
-                let section = render_file_section(opts, resources, path, footnotes)?;
+                let section =
+                    render_file_section(opts, resources, path, footnotes)?;
                 Ok((
                     index,
                     CachedSection {
@@ -201,7 +209,10 @@ impl PreviewLibrary {
     ///
     /// `None` exports the whole library. A subset contains only those pages, in
     /// file order, with no lazy placeholders for the rest.
-    pub fn export_html(&mut self, one_based: Option<&[usize]>) -> Result<String> {
+    pub fn export_html(
+        &mut self,
+        one_based: Option<&[usize]>,
+    ) -> Result<String> {
         self.sync_files()?;
         if self.files.is_empty() {
             anyhow::bail!("No Markdown files found.");
@@ -218,7 +229,10 @@ impl PreviewLibrary {
         Ok(export_document(&doc, OutputFormat::Html, &opts)?.html)
     }
 
-    pub fn section_payload(&mut self, one_based: usize) -> Result<SectionPayload> {
+    pub fn section_payload(
+        &mut self,
+        one_based: usize,
+    ) -> Result<SectionPayload> {
         if one_based == 0 || one_based > self.files.len() {
             anyhow::bail!("section {one_based} out of range");
         }
@@ -252,8 +266,11 @@ impl PreviewLibrary {
             nav_labels.push(label.clone());
 
             let section = if embed.contains(&index) {
-                if let Some(cached) = self.cache.get(index).and_then(|c| c.as_ref()) {
-                    if doc_title.is_empty() && !cached.section.title.is_empty() {
+                if let Some(cached) =
+                    self.cache.get(index).and_then(|c| c.as_ref())
+                {
+                    if doc_title.is_empty() && !cached.section.title.is_empty()
+                    {
                         doc_title = cached.section.title.clone();
                     }
                     cached.section.clone()
@@ -421,16 +438,18 @@ pub fn lock_library(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
     use crate::core::{ConvertOptions, HtmlExportOptions, OutputFormat};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("pagemd-lib-{name}-{nanos}"));
+        let dir =
+            std::env::temp_dir().join(format!("pagemd-lib-{name}-{nanos}"));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -473,7 +492,10 @@ mod tests {
 
         let payload = lib.section_payload(2).unwrap();
         assert!(payload.html.contains("body-b"));
-        assert!(payload.outline_html.contains("Beta") || payload.title.contains("b.md"));
+        assert!(
+            payload.outline_html.contains("Beta")
+                || payload.title.contains("b.md")
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -671,8 +693,12 @@ mod tests {
             ..ConvertOptions::default()
         };
         let resources = crate::core::prepare_resources(&convert_opts).unwrap();
-        let mut lib =
-            PreviewLibrary::new(convert_opts, HtmlExportOptions::default(), resources, None);
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions::default(),
+            resources,
+            None,
+        );
 
         let one = lib.export_html(Some(&[2])).unwrap();
         assert!(one.contains("body-b"), "{one}");
@@ -687,7 +713,11 @@ mod tests {
         assert!(some.find("body-a") < some.find("body-c"));
 
         let all = lib.export_html(None).unwrap();
-        assert!(all.contains("body-a") && all.contains("body-b") && all.contains("body-c"));
+        assert!(
+            all.contains("body-a")
+                && all.contains("body-b")
+                && all.contains("body-c")
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -705,8 +735,12 @@ mod tests {
             ..ConvertOptions::default()
         };
         let resources = crate::core::prepare_resources(&convert_opts).unwrap();
-        let mut lib =
-            PreviewLibrary::new(convert_opts, HtmlExportOptions::default(), resources, None);
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions::default(),
+            resources,
+            None,
+        );
         lib.ensure_all().unwrap();
         assert!(lib.cache.iter().all(|c| c.is_some()));
 

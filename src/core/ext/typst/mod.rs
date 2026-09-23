@@ -4,6 +4,7 @@ mod embed;
 mod package;
 
 use anyhow::Result;
+pub use embed::{bundled_package_resolver, bundled_specs, PAGEMD_LONG_ABOUT};
 use typst::layout::{Abs, PagedDocument};
 use typst_as_lib::{
     cached_file_resolver::IntoCachedFileResolver,
@@ -12,8 +13,6 @@ use typst_as_lib::{
     TypstEngine,
 };
 use typst_svg::{svg, svg_merged};
-
-pub use embed::{bundled_package_resolver, bundled_specs, PAGEMD_LONG_ABOUT};
 
 fn typst_font_options() -> TypstKitFontOptions {
     TypstKitFontOptions::default()
@@ -26,11 +25,15 @@ fn normalize_typst_source(code: &str) -> String {
     if trimmed.contains("#set page") {
         trimmed.to_string()
     } else {
-        format!("#set page(width: auto, height: auto, margin: 8pt)\n{trimmed}\n")
+        format!(
+            "#set page(width: auto, height: auto, margin: 8pt)\n{trimmed}\n"
+        )
     }
 }
 
-fn typst_engine(source: String) -> TypstEngine<typst_as_lib::TypstTemplateMainFile> {
+fn typst_engine(
+    source: String,
+) -> TypstEngine<typst_as_lib::TypstTemplateMainFile> {
     let runtime_resolver = PackageResolver::builder()
         .cache(FileSystemCache(embed::runtime_package_cache_dir()))
         .build()

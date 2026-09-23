@@ -1,13 +1,17 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use anyhow::{bail, Result};
 use serde_json::Value;
 
-use super::cdp::CdpSession;
-use super::session_md::SessionMarkdown;
-use super::snap;
-use super::undo::{DomTarget, UndoStack};
+use super::{
+    cdp::CdpSession,
+    session_md::SessionMarkdown,
+    snap,
+    undo::{DomTarget, UndoStack},
+};
 
 const INIT_JS: &str = r#"(() => {
   let iframe = document.getElementById("pagemd-sandbox");
@@ -81,7 +85,10 @@ pub async fn begin(
     Ok(info)
 }
 
-pub async fn eval_expression(session: &CdpSession, expression: &str) -> Result<Value> {
+pub async fn eval_expression(
+    session: &CdpSession,
+    expression: &str,
+) -> Result<Value> {
     let expr_json = serde_json::to_string(expression)?;
     let wrapped = format!(
         r#"(() => {{
@@ -105,7 +112,10 @@ pub async fn capture_page(session: &CdpSession) -> Result<Value> {
     session.evaluate(SNAP_JS, false).await
 }
 
-pub async fn markdown_text(session: &CdpSession, max_chars: usize) -> Result<String> {
+pub async fn markdown_text(
+    session: &CdpSession,
+    max_chars: usize,
+) -> Result<String> {
     let html = capture_body_html(session).await?;
     let md = snap::html_to_markdown(&html)?;
     if md.trim().is_empty() {
@@ -117,6 +127,9 @@ pub async fn markdown_text(session: &CdpSession, max_chars: usize) -> Result<Str
     Ok(super::tools::truncate(md, max_chars))
 }
 
-pub async fn run_clean(session: &CdpSession, extra_selectors: &[String]) -> Result<Value> {
+pub async fn run_clean(
+    session: &CdpSession,
+    extra_selectors: &[String],
+) -> Result<Value> {
     super::tools::run_clean_dom_sandbox(session, extra_selectors).await
 }

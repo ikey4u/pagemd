@@ -1,5 +1,7 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Result};
 use ratex_layout::{layout, to_display_list, LayoutOptions};
@@ -39,7 +41,8 @@ fn katex_font_cache_dir() -> PathBuf {
     }
     if cfg!(target_os = "macos") {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join("Library/Caches/pagemd/katex-fonts");
+            return PathBuf::from(home)
+                .join("Library/Caches/pagemd/katex-fonts");
         }
     }
     if let Ok(home) = std::env::var("HOME") {
@@ -56,12 +59,16 @@ fn ensure_katex_font_cache() -> Result<PathBuf> {
     if dir.join("KaTeX_Main-Regular.ttf").exists() {
         return Ok(dir);
     }
-    fs::create_dir_all(&dir).context("failed to create KaTeX font cache directory")?;
+    fs::create_dir_all(&dir)
+        .context("failed to create KaTeX font cache directory")?;
     for filename in KATEX_FONT_FILES {
-        let bytes = ratex_katex_fonts::ttf_bytes(filename)
-            .with_context(|| format!("missing bundled KaTeX font {filename}"))?;
-        fs::write(dir.join(filename), bytes.as_ref())
-            .with_context(|| format!("failed to write KaTeX font {filename}"))?;
+        let bytes =
+            ratex_katex_fonts::ttf_bytes(filename).with_context(|| {
+                format!("missing bundled KaTeX font {filename}")
+            })?;
+        fs::write(dir.join(filename), bytes.as_ref()).with_context(|| {
+            format!("failed to write KaTeX font {filename}")
+        })?;
     }
     Ok(dir)
 }
@@ -78,8 +85,14 @@ pub fn find_katex_fonts(hint: Option<&Path>) -> Result<String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
-pub fn latex_to_svg(expr: &str, display: bool, font_size: f64, font_dir: &str) -> Result<String> {
-    let ast = parse_latex(expr).map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
+pub fn latex_to_svg(
+    expr: &str,
+    display: bool,
+    font_size: f64,
+    font_dir: &str,
+) -> Result<String> {
+    let ast = parse_latex(expr)
+        .map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
     let style = if display {
         MathStyle::Display
     } else {

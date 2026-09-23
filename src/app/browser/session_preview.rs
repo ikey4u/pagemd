@@ -1,19 +1,20 @@
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{fs, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 
-use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
-use crate::app::preview::{
-    collect_watch_plan, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult, WatchPlan,
-};
-use crate::core::{
-    export_with_resources, prepare_resources, resolve_inputs, ConvertOptions, HtmlExportOptions,
-    OutputFormat, RenderResources,
-};
-
 use super::session_md::SessionMarkdown;
+use crate::{
+    app::preview::{
+        collect_watch_plan,
+        error::{build_preview_error_html, preview_html_opts},
+        HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult,
+        WatchPlan,
+    },
+    core::{
+        export_with_resources, prepare_resources, resolve_inputs,
+        ConvertOptions, HtmlExportOptions, OutputFormat, RenderResources,
+    },
+};
 
 struct SessionRenderContext {
     convert_opts: ConvertOptions,
@@ -32,7 +33,8 @@ impl SessionPreview {
         slot: &'a mut Option<SessionPreview>,
         session_md: &SessionMarkdown,
     ) -> Result<&'a SessionPreview> {
-        Self::ensure_at_path(slot, session_md.file_path(), "PageMD session").await
+        Self::ensure_at_path(slot, session_md.file_path(), "PageMD session")
+            .await
     }
 
     pub async fn ensure_at_path<'a>(
@@ -53,8 +55,9 @@ impl SessionPreview {
                     .with_context(|| format!("create {}", parent.display()))?;
             }
             if !session_path.is_file() {
-                fs::write(&session_path, "")
-                    .with_context(|| format!("create {}", session_path.display()))?;
+                fs::write(&session_path, "").with_context(|| {
+                    format!("create {}", session_path.display())
+                })?;
             }
 
             let inputs = vec![session_path.clone()];
@@ -130,7 +133,9 @@ fn render_session(ctx: &SessionRenderContext) -> RenderResult {
     ) {
         Ok(document) => {
             let watch_plan = match resolve_inputs(&ctx.convert_opts) {
-                Ok(resolved) => collect_watch_plan(&resolved.files, &resolved.directories),
+                Ok(resolved) => {
+                    collect_watch_plan(&resolved.files, &resolved.directories)
+                }
                 Err(err) => {
                     eprintln!("Watch path refresh warning: {err:#}");
                     WatchPlan::default()

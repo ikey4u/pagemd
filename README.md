@@ -120,19 +120,22 @@ Preview the basic example in the default browser:
 cargo run -- view --input examples/BASIC.md
 ```
 
-Cross-compile release binaries (Linux glibc 2.17+, Windows, macOS) with Zig:
+Cross-compile release binaries (Linux glibc 2.17+, Windows, macOS). Linux links glibc 2.17 via Zig. The host OS builds natively. Release builds use an isolated cargo directory and strip personal paths out of the binary:
 
 ```bash
-mise run dist
+mise run release
+# one target: mise run release:linux:x64
 ```
 
 Artifacts are written under `dist/` as `pagemd-{os}-{arch}-{version}.zip`
-(for example `pagemd-linux-x64-0.7.0.zip`).
+(for example `pagemd-linux-x64-0.9.1.zip`).
+
+`pagemd --version` prints the package version plus the git short hash (`0.9.1-abc1234`, or `…+dirty` when the tree is dirty).
 
 Run validation checks:
 
 ```bash
 cargo test
 cargo check
-cargo fmt --check
+cargo +nightly fmt --all -- --check
 ```

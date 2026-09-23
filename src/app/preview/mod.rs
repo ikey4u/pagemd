@@ -6,11 +6,14 @@ mod server;
 
 use std::path::PathBuf;
 
-pub use library::{lock_library, PreviewLibrary, SectionPayload, SharedPreviewLibrary};
-pub use live::ensure_export_html;
-pub use live::wrap_for_preview;
+pub use library::{
+    lock_library, PreviewLibrary, SectionPayload, SharedPreviewLibrary,
+};
+pub use live::{ensure_export_html, wrap_for_preview};
 pub use resources::{collect_watch_plan, WatchPlan};
-pub use server::{run, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult};
+pub use server::{
+    run, HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult,
+};
 
 #[derive(Clone)]
 pub struct ViewOptions {
@@ -25,7 +28,9 @@ pub struct ViewOptions {
 
 pub fn validate_inputs(inputs: &[PathBuf]) -> anyhow::Result<()> {
     if inputs.is_empty() {
-        anyhow::bail!("Missing required input. Pass --input <FILE|DIR> or --dir <DIR>.");
+        anyhow::bail!(
+            "Missing required input. Pass --input <FILE|DIR> or --dir <DIR>."
+        );
     }
     for input in inputs {
         if !input.exists() {

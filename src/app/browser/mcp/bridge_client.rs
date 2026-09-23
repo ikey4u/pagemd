@@ -15,8 +15,9 @@ pub struct BridgeClient {
 
 impl BridgeClient {
     pub fn from_workspace(workspace: &Path) -> Result<Self> {
-        let runtime = BrowserRuntime::read(workspace)
-            .context("pagemd browser session not running (start `pagemd browser` first)")?;
+        let runtime = BrowserRuntime::read(workspace).context(
+            "pagemd browser session not running (start `pagemd browser` first)",
+        )?;
         Ok(Self {
             base: runtime.bridge_url,
             token: runtime.token,
@@ -47,7 +48,9 @@ impl BridgeClient {
                     None
                 }
             })
-            .ok_or_else(|| anyhow::anyhow!("unexpected bridge response: {value}"))
+            .ok_or_else(|| {
+                anyhow::anyhow!("unexpected bridge response: {value}")
+            })
     }
 
     pub fn post_text(&self, path: &str, body: Value) -> Result<String> {
@@ -61,7 +64,12 @@ impl BridgeClient {
         Ok(value.to_string())
     }
 
-    fn request(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value> {
+    fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
         let url = format!("{}{}", self.base, path);
         let mut req = self
             .http
@@ -244,7 +252,11 @@ fn tool(name: &str, description: &str, schema: Value) -> Value {
     })
 }
 
-pub fn call_tool(client: &BridgeClient, name: &str, args: &Value) -> Result<String> {
+pub fn call_tool(
+    client: &BridgeClient,
+    name: &str,
+    args: &Value,
+) -> Result<String> {
     match name {
         "browser_begin_sandbox" => client.post_text("/v1/sandbox/begin", json!({})),
         "browser_snap" => client.post_text("/v1/snap", json!({})),

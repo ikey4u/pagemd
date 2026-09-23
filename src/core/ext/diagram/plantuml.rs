@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
-
 use plantuml_encoding::encode_plantuml_deflate;
 
-use crate::core::export::html::bundler::{data_uri_from_bytes, fetch_remote_resource};
-use crate::core::util::html_escape;
+use crate::core::{
+    export::html::bundler::{data_uri_from_bytes, fetch_remote_resource},
+    util::html_escape,
+};
 
 fn plantuml_skinparams() -> &'static str {
     "skinparam backgroundColor transparent\nskinparam sequenceParticipantBackgroundColor white\nskinparam sequenceParticipantBorderColor #94a3b8\nskinparam actorBackgroundColor white\nskinparam actorBorderColor #94a3b8\nskinparam shadowing false"
@@ -31,12 +32,15 @@ fn normalize_plantuml_source(code: &str) -> String {
 
 pub fn render_plantuml(code: &str) -> Result<String> {
     let source = normalize_plantuml_source(code);
-    let encoded = encode_plantuml_deflate(&source)
-        .map_err(|err| anyhow::anyhow!("Failed to encode PlantUML diagram: {:?}", err))?;
+    let encoded = encode_plantuml_deflate(&source).map_err(|err| {
+        anyhow::anyhow!("Failed to encode PlantUML diagram: {:?}", err)
+    })?;
     let url = format!("https://www.plantuml.com/plantuml/svg/{encoded}");
     let (bytes, mime) = fetch_remote_resource(&url)?;
-    if mime.eq_ignore_ascii_case("image/svg+xml") || bytes.starts_with(b"<svg") {
-        let svg = String::from_utf8(bytes).context("PlantUML server returned non-UTF-8 SVG")?;
+    if mime.eq_ignore_ascii_case("image/svg+xml") || bytes.starts_with(b"<svg")
+    {
+        let svg = String::from_utf8(bytes)
+            .context("PlantUML server returned non-UTF-8 SVG")?;
         Ok(format!(
             "<div class=\"plantuml-display\"><div class=\"plantuml-canvas\">{svg}</div></div>\n"
         ))

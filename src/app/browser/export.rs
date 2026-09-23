@@ -30,7 +30,10 @@ const EXPORT_OUTRO: &str = r#"
 
 If verification fails after 2 attempts, explain what is blocked and what the user should `/eval` manually — do not save a broken script."#;
 
-pub fn build_export_prompt(export_dir: &std::path::Path, filename_hint: Option<&str>) -> String {
+pub fn build_export_prompt(
+    export_dir: &std::path::Path,
+    filename_hint: Option<&str>,
+) -> String {
     let mut prompt = format!(
         "{EXPORT_INTRO}{PAGEMD_JS_FORMAT}{EXPORT_OUTRO}\n\n**Export directory (mandatory):** `{}`",
         export_dir.display()

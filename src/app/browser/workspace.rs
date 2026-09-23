@@ -8,7 +8,8 @@ pub fn ensure_mcp_config(workspace: &Path) -> Result<()> {
     std::fs::create_dir_all(&cursor_dir)
         .with_context(|| format!("create {}", cursor_dir.display()))?;
 
-    let pagemd = std::env::current_exe().context("resolve pagemd executable path")?;
+    let pagemd =
+        std::env::current_exe().context("resolve pagemd executable path")?;
     let workspace_str = workspace.to_string_lossy().to_string();
     let entry = json!({
         "command": pagemd,
@@ -17,7 +18,8 @@ pub fn ensure_mcp_config(workspace: &Path) -> Result<()> {
 
     let mcp_path = cursor_dir.join("mcp.json");
     let mut doc: Value = if mcp_path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(&mcp_path)?).unwrap_or(json!({}))
+        serde_json::from_str(&std::fs::read_to_string(&mcp_path)?)
+            .unwrap_or(json!({}))
     } else {
         json!({})
     };

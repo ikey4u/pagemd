@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
-use crate::app::cli::CliArgs;
-use crate::core::{ConvertOptions, OutputFormat};
+use crate::{
+    app::cli::CliArgs,
+    core::{ConvertOptions, OutputFormat},
+};
 
 impl From<&CliArgs> for ConvertOptions {
     fn from(args: &CliArgs) -> Self {
@@ -27,14 +29,16 @@ impl From<CliArgs> for ConvertOptions {
 
 /// Default HTML path when `--output` is omitted for a single file or directory.
 pub(crate) fn default_output_path(args: &CliArgs) -> Option<PathBuf> {
-    if let ([path], []) = (args.inputs.as_slice(), args.directories.as_slice()) {
+    if let ([path], []) = (args.inputs.as_slice(), args.directories.as_slice())
+    {
         if path.is_dir() {
             let name = path.file_name()?.to_string_lossy();
             return Some(PathBuf::from(format!("{name}.html")));
         }
         return Some(path.with_extension("html"));
     }
-    if let ([], [path]) = (args.inputs.as_slice(), args.directories.as_slice()) {
+    if let ([], [path]) = (args.inputs.as_slice(), args.directories.as_slice())
+    {
         let name = path.file_name()?.to_string_lossy();
         return Some(PathBuf::from(format!("{name}.html")));
     }
@@ -42,10 +46,12 @@ pub(crate) fn default_output_path(args: &CliArgs) -> Option<PathBuf> {
 }
 
 pub(crate) fn run_convert(args: &CliArgs) -> anyhow::Result<()> {
-    use crate::core::{export_to_file, HtmlExportOptions};
     use anyhow::Context;
 
-    let owned_output = args.output.clone().or_else(|| default_output_path(args));
+    use crate::core::{export_to_file, HtmlExportOptions};
+
+    let owned_output =
+        args.output.clone().or_else(|| default_output_path(args));
     let output = owned_output
         .as_deref()
         .context("Missing required output. Pass --output <FILE>, or convert a single file/directory to use the default <name>.html.")?;
@@ -88,7 +94,10 @@ mod tests {
     fn default_output_from_single_directory_flag() {
         let mut args = empty_args();
         args.directories = vec![PathBuf::from("docs")];
-        assert_eq!(default_output_path(&args), Some(PathBuf::from("docs.html")));
+        assert_eq!(
+            default_output_path(&args),
+            Some(PathBuf::from("docs.html"))
+        );
     }
 
     #[test]

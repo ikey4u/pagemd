@@ -1,5 +1,6 @@
-use crate::core::model::RenderedSection;
-use crate::core::{build_html, html_escape, HtmlExportOptions};
+use crate::core::{
+    build_html, html_escape, model::RenderedSection, HtmlExportOptions,
+};
 
 pub fn build_preview_error_html(err: &anyhow::Error) -> String {
     let message = html_escape(&format!("{err:#}"));

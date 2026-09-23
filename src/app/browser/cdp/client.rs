@@ -1,17 +1,24 @@
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::time::timeout;
+use tokio::{
+    sync::{mpsc, oneshot, Mutex},
+    time::timeout,
+};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::targets::{
-    format_target_choices, list_page_targets, pick_best_page_target, urls_match, PageTarget,
+    format_target_choices, list_page_targets, pick_best_page_target,
+    urls_match, PageTarget,
 };
 
 #[derive(Debug)]
@@ -36,14 +43,18 @@ pub struct CdpSession {
 }
 
 impl CdpSession {
-    pub async fn connect_with_hint(port: u16, preferred_url: Option<&str>) -> Result<Self> {
+    pub async fn connect_with_hint(
+        port: u16,
+        preferred_url: Option<&str>,
+    ) -> Result<Self> {
         let targets = list_page_targets(port).await?;
-        let target = pick_best_page_target(&targets, preferred_url).with_context(|| {
-            format!(
-                "no suitable Chrome page target on port {port}\n{}",
-                format_target_choices(&targets)
-            )
-        })?;
+        let target = pick_best_page_target(&targets, preferred_url)
+            .with_context(|| {
+                format!(
+                    "no suitable Chrome page target on port {port}\n{}",
+                    format_target_choices(&targets)
+                )
+            })?;
         Self::connect_to_target(port, target.clone()).await
     }
 
@@ -62,23 +73,28 @@ impl CdpSession {
 
     /// Re-attach when the CDP session is on the wrong tab. Skips target listing when
     /// already attached to a usable HTTP(S) page matching `preferred`.
-    pub async fn attach_to_best_tab(&self, preferred: Option<&str>) -> Result<String> {
+    pub async fn attach_to_best_tab(
+        &self,
+        preferred: Option<&str>,
+    ) -> Result<String> {
         let current = self.current_url().await.unwrap_or_default();
         if Self::is_usable_page_url(&current) {
-            let preferred_ok = preferred.map(|p| urls_match(&current, p)).unwrap_or(true);
+            let preferred_ok =
+                preferred.map(|p| urls_match(&current, p)).unwrap_or(true);
             if preferred_ok {
                 return Ok(current);
             }
         }
 
         let targets = list_page_targets(self.port).await?;
-        let best = pick_best_page_target(&targets, preferred).with_context(|| {
-            format!(
-                "no suitable Chrome page target on port {}\n{}",
-                self.port,
-                format_target_choices(&targets)
-            )
-        })?;
+        let best =
+            pick_best_page_target(&targets, preferred).with_context(|| {
+                format!(
+                    "no suitable Chrome page target on port {}\n{}",
+                    self.port,
+                    format_target_choices(&targets)
+                )
+            })?;
 
         let current = self.current_url().await.unwrap_or_default();
         if urls_match(&current, &best.url) {
@@ -145,7 +161,11 @@ impl CdpSession {
             .map_err(|_| anyhow!("CDP reply channel closed"))?
     }
 
-    pub async fn evaluate(&self, expression: &str, await_promise: bool) -> Result<Value> {
+    pub async fn evaluate(
+        &self,
+        expression: &str,
+        await_promise: bool,
+    ) -> Result<Value> {
         let result = self
             .call_with_timeout(
                 "Runtime.evaluate",
@@ -246,7 +266,8 @@ pub fn format_js_exception(details: &Value) -> String {
         return text.to_string();
     }
     if let Some(line) = details.get("lineNumber").and_then(|v| v.as_u64()) {
-        if let Some(col) = details.get("columnNumber").and_then(|v| v.as_u64()) {
+        if let Some(col) = details.get("columnNumber").and_then(|v| v.as_u64())
+        {
             return format!("Uncaught exception at line {line}, column {col}");
         }
     }
@@ -271,14 +292,20 @@ async fn open_connection(
             match msg {
                 Ok(Message::Text(text)) => {
                     if let Ok(value) = serde_json::from_str::<Value>(&text) {
-                        if let Some(id) = value.get("id").and_then(|v| v.as_u64()) {
+                        if let Some(id) =
+                            value.get("id").and_then(|v| v.as_u64())
+                        {
                             let mut map = pending_reader.lock().await;
                             if let Some(reply) = map.remove(&id) {
-                                let result = if let Some(err) = value.get("error") {
-                                    Err(anyhow!("CDP error: {err}"))
-                                } else {
-                                    Ok(value.get("result").cloned().unwrap_or(Value::Null))
-                                };
+                                let result =
+                                    if let Some(err) = value.get("error") {
+                                        Err(anyhow!("CDP error: {err}"))
+                                    } else {
+                                        Ok(value
+                                            .get("result")
+                                            .cloned()
+                                            .unwrap_or(Value::Null))
+                                    };
                                 let _ = reply.send(result);
                             }
                         }
@@ -299,10 +326,12 @@ async fn open_connection(
             match cmd {
                 IoCommand::Send { id, payload, reply } => {
                     pending.lock().await.insert(id, reply);
-                    if write.send(Message::Text(payload.into())).await.is_err() {
+                    if write.send(Message::Text(payload.into())).await.is_err()
+                    {
                         let mut map = pending.lock().await;
                         if let Some(reply) = map.remove(&id) {
-                            let _ = reply.send(Err(anyhow!("CDP write failed")));
+                            let _ =
+                                reply.send(Err(anyhow!("CDP write failed")));
                         }
                         break;
                     }

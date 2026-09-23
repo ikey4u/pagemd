@@ -1,5 +1,7 @@
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use crate::core::util::html_escape;
 
@@ -58,26 +60,32 @@ pub fn common_path_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
 }
 
 pub fn relativize_to_root(path: &Path, root: &Path) -> Option<PathBuf> {
-    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let canonical_path =
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canonical_root =
+        root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     canonical_path
         .strip_prefix(&canonical_root)
         .ok()
         .map(Path::to_path_buf)
 }
 
-pub fn build_nav_tree(entries: &[(PathBuf, usize, String)]) -> Vec<NavTreeNode> {
-    let mut grouped: BTreeMap<String, Vec<(PathBuf, usize, String)>> = BTreeMap::new();
+pub fn build_nav_tree(
+    entries: &[(PathBuf, usize, String)],
+) -> Vec<NavTreeNode> {
+    let mut grouped: BTreeMap<String, Vec<(PathBuf, usize, String)>> =
+        BTreeMap::new();
 
     for (path, section_index, label) in entries {
         let key = path
             .parent()
             .map(|parent| parent.to_string_lossy().replace('\\', "/"))
             .unwrap_or_default();
-        grouped
-            .entry(key)
-            .or_default()
-            .push((path.clone(), *section_index, label.clone()));
+        grouped.entry(key).or_default().push((
+            path.clone(),
+            *section_index,
+            label.clone(),
+        ));
     }
 
     build_level(&grouped, "")
@@ -204,7 +212,10 @@ pub fn root_nav_tree(nodes: Vec<NavTreeNode>, name: &str) -> Vec<NavTreeNode> {
     }]
 }
 
-pub fn render_nav_tree_html(nodes: &[NavTreeNode], active_index: usize) -> String {
+pub fn render_nav_tree_html(
+    nodes: &[NavTreeNode],
+    active_index: usize,
+) -> String {
     if nodes.is_empty() {
         return String::new();
     }
@@ -284,7 +295,9 @@ mod tests {
                 assert_eq!(name, "docs");
                 assert_eq!(children.len(), 2);
             }
-            NavTreeNode::File { .. } => panic!("document root must be a folder"),
+            NavTreeNode::File { .. } => {
+                panic!("document root must be a folder")
+            }
         }
     }
 

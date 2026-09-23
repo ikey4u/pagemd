@@ -1,14 +1,16 @@
-use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use regex::Regex;
 
 /// Local files pagemd actually inlines. Navigation links to source
 /// (`.swift`, `.md`, …) are not part of the preview and must not be watched.
 const EMBEDDABLE_EXTS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif", "css", "js", "mjs", "woff",
-    "woff2", "ttf", "otf", "mp4", "webm", "ogg",
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif", "css",
+    "js", "mjs", "woff", "woff2", "ttf", "otf", "mp4", "webm", "ogg",
 ];
 
 const DISCOVER_SOURCE_LIMIT: usize = 64;
@@ -34,13 +36,17 @@ impl WatchPlan {
 
 fn markdown_image_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)").expect("markdown image regex"))
+    RE.get_or_init(|| {
+        Regex::new(r"!\[[^\]]*\]\(\s*<?([^)>\s]+)")
+            .expect("markdown image regex")
+    })
 }
 
 fn html_embed_attr_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"(?:src|poster)\s*=\s*["']([^"']+)["']"#).expect("html embed attr regex")
+        Regex::new(r#"(?:src|poster)\s*=\s*["']([^"']+)["']"#)
+            .expect("html embed attr regex")
     })
 }
 
@@ -54,7 +60,10 @@ fn html_link_href_re() -> &'static Regex {
 
 fn css_url_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"url\(\s*['"]?([^'")]+)['"]?\s*\)"#).expect("css url regex"))
+    RE.get_or_init(|| {
+        Regex::new(r#"url\(\s*['"]?([^'")]+)['"]?\s*\)"#)
+            .expect("css url regex")
+    })
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -113,13 +122,19 @@ fn resolve_local_path(reference: &str, base_dir: &Path) -> Option<PathBuf> {
     }
 }
 
-fn insert_discovered(paths: &mut HashSet<PathBuf>, reference: &str, base_dir: &Path) {
+fn insert_discovered(
+    paths: &mut HashSet<PathBuf>,
+    reference: &str,
+    base_dir: &Path,
+) {
     if let Some(path) = resolve_local_path(reference, base_dir) {
         paths.insert(path);
     }
 }
 
-fn discover_embeddable_resources(sources: &[(PathBuf, String)]) -> Vec<PathBuf> {
+fn discover_embeddable_resources(
+    sources: &[(PathBuf, String)],
+) -> Vec<PathBuf> {
     let mut paths = HashSet::new();
 
     for (input, source) in sources {
@@ -169,7 +184,10 @@ fn load_sources(files: &[PathBuf]) -> Vec<(PathBuf, String)> {
 /// Callers pass the current corpus (`files` + scan `directories`). Markdown is
 /// read here when the corpus is small enough; scan roots already cover nested
 /// creates, so skipping discovery on huge trees does not miss in-tree edits.
-pub fn collect_watch_plan(files: &[PathBuf], directories: &[PathBuf]) -> WatchPlan {
+pub fn collect_watch_plan(
+    files: &[PathBuf],
+    directories: &[PathBuf],
+) -> WatchPlan {
     let mut roots: Vec<PathBuf> = directories
         .iter()
         .map(|dir| canonical(dir))
@@ -192,7 +210,9 @@ pub fn collect_watch_plan(files: &[PathBuf], directories: &[PathBuf]) -> WatchPl
     }
 
     for asset in discover_embeddable_resources(&load_sources(files)) {
-        if !covered_by_root(&asset, &recursive) && !recursive.iter().any(|root| root == &asset) {
+        if !covered_by_root(&asset, &recursive)
+            && !recursive.iter().any(|root| root == &asset)
+        {
             paths.insert(asset);
         }
     }
@@ -205,8 +225,9 @@ pub fn collect_watch_plan(files: &[PathBuf], directories: &[PathBuf]) -> WatchPl
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -243,7 +264,10 @@ mod tests {
         )
         .unwrap();
 
-        let plan = collect_watch_plan(&[nested, docs.join("impl.md")], &[docs.clone()]);
+        let plan = collect_watch_plan(
+            &[nested, docs.join("impl.md")],
+            &[docs.clone()],
+        );
         let docs = docs.canonicalize().unwrap();
         let shot = shot.canonicalize().unwrap();
         let swift = swift.canonicalize().unwrap();

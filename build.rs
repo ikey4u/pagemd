@@ -3,10 +3,11 @@
 #[path = "src/core/ext/typst/package.rs"]
 mod typst_package;
 
-use std::env;
-use std::fs;
-use std::path::Path;
-use std::process;
+use std::{
+    env, fs,
+    path::Path,
+    process::{self, Command},
+};
 
 const TAILWINDCSS_BROWSER_VERSION: &str = "4.3.0";
 const DIAGRAM_TAILWIND_BROWSER_URL: &str =
@@ -18,8 +19,53 @@ const MERMAID_BROWSER_URL: &str =
     "https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js";
 const MERMAID_BROWSER_OUT: &str = "mermaid.min.js";
 
+fn git_output(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn git_dirty() -> bool {
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .map(|output| output.status.success() && !output.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// `0.9.1`, `0.9.1-<shortsha>`, or `0.9.1-<shortsha>+dirty`.
+fn emit_version() {
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    if let Ok(head) = fs::read_to_string(".git/HEAD") {
+        if let Some(git_ref) = head.trim().strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed=.git/{git_ref}");
+        }
+    }
+
+    let pkg_version =
+        env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
+    let mut version = pkg_version.clone();
+    if let Some(commit) = git_output(&["log", "-1", "--format=%h"]) {
+        version = format!("{pkg_version}-{commit}");
+        if git_dirty() {
+            version.push_str("+dirty");
+        }
+    }
+    println!("cargo:rustc-env=PAGEMD_VERSION={version}");
+}
+
 fn main() {
-    let manifest_dir_path = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    emit_version();
+
+    let manifest_dir_path =
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let manifest_dir = Path::new(&manifest_dir_path);
     println!("cargo:rerun-if-changed=assets/typst-packages/manifest.toml");
     println!("cargo:rustc-env=PAGEMD_MERMAID_VERSION={MERMAID_VERSION}");
@@ -31,7 +77,8 @@ fn main() {
         eprintln!(
             "cargo:warning=PAGEMD_SKIP_TYPST_PACKAGES is set; bundled Typst packages must already exist under assets/typst-packages/preview/"
         );
-    } else if let Err(err) = typst_package::ensure_bundled(manifest_dir, false) {
+    } else if let Err(err) = typst_package::ensure_bundled(manifest_dir, false)
+    {
         eprintln!("error: failed to prepare bundled Typst packages for compile-time embed: {err}");
         eprintln!(
             "hint: check network, or populate assets/typst-packages/preview/ before building"
@@ -39,7 +86,8 @@ fn main() {
         process::exit(1);
     }
 
-    if let Ok(specs) = typst_package::load_manifest_from_workspace(manifest_dir) {
+    if let Ok(specs) = typst_package::load_manifest_from_workspace(manifest_dir)
+    {
         for spec in &specs {
             let dir = typst_package::package_install_dir(manifest_dir, spec);
             println!("cargo:rerun-if-changed={}", dir.display());
@@ -86,7 +134,8 @@ fn prepare_mermaid_browser() {
     println!("cargo:rerun-if-env-changed=PAGEMD_MERMAID_URL");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
     let out_path = Path::new(&out_dir).join(MERMAID_BROWSER_OUT);
-    let url = env::var("PAGEMD_MERMAID_URL").unwrap_or_else(|_| MERMAID_BROWSER_URL.to_string());
+    let url = env::var("PAGEMD_MERMAID_URL")
+        .unwrap_or_else(|_| MERMAID_BROWSER_URL.to_string());
 
     let bytes = reqwest::blocking::get(&url)
         .and_then(|response| response.error_for_status())

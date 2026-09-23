@@ -1,10 +1,9 @@
 pub mod html;
 
 use anyhow::Result;
+pub use html::HtmlExportOptions;
 
 use crate::core::model::Document;
-
-pub use html::HtmlExportOptions;
 
 #[derive(Debug, Clone, Copy)]
 pub enum OutputFormat {
@@ -34,7 +33,9 @@ pub fn export_document(
                 .iter()
                 .flat_map(|section| section.footnotes.iter().cloned())
                 .collect();
-            crate::core::md::footnotes::sort_extracted_footnotes(&mut footnotes);
+            crate::core::md::footnotes::sort_extracted_footnotes(
+                &mut footnotes,
+            );
             Ok(ExportOutput {
                 html,
                 title: doc.title.clone(),

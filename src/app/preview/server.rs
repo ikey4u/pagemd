@@ -1,35 +1,46 @@
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::fs;
-use std::io;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fs, io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
-use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
-use axum::response::sse::{Event, Sse};
-use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
+use axum::{
+    extract::{Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{
+        sse::{Event, Sse},
+        Html, IntoResponse, Response,
+    },
+    routing::get,
+    Router,
+};
 use futures::stream::Stream;
-use notify::event::{AccessKind, AccessMode, EventKind, ModifyKind};
-use notify::{EventHandler, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    event::{AccessKind, AccessMode, EventKind, ModifyKind},
+    EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use notify_debouncer_mini::{new_debouncer_opt, DebounceEventResult};
-use tokio::sync::{broadcast, oneshot};
-use tokio::task::JoinHandle as TokioJoinHandle;
+use tokio::{
+    sync::{broadcast, oneshot},
+    task::JoinHandle as TokioJoinHandle,
+};
 
-use super::library::SharedPreviewLibrary;
-use super::live;
-use super::resources::WatchPlan;
-use super::ViewOptions;
+use super::{
+    library::SharedPreviewLibrary, live, resources::WatchPlan, ViewOptions,
+};
 
-const MERMAID_JS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
+const MERMAID_JS: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/mermaid.min.js"));
 const DIAGRAM_HTML_TAILWIND_BROWSER_JS: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/diagram-html-tailwind-browser.js"
@@ -95,7 +106,10 @@ struct ContentChangeWatcher {
 }
 
 impl Watcher for ContentChangeWatcher {
-    fn new<F: EventHandler>(mut event_handler: F, config: notify::Config) -> notify::Result<Self> {
+    fn new<F: EventHandler>(
+        mut event_handler: F,
+        config: notify::Config,
+    ) -> notify::Result<Self> {
         let inner = RecommendedWatcher::new(
             move |event: notify::Result<notify::Event>| match event {
                 Ok(event) if is_content_change_event(&event) => {
@@ -109,7 +123,11 @@ impl Watcher for ContentChangeWatcher {
         Ok(Self { inner })
     }
 
-    fn watch(&mut self, path: &Path, recursive_mode: RecursiveMode) -> notify::Result<()> {
+    fn watch(
+        &mut self,
+        path: &Path,
+        recursive_mode: RecursiveMode,
+    ) -> notify::Result<()> {
         self.inner.watch(path, recursive_mode)
     }
 
@@ -197,7 +215,10 @@ impl PreviewEngine {
 
         if export_initial {
             if let Ok(guard) = state.html.read() {
-                if let Err(err) = write_export_if_configured(state.export_path.as_deref(), &guard) {
+                if let Err(err) = write_export_if_configured(
+                    state.export_path.as_deref(),
+                    &guard,
+                ) {
                     eprintln!("Export error: {err:#}");
                 }
             }
@@ -206,7 +227,8 @@ impl PreviewEngine {
         let shutdown = Arc::new(AtomicBool::new(false));
         let (render_tx, render_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
 
-        let watch_state = Arc::new(Mutex::new(setup_watcher(watch_plan, render_tx.clone())?));
+        let watch_state =
+            Arc::new(Mutex::new(setup_watcher(watch_plan, render_tx.clone())?));
         let watch_weak = Arc::downgrade(&watch_state);
 
         let render_worker = spawn_render_worker(
@@ -295,14 +317,17 @@ impl HostedPreview {
         let engine = tokio::task::spawn_blocking({
             let options = options.clone();
             let render = Arc::clone(&render);
-            move || PreviewEngine::start_in_current_thread(options.into(), render)
+            move || {
+                PreviewEngine::start_in_current_thread(options.into(), render)
+            }
         })
         .await
         .context("preview engine task")??;
 
         let router = engine.router();
 
-        let (listener, bound_addr) = bind_preview_listener(&options.host, options.port).await?;
+        let (listener, bound_addr) =
+            bind_preview_listener(&options.host, options.port).await?;
         let preview_url = format!("http://{bound_addr}/");
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -354,7 +379,9 @@ async fn bind_preview_listener(
 ) -> Result<(tokio::net::TcpListener, SocketAddr)> {
     let preferred: SocketAddr = format!("{host}:{preferred_port}")
         .parse()
-        .with_context(|| format!("Invalid host/port: {host}:{preferred_port}"))?;
+        .with_context(|| {
+            format!("Invalid host/port: {host}:{preferred_port}")
+        })?;
 
     match tokio::net::TcpListener::bind(preferred).await {
         Ok(listener) => {
@@ -365,7 +392,9 @@ async fn bind_preview_listener(
         }
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {}
         Err(err) => {
-            return Err(err).with_context(|| format!("Cannot bind preview server to {preferred}"));
+            return Err(err).with_context(|| {
+                format!("Cannot bind preview server to {preferred}")
+            });
         }
     }
 
@@ -405,7 +434,8 @@ pub fn run(
     let router = engine.router();
 
     rt.block_on(async {
-        let (listener, bound_addr) = bind_preview_listener(&host, start_port).await?;
+        let (listener, bound_addr) =
+            bind_preview_listener(&host, start_port).await?;
         let serve_url = format!("http://{bound_addr}/");
 
         eprintln!("Preview server listening at {serve_url}");
@@ -442,21 +472,25 @@ fn setup_watcher(
     plan: WatchPlan,
     render_tx: std::sync::mpsc::Sender<Vec<PathBuf>>,
 ) -> Result<WatchState> {
-    let config = notify_debouncer_mini::Config::default().with_timeout(Duration::from_millis(300));
-    let debouncer =
-        new_debouncer_opt::<_, ContentChangeWatcher>(config, move |result: DebounceEventResult| {
+    let config = notify_debouncer_mini::Config::default()
+        .with_timeout(Duration::from_millis(300));
+    let debouncer = new_debouncer_opt::<_, ContentChangeWatcher>(
+        config,
+        move |result: DebounceEventResult| {
             let Ok(events) = result else {
                 return;
             };
             if events.is_empty() {
                 return;
             }
-            let mut paths: Vec<PathBuf> = events.into_iter().map(|event| event.path).collect();
+            let mut paths: Vec<PathBuf> =
+                events.into_iter().map(|event| event.path).collect();
             paths.sort();
             paths.dedup();
             let _ = render_tx.send(paths);
-        })
-        .context("Failed to create file watcher")?;
+        },
+    )
+    .context("Failed to create file watcher")?;
 
     let mut state = WatchState {
         debouncer,
@@ -468,11 +502,16 @@ fn setup_watcher(
 
 fn recursive_watch_covers(state: &WatchState, path: &Path) -> bool {
     path.ancestors().skip(1).any(|ancestor| {
-        !ancestor.as_os_str().is_empty() && state.watched.get(ancestor) == Some(&true)
+        !ancestor.as_os_str().is_empty()
+            && state.watched.get(ancestor) == Some(&true)
     })
 }
 
-fn register_watch(state: &mut WatchState, path: &Path, recursive: bool) -> Result<()> {
+fn register_watch(
+    state: &mut WatchState,
+    path: &Path,
+    recursive: bool,
+) -> Result<()> {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if !canonical.exists() {
         return Ok(());
@@ -529,10 +568,9 @@ fn sync_watches(state: &mut WatchState, plan: &WatchPlan) -> Result<()> {
         if !path.exists() {
             continue;
         }
-        if desired
-            .iter()
-            .any(|(root, recursive)| *recursive && path != *root && path.starts_with(root))
-        {
+        if desired.iter().any(|(root, recursive)| {
+            *recursive && path != *root && path.starts_with(root)
+        }) {
             continue;
         }
         desired.entry(path).or_insert(false);
@@ -540,7 +578,9 @@ fn sync_watches(state: &mut WatchState, plan: &WatchPlan) -> Result<()> {
 
     let mut to_register: Vec<(PathBuf, bool)> =
         desired.iter().map(|(p, r)| (p.clone(), *r)).collect();
-    to_register.sort_by_key(|(path, recursive)| (!*recursive, path.components().count()));
+    to_register.sort_by_key(|(path, recursive)| {
+        (!*recursive, path.components().count())
+    });
     for (path, recursive) in &to_register {
         register_watch(state, path, *recursive)?;
     }
@@ -558,7 +598,9 @@ fn sync_watches(state: &mut WatchState, plan: &WatchPlan) -> Result<()> {
     Ok(())
 }
 
-fn drain_render_triggers(render_rx: &std::sync::mpsc::Receiver<Vec<PathBuf>>) -> Vec<PathBuf> {
+fn drain_render_triggers(
+    render_rx: &std::sync::mpsc::Receiver<Vec<PathBuf>>,
+) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     while let Ok(batch) = render_rx.try_recv() {
         paths.extend(batch);
@@ -578,7 +620,8 @@ fn spawn_render_worker(
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         while !shutdown.load(Ordering::Relaxed) {
-            let first = match render_rx.recv_timeout(Duration::from_millis(100)) {
+            let first = match render_rx.recv_timeout(Duration::from_millis(100))
+            {
                 Ok(paths) => paths,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -606,7 +649,9 @@ fn spawn_render_worker(
                     commit_html(&state, html, true);
                     if let Some(watch_state) = watch_state.upgrade() {
                         if let Ok(mut guard) = watch_state.lock() {
-                            if let Err(err) = sync_watches(&mut guard, &watch_plan) {
+                            if let Err(err) =
+                                sync_watches(&mut guard, &watch_plan)
+                            {
                                 eprintln!("Watch registration error: {err:#}");
                             }
                         }
@@ -635,7 +680,9 @@ fn commit_html(state: &Arc<AppState>, html: String, export: bool) {
 
     if changed && export {
         if let Ok(guard) = state.html.read() {
-            if let Err(err) = write_export_if_configured(state.export_path.as_deref(), &guard) {
+            if let Err(err) =
+                write_export_if_configured(state.export_path.as_deref(), &guard)
+            {
                 eprintln!("Export error: {err:#}");
             }
         }
@@ -649,14 +696,18 @@ fn commit_html(state: &Arc<AppState>, html: String, export: bool) {
     eprintln!("Reloaded (v{version})");
 }
 
-fn write_export_if_configured(path: Option<&std::path::Path>, html: &str) -> Result<()> {
+fn write_export_if_configured(
+    path: Option<&std::path::Path>,
+    html: &str,
+) -> Result<()> {
     let Some(path) = path else {
         return Ok(());
     };
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Cannot create {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Cannot create {}", parent.display())
+            })?;
         }
     }
     let html = live::ensure_export_html(html.to_string());
@@ -671,7 +722,9 @@ async fn index_handler(State(state): State<Arc<AppState>>) -> Html<String> {
         .html
         .read()
         .map(|guard| live::wrap_for_preview(guard.clone()))
-        .unwrap_or_else(|_| live::wrap_for_preview("<p>Preview unavailable</p>".to_string()));
+        .unwrap_or_else(|_| {
+            live::wrap_for_preview("<p>Preview unavailable</p>".to_string())
+        });
     Html(html)
 }
 
@@ -680,9 +733,11 @@ async fn section_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     let Some(library) = state.library.as_ref() else {
-        return (StatusCode::NOT_FOUND, "lazy sections unavailable").into_response();
+        return (StatusCode::NOT_FOUND, "lazy sections unavailable")
+            .into_response();
     };
-    let one_based = id.strip_prefix("doc-").unwrap_or(&id).parse::<usize>().ok();
+    let one_based =
+        id.strip_prefix("doc-").unwrap_or(&id).parse::<usize>().ok();
     let Some(one_based) = one_based else {
         return (StatusCode::BAD_REQUEST, "invalid section id").into_response();
     };
@@ -690,7 +745,11 @@ async fn section_handler(
     let payload = match library.lock() {
         Ok(mut guard) => guard.section_payload(one_based),
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "library lock poisoned").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "library lock poisoned",
+            )
+                .into_response();
         }
     };
 
@@ -701,7 +760,10 @@ async fn section_handler(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("application/json; charset=utf-8"),
             );
-            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
+            );
             match serde_json::to_vec(&payload) {
                 Ok(body) => (StatusCode::OK, headers, body).into_response(),
                 Err(err) => (
@@ -721,7 +783,9 @@ struct ExportQuery {
     docs: Option<String>,
 }
 
-fn parse_export_docs(raw: Option<&str>) -> std::result::Result<Option<Vec<usize>>, String> {
+fn parse_export_docs(
+    raw: Option<&str>,
+) -> std::result::Result<Option<Vec<usize>>, String> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
@@ -766,12 +830,17 @@ async fn export_handler(
     let html = match library.lock() {
         Ok(mut guard) => guard.export_html(docs.as_deref()),
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "library lock poisoned").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "library lock poisoned",
+            )
+                .into_response();
         }
     };
     match html {
         Ok(html) => Html(live::ensure_export_html(html)).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
+            .into_response(),
     }
 }
 
@@ -849,8 +918,9 @@ pub fn open_url(url: &str) -> Result<()> {
 
 #[cfg(test)]
 mod watch_tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -864,18 +934,27 @@ mod watch_tests {
 
     #[test]
     fn content_watch_ignores_open_and_metadata_noise() {
-        use notify::event::{CreateKind, DataChange, MetadataKind, RemoveKind};
-        use notify::Event;
+        use notify::{
+            event::{CreateKind, DataChange, MetadataKind, RemoveKind},
+            Event,
+        };
 
-        let open = Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)));
-        let attrib = Event::new(EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)));
-        let close_read = Event::new(EventKind::Access(AccessKind::Close(AccessMode::Read)));
+        let open =
+            Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)));
+        let attrib = Event::new(EventKind::Modify(ModifyKind::Metadata(
+            MetadataKind::Any,
+        )));
+        let close_read =
+            Event::new(EventKind::Access(AccessKind::Close(AccessMode::Read)));
         assert!(!is_content_change_event(&open));
         assert!(!is_content_change_event(&attrib));
         assert!(!is_content_change_event(&close_read));
 
-        let close_write = Event::new(EventKind::Access(AccessKind::Close(AccessMode::Write)));
-        let data = Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Content)));
+        let close_write =
+            Event::new(EventKind::Access(AccessKind::Close(AccessMode::Write)));
+        let data = Event::new(EventKind::Modify(ModifyKind::Data(
+            DataChange::Content,
+        )));
         let create = Event::new(EventKind::Create(CreateKind::File));
         let remove = Event::new(EventKind::Remove(RemoveKind::File));
         assert!(is_content_change_event(&close_write));
@@ -978,8 +1057,11 @@ mod watch_tests {
 
     #[test]
     fn commit_html_notifies_even_when_shell_html_is_unchanged() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::sync::{Arc, RwLock};
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        };
+
         use tokio::sync::broadcast;
 
         let (notify_tx, mut rx) = broadcast::channel(8);

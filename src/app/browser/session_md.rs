@@ -1,13 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as AsyncRwLock;
 
-use super::cdp::CdpSession;
-use super::snap;
-use super::tools;
+use super::{cdp::CdpSession, snap, tools};
 
 #[derive(Clone, Debug, Default)]
 pub struct SessionMdSnapshot {
@@ -93,8 +93,8 @@ impl SessionMarkdown {
         if !path.is_file() {
             return Ok(None);
         }
-        let text =
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?;
         if text.trim().is_empty() {
             return Ok(None);
         }
@@ -120,11 +120,15 @@ impl SessionMarkdown {
         }
         std::fs::write(&html_path, &html)
             .with_context(|| format!("write {}", html_path.display()))?;
-        std::fs::write(&md_path, &md).with_context(|| format!("write {}", md_path.display()))?;
+        std::fs::write(&md_path, &md)
+            .with_context(|| format!("write {}", md_path.display()))?;
         Ok(())
     }
 
-    pub async fn capture_from_sandbox(&self, session: &CdpSession) -> Result<SessionMdSnapshot> {
+    pub async fn capture_from_sandbox(
+        &self,
+        session: &CdpSession,
+    ) -> Result<SessionMdSnapshot> {
         self.bind_to_page(session).await?;
         let markdown = super::sandbox::markdown_text(session, 500_000).await?;
         let page_url = session.current_url().await.unwrap_or_default();
@@ -145,7 +149,8 @@ impl SessionMarkdown {
         preferred_url: Option<&str>,
     ) -> Result<SessionMdSnapshot> {
         self.bind_to_page(session).await?;
-        let markdown = tools::markdown_text(session, preferred_url, 500_000).await?;
+        let markdown =
+            tools::markdown_text(session, preferred_url, 500_000).await?;
         let page_url = session.current_url().await.unwrap_or_default();
         let title = session.current_title().await.unwrap_or_default();
         let snap = SessionMdSnapshot {
@@ -163,8 +168,8 @@ impl SessionMarkdown {
         if !path.is_file() {
             return Ok(None);
         }
-        let markdown =
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let markdown = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?;
         if markdown.trim().is_empty() {
             return Ok(None);
         }
@@ -187,7 +192,8 @@ impl SessionMarkdown {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, markdown).with_context(|| format!("write {}", path.display()))?;
+        std::fs::write(&path, markdown)
+            .with_context(|| format!("write {}", path.display()))?;
         Ok(path)
     }
 
@@ -260,7 +266,8 @@ pub fn session_key(url: &str) -> String {
     if normalized.is_empty() {
         return "_unbound".to_string();
     }
-    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, normalized.as_bytes()).to_string()
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, normalized.as_bytes())
+        .to_string()
 }
 
 pub fn session_dir(workspace: &Path, key: &str) -> PathBuf {
@@ -282,8 +289,9 @@ fn normalize_page_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
 
     fn temp_workspace(name: &str) -> PathBuf {
         let id = SystemTime::now()

@@ -1,20 +1,27 @@
-use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Result};
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
+use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 
-use crate::core::export::html::favicon::default_icon_label_from_text;
-use crate::core::export::html::resolve_icon_label;
-use crate::core::export::html::section_label;
-use crate::core::export::{self, HtmlExportOptions, OutputFormat};
-use crate::core::ext::math::find_katex_fonts;
-use crate::core::md::{render_markdown, FootnoteDisplay};
-use crate::core::model::{Document, Section};
-use crate::core::util::exclude::ExcludeMatcher;
-use crate::core::{ConvertOptions, RenderOptions};
+use crate::core::{
+    export::{
+        self,
+        html::{
+            favicon::default_icon_label_from_text, resolve_icon_label,
+            section_label,
+        },
+        HtmlExportOptions, OutputFormat,
+    },
+    ext::math::find_katex_fonts,
+    md::{render_markdown, FootnoteDisplay},
+    model::{Document, Section},
+    util::exclude::ExcludeMatcher,
+    ConvertOptions, RenderOptions,
+};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedInputs {
@@ -31,7 +38,9 @@ pub struct RenderResources {
 fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown"))
+        .map(|ext| {
+            matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown")
+        })
         .unwrap_or(false)
 }
 
@@ -39,7 +48,11 @@ fn canonical_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn push_unique_file(files: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
+fn push_unique_file(
+    files: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    path: PathBuf,
+) {
     if seen.insert(canonical_key(&path)) {
         files.push(path);
     }
@@ -93,7 +106,9 @@ fn nearest_scan_root(path: &Path, directories: &[PathBuf]) -> PathBuf {
 
 pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     if opts.inputs.is_empty() && opts.directories.is_empty() {
-        bail!("Missing required input. Pass --input <FILE|DIR> or --dir <DIR>.");
+        bail!(
+            "Missing required input. Pass --input <FILE|DIR> or --dir <DIR>."
+        );
     }
 
     let mut files = Vec::new();
@@ -205,7 +220,12 @@ fn build_document(
     let rendered: Vec<(String, Section)> = input_files
         .par_iter()
         .map(|input_path| {
-            let section = render_file_section(opts, resources, input_path, footnote_display)?;
+            let section = render_file_section(
+                opts,
+                resources,
+                input_path,
+                footnote_display,
+            )?;
             Ok((section_label(input_path), section))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -254,7 +274,13 @@ pub fn export_to_file(
 ) -> Result<export::ExportOutput> {
     let resolved = resolve_inputs(opts)?;
     let resources = prepare_resources(opts)?;
-    let result = export_with_resources(opts, html_opts, &resources, &resolved.files, Some(output))?;
+    let result = export_with_resources(
+        opts,
+        html_opts,
+        &resources,
+        &resolved.files,
+        Some(output),
+    )?;
     fs::write(output, result.html.as_bytes())
         .with_context(|| format!("Cannot write {}", output.display()))?;
     Ok(result)
@@ -278,7 +304,10 @@ pub fn export_with_resources(
 }
 
 /// Render an in-memory Markdown string with the same pipeline as file conversion.
-pub fn export_source(source: &str, opts: &RenderOptions) -> Result<export::ExportOutput> {
+pub fn export_source(
+    source: &str,
+    opts: &RenderOptions,
+) -> Result<export::ExportOutput> {
     let convert_opts = ConvertOptions {
         title: opts.title.clone(),
         icon: opts.icon.clone(),

@@ -4,9 +4,7 @@ min_version = "2024.11.1"
 node = "22"
 pnpm = "10"
 rust = "stable"
-zig = "0.14.0"
 "aqua:wasm-bindgen/wasm-pack" = "0.15.0"
-"cargo:cargo-zigbuild" = "0.20.1"
 
 [vars]
 extension_dir = "extension/chrome"
@@ -14,10 +12,18 @@ dist_dir = "dist"
 # Minimum glibc for Linux binaries (CentOS 7 / older enterprise distros).
 linux_glibc = "2.17"
 
+[env]
+# Isolated cargo home / target so release binaries do not embed $HOME paths.
+CARGO_HOME_DIR = "/tmp/pagemd-cargo"
+CARGO_TARGET_DIR = "/tmp/pagemd-target"
+DIST_DIR = "{{vars.dist_dir}}"
+PAGEMD_LINUX_GLIBC = "{{vars.linux_glibc}}"
+
 [tasks.format]
-description = "Format Rust code with nightly rustfmt"
+description = "Format the whole project (nightly rustfmt: rustfmt.toml unstable options)"
+alias = ["fmt"]
 tools = { rust = "nightly" }
-run = "cargo fmt"
+run = "cargo fmt --all"
 
 [tasks."extension:install"]
 description = "Install Chrome extension Node dependencies"
@@ -37,10 +43,20 @@ echo "Extension built -> {{vars.extension_dir}}/dist (Chrome: Load unpacked)"
 description = "Remove Chrome extension build output"
 run = "rm -rf {{vars.extension_dir}}/dist"
 
-[tasks.dist]
-description = "Cross-compile release binaries for Linux (glibc 2.17), Windows, and macOS via cargo-zigbuild"
-run = "bash scripts/dist.sh"
+[tasks.release]
+description = "Release-zip pagemd for macOS, Linux (glibc 2.17), and Windows"
+tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.20.1" }
+run = "bash scripts/release.sh"
 
-[tasks."dist:clean"]
-description = "Remove release distribution artifacts"
-run = "rm -rf {{vars.dist_dir}}"
+[tasks."release:macos:arm64"]
+description = "Release-zip macOS arm64 only"
+run = "bash scripts/release.sh macos:arm64"
+
+[tasks."release:linux:x64"]
+description = "Release-zip Linux x64 only (glibc 2.17 via zigbuild)"
+tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.20.1" }
+run = "bash scripts/release.sh linux:x64"
+
+[tasks."release:clean"]
+description = "Remove release zip artifacts and the isolated cargo target cache"
+run = "rm -rf {{vars.dist_dir}} /tmp/pagemd-target"

@@ -1,18 +1,25 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use crate::app::browser;
-use crate::app::convert::run_convert;
-use crate::app::preview;
-use crate::app::preview::error::{build_preview_error_html, preview_html_opts};
-use crate::core::{self, prepare_resources, resolve_inputs, ConvertOptions};
+use crate::{
+    app::{
+        browser,
+        convert::run_convert,
+        preview,
+        preview::error::{build_preview_error_html, preview_html_opts},
+    },
+    core::{self, prepare_resources, resolve_inputs, ConvertOptions},
+};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "pagemd",
+    version = crate::PAGEMD_VERSION,
     about = "Convert Markdown to a self-contained single HTML file",
     long_about = core::PAGEMD_LONG_ABOUT,
 )]
@@ -162,7 +169,8 @@ pub fn parse_icon_arg(s: &str) -> Result<String, String> {
 }
 
 fn run_view(args: &ViewArgs) -> Result<()> {
-    let export_path = args.export.clone().or_else(|| args.convert.output.clone());
+    let export_path =
+        args.export.clone().or_else(|| args.convert.output.clone());
 
     let mut convert_opts = ConvertOptions::from(&args.convert);
     convert_opts.client_mermaid = true;
@@ -175,14 +183,17 @@ fn run_view(args: &ViewArgs) -> Result<()> {
     let resources = prepare_resources(&convert_opts)?;
     let title_hint = resolved.files.first().cloned();
     let html_opts = preview_html_opts();
-    let watch_plan = preview::collect_watch_plan(&resolved.files, &resolved.directories);
+    let watch_plan =
+        preview::collect_watch_plan(&resolved.files, &resolved.directories);
 
-    let library = std::sync::Arc::new(std::sync::Mutex::new(preview::PreviewLibrary::new(
-        convert_opts.clone(),
-        html_opts,
-        resources,
-        title_hint.clone(),
-    )));
+    let library = std::sync::Arc::new(std::sync::Mutex::new(
+        preview::PreviewLibrary::new(
+            convert_opts.clone(),
+            html_opts,
+            resources,
+            title_hint.clone(),
+        ),
+    ));
 
     let file_export = export_path.clone();
     preview::run(
@@ -208,26 +219,33 @@ fn run_view(args: &ViewArgs) -> Result<()> {
             match result {
                 Ok(html) => {
                     if let Some(path) = file_export.as_ref() {
-                        match preview::lock_library(&library).and_then(|mut lib| {
-                            lib.set_client_mermaid(false);
-                            lib.invalidate(&[]);
-                            let out = lib.full_html();
-                            lib.set_client_mermaid(true);
-                            lib.invalidate(&[]);
-                            out
-                        }) {
+                        match preview::lock_library(&library).and_then(
+                            |mut lib| {
+                                lib.set_client_mermaid(false);
+                                lib.invalidate(&[]);
+                                let out = lib.full_html();
+                                lib.set_client_mermaid(true);
+                                lib.invalidate(&[]);
+                                out
+                            },
+                        ) {
                             Ok(native) => {
-                                if let Err(err) = write_view_export(path, &native) {
+                                if let Err(err) =
+                                    write_view_export(path, &native)
+                                {
                                     eprintln!("Export error: {err:#}");
                                 }
                             }
-                            Err(err) => eprintln!("Export render error: {err:#}"),
+                            Err(err) => {
+                                eprintln!("Export render error: {err:#}")
+                            }
                         }
                     }
                     let watch_plan = match resolve_inputs(&convert_opts) {
-                        Ok(resolved) => {
-                            preview::collect_watch_plan(&resolved.files, &resolved.directories)
-                        }
+                        Ok(resolved) => preview::collect_watch_plan(
+                            &resolved.files,
+                            &resolved.directories,
+                        ),
                         Err(err) => {
                             eprintln!("Watch path refresh warning: {err:#}");
                             preview::WatchPlan::default()
@@ -249,8 +267,9 @@ fn run_view(args: &ViewArgs) -> Result<()> {
 fn write_view_export(path: &Path, html: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Cannot create {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Cannot create {}", parent.display())
+            })?;
         }
     }
     let html = preview::ensure_export_html(html.to_string());

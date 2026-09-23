@@ -26,13 +26,17 @@ impl FootnoteRegistry {
         let lines: Vec<&str> = source.lines().collect();
         let mut index = 0usize;
         while index < lines.len() {
-            let Some((label, first_line_body)) = parse_definition_start(lines[index]) else {
+            let Some((label, first_line_body)) =
+                parse_definition_start(lines[index])
+            else {
                 index += 1;
                 continue;
             };
             let mut body = first_line_body;
             index += 1;
-            while index < lines.len() && is_definition_continuation(lines[index]) {
+            while index < lines.len()
+                && is_definition_continuation(lines[index])
+            {
                 let continuation = lines[index];
                 let trimmed = continuation.trim();
                 if !body.is_empty() && !body.ends_with('\n') {
@@ -46,7 +50,9 @@ impl FootnoteRegistry {
                 .is_some_and(|existing| !existing.trim().is_empty());
             // Keep a non-empty definition; allow a later non-empty body to
             // replace an earlier empty stub (`[^n]:` alone before a table).
-            if existing_nonempty || (definitions.contains_key(&label) && body.trim().is_empty()) {
+            if existing_nonempty
+                || (definitions.contains_key(&label) && body.trim().is_empty())
+            {
                 continue;
             }
             definitions.insert(label, body);
@@ -80,7 +86,9 @@ impl FootnoteRegistry {
                 if !in_code_fence {
                     in_code_fence = true;
                     fence_len = mark_len;
-                } else if mark_len >= fence_len && is_fence_closer(line, fence_len) {
+                } else if mark_len >= fence_len
+                    && is_fence_closer(line, fence_len)
+                {
                     in_code_fence = false;
                     fence_len = 0;
                 }
@@ -104,7 +112,9 @@ impl FootnoteRegistry {
                         out.push_str(&footnote_slot_html(&label));
                     }
                     index += 1;
-                    while index < lines.len() && is_definition_continuation(lines[index]) {
+                    while index < lines.len()
+                        && is_definition_continuation(lines[index])
+                    {
                         index += 1;
                     }
                     continue;
@@ -222,7 +232,9 @@ pub fn normalize_footnote_definition_lines(markdown: &str) -> String {
             if !in_fence {
                 in_fence = true;
                 fence_len = mark_len;
-            } else if mark_len >= fence_len && is_fence_closer(line_body, fence_len) {
+            } else if mark_len >= fence_len
+                && is_fence_closer(line_body, fence_len)
+            {
                 in_fence = false;
                 fence_len = 0;
             }
@@ -257,7 +269,8 @@ fn repair_empty_footnote_definition_stubs(markdown: &str) -> String {
     if lines.is_empty() {
         return markdown.to_string();
     }
-    let mut owned: Vec<String> = lines.iter().map(|line| (*line).to_string()).collect();
+    let mut owned: Vec<String> =
+        lines.iter().map(|line| (*line).to_string()).collect();
     let mut remove = vec![false; owned.len()];
     let mut in_fence = false;
     let mut fence_len = 0usize;
@@ -267,7 +280,9 @@ fn repair_empty_footnote_definition_stubs(markdown: &str) -> String {
             if !in_fence {
                 in_fence = true;
                 fence_len = mark_len;
-            } else if mark_len >= fence_len && is_fence_closer(&owned[i], fence_len) {
+            } else if mark_len >= fence_len
+                && is_fence_closer(&owned[i], fence_len)
+            {
                 in_fence = false;
                 fence_len = 0;
             }
@@ -344,7 +359,9 @@ fn normalize_footnote_defs_in_line(line: &str) -> String {
                         look.next();
                     }
                     if look.peek().copied().is_some_and(is_footnote_def_colon) {
-                        is_def = !label.is_empty() && !label.contains('[') && !label.contains(']');
+                        is_def = !label.is_empty()
+                            && !label.contains('[')
+                            && !label.contains(']');
                     }
                     break;
                 }
@@ -417,12 +434,12 @@ pub enum FootnoteDisplay {
 
 /// Sort extracted footnotes by numeric label when possible, else lexicographically.
 pub fn sort_extracted_footnotes(footnotes: &mut [ExtractedFootnote]) {
-    footnotes.sort_by(
-        |a, b| match (a.label.parse::<u32>(), b.label.parse::<u32>()) {
+    footnotes.sort_by(|a, b| {
+        match (a.label.parse::<u32>(), b.label.parse::<u32>()) {
             (Ok(x), Ok(y)) => x.cmp(&y),
             _ => a.label.cmp(&b.label),
-        },
-    );
+        }
+    });
 }
 
 /// Flatten a footnote definition to a single-line plain tooltip string.
@@ -462,7 +479,11 @@ pub fn footnote_slot_html(label: &str) -> String {
     format!("<div {FN_SLOT_MARKER}{}\"></div>\n", html_escape(label))
 }
 
-pub fn footnote_def_html(label: &str, body_html: &str, display: FootnoteDisplay) -> String {
+pub fn footnote_def_html(
+    label: &str,
+    body_html: &str,
+    display: FootnoteDisplay,
+) -> String {
     let escaped = html_escape(label);
     let class = match display {
         FootnoteDisplay::EndList => "footnote",
@@ -504,7 +525,10 @@ pub fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
     let mut plain_start = 0usize;
     let mut index = 0usize;
     while index < bytes.len() {
-        if bytes[index] == b'[' && index + 1 < bytes.len() && bytes[index + 1] == b'^' {
+        if bytes[index] == b'['
+            && index + 1 < bytes.len()
+            && bytes[index + 1] == b'^'
+        {
             let label_start = index + 2;
             let mut label_end = label_start;
             while label_end < bytes.len() && bytes[label_end] != b']' {
@@ -512,12 +536,15 @@ pub fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
             }
             if label_end < bytes.len()
                 && label_end > label_start
-                && !(label_end + 1 < bytes.len() && bytes[label_end + 1] == b':')
+                && !(label_end + 1 < bytes.len()
+                    && bytes[label_end + 1] == b':')
             {
                 let label = &text[label_start..label_end];
                 if !label.contains(['[', ']', ':']) {
                     if plain_start < index {
-                        segments.push(FootnoteTextSegment::Plain(&text[plain_start..index]));
+                        segments.push(FootnoteTextSegment::Plain(
+                            &text[plain_start..index],
+                        ));
                     }
                     segments.push(FootnoteTextSegment::Reference(label));
                     index = label_end + 1;
@@ -537,8 +564,8 @@ pub fn split_footnote_text(text: &str) -> Vec<FootnoteTextSegment<'_>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        footnote_slot_labels, plain_footnote_title, split_footnote_text, FootnoteDisplay,
-        FootnoteRegistry, FootnoteTextSegment,
+        footnote_slot_labels, plain_footnote_title, split_footnote_text,
+        FootnoteDisplay, FootnoteRegistry, FootnoteTextSegment,
     };
 
     #[test]
@@ -615,7 +642,8 @@ mod tests {
 
     #[test]
     fn registry_collects_multiline_and_prepare_replaces_with_slot() {
-        let source = "Ref[^a].\n\n[^a]: First line.\n    Second line.\n\nParagraph.\n";
+        let source =
+            "Ref[^a].\n\n[^a]: First line.\n    Second line.\n\nParagraph.\n";
         let registry = FootnoteRegistry::from_markdown(source);
         assert_eq!(registry.definition("a"), Some("First line.\nSecond line."));
 
@@ -645,7 +673,8 @@ mod tests {
 
     #[test]
     fn split_text_skips_definition_syntax() {
-        let segments = split_footnote_text("See[^note] and literal [^not-a-def]: text.");
+        let segments =
+            split_footnote_text("See[^note] and literal [^not-a-def]: text.");
         assert!(segments.iter().any(|segment| {
             matches!(segment, FootnoteTextSegment::Reference(label) if *label == "note")
         }));
@@ -656,15 +685,15 @@ mod tests {
 
     #[test]
     fn slot_label_is_extracted_from_placeholder_html() {
-        let labels = footnote_slot_labels("<div data-pagemd-fn-slot=\"demo\"></div>");
+        let labels =
+            footnote_slot_labels("<div data-pagemd-fn-slot=\"demo\"></div>");
         assert_eq!(labels, vec!["demo".to_string()]);
     }
 
     fn render_md(source: &str) -> String {
         use std::path::Path;
 
-        use syntect::highlighting::ThemeSet;
-        use syntect::parsing::SyntaxSet;
+        use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 
         let ss = SyntaxSet::load_defaults_newlines();
         let ts = ThemeSet::load_defaults();
@@ -696,7 +725,8 @@ mod tests {
 
         let source = "Text[^a].\n\n[^a]: Footnote.\n";
         let registry = FootnoteRegistry::from_markdown(source);
-        let mut parse_source = crate::core::md::preprocess::preprocess_markdown_extensions(source);
+        let mut parse_source =
+            crate::core::md::preprocess::preprocess_markdown_extensions(source);
         registry.prepare_parse_unit(&mut parse_source);
         let mut opts = Options::empty();
         opts.insert(Options::ENABLE_FOOTNOTES);
@@ -746,7 +776,8 @@ mod tests {
 
     #[test]
     fn callout_renders_trailing_footnote_after_blockquote() {
-        let source = "> [!NOTE] Title\n> Text[^a].\n\n[^a]: Footnote **bold**.\n";
+        let source =
+            "> [!NOTE] Title\n> Text[^a].\n\n[^a]: Footnote **bold**.\n";
         let html = render_md(source);
         assert!(html.contains("class=\"footnote-ref\""));
         assert!(html.contains("id=\"fn-a\""));

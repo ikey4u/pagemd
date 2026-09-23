@@ -20,7 +20,8 @@ pub fn render_stream_json(reader: impl BufRead) -> Result<String> {
 
         match event.get("type").and_then(|v| v.as_str()) {
             Some("system") => {
-                if event.get("subtype").and_then(|v| v.as_str()) == Some("init") {
+                if event.get("subtype").and_then(|v| v.as_str()) == Some("init")
+                {
                     let model = event
                         .get("model")
                         .and_then(|v| v.as_str())
@@ -60,7 +61,8 @@ pub fn render_stream_json(reader: impl BufRead) -> Result<String> {
                     println!();
                     assistant_open = false;
                 }
-                if let Some(text) = event.get("result").and_then(|v| v.as_str()) {
+                if let Some(text) = event.get("result").and_then(|v| v.as_str())
+                {
                     final_text = text.to_string();
                 }
                 if !streamed {
@@ -69,13 +71,16 @@ pub fn render_stream_json(reader: impl BufRead) -> Result<String> {
                         println!("{final_text}");
                     }
                 }
-                if let Some(ms) = event.get("duration_ms").and_then(|v| v.as_u64()) {
+                if let Some(ms) =
+                    event.get("duration_ms").and_then(|v| v.as_u64())
+                {
                     eprintln!("[agent] done ({ms} ms)");
                 } else {
                     eprintln!("[agent] done");
                 }
                 io::stderr().flush()?;
-                if event.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
+                if event.get("is_error").and_then(|v| v.as_bool()) == Some(true)
+                {
                     let msg = if final_text.trim().is_empty() {
                         "unknown"
                     } else {
@@ -177,7 +182,9 @@ fn tool_call_variant<'a>(event: &'a Value) -> Option<(&'a str, &'a Value)> {
 
 fn tool_call_label(kind: &str, variant: &Value) -> String {
     match kind {
-        "mcpToolCall" => mcp_tool_label(variant).unwrap_or_else(|| "mcp".to_string()),
+        "mcpToolCall" => {
+            mcp_tool_label(variant).unwrap_or_else(|| "mcp".to_string())
+        }
         "shellToolCall" => "shell".to_string(),
         "readToolCall" => "read".to_string(),
         "writeToolCall" => "write".to_string(),
@@ -222,7 +229,8 @@ fn tool_call_started_detail(kind: &str, variant: &Value) -> Option<String> {
             .pointer("/args/command")
             .and_then(|v| v.as_str())
             .map(|cmd| truncate_preview(cmd, 96)),
-        "readToolCall" | "writeToolCall" | "editToolCall" | "deleteToolCall" => variant
+        "readToolCall" | "writeToolCall" | "editToolCall"
+        | "deleteToolCall" => variant
             .pointer("/args/path")
             .and_then(|v| v.as_str())
             .map(str::to_string),
@@ -276,7 +284,11 @@ fn tool_call_completed_detail(kind: &str, variant: &Value) -> String {
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0)
                 )
-            } else if variant.get("result").and_then(|v| v.get("error")).is_some() {
+            } else if variant
+                .get("result")
+                .and_then(|v| v.get("error"))
+                .is_some()
+            {
                 "failed".to_string()
             } else {
                 String::new()
@@ -501,8 +513,9 @@ fn verbose_tools() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Cursor;
+
+    use super::*;
 
     #[test]
     fn streams_assistant_deltas_and_finalizes() {

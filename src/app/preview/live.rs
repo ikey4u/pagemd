@@ -4,7 +4,9 @@ const PREVIEW_SCRIPT: &str = include_str!("../../../assets/preview.js");
 
 /// Ensure exported HTML includes workspace interactivity when the layout uses it.
 pub fn ensure_export_html(mut html: String) -> String {
-    if !html.contains("data-doc-workspace") || html.contains("data-pagemd-workspace") {
+    if !html.contains("data-doc-workspace")
+        || html.contains("data-pagemd-workspace")
+    {
         return html;
     }
     let tag = workspace_script_tag();

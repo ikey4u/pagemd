@@ -1,8 +1,10 @@
 use anyhow::{bail, Result};
 use serde_json::Value;
 
-use super::cdp::CdpSession;
-use super::snap::{self, format_snap};
+use super::{
+    cdp::CdpSession,
+    snap::{self, format_snap},
+};
 
 const DEFAULT_CLEAN_SELECTORS: &[&str] = &[
     "header",
@@ -17,7 +19,10 @@ const DEFAULT_CLEAN_SELECTORS: &[&str] = &[
     "[id*=\"comment\"]",
 ];
 
-pub async fn snap_text(session: &CdpSession, preferred_url: Option<&str>) -> Result<String> {
+pub async fn snap_text(
+    session: &CdpSession,
+    preferred_url: Option<&str>,
+) -> Result<String> {
     let value = snap::capture_page(session, preferred_url).await?;
     Ok(format_snap(&value))
 }
@@ -52,7 +57,10 @@ pub async fn markdown_text(
     Ok(truncate(md, max_chars))
 }
 
-pub async fn run_clean_dom(session: &CdpSession, extra_selectors: &[String]) -> Result<Value> {
+pub async fn run_clean_dom(
+    session: &CdpSession,
+    extra_selectors: &[String],
+) -> Result<Value> {
     let mut selectors: Vec<&str> = DEFAULT_CLEAN_SELECTORS.to_vec();
     for s in extra_selectors {
         if !s.trim().is_empty() {
@@ -113,7 +121,8 @@ pub fn format_eval_result(value: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => s.clone(),
-        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+        other => serde_json::to_string_pretty(other)
+            .unwrap_or_else(|_| other.to_string()),
     }
 }
 

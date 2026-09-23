@@ -13,20 +13,20 @@ pub mod model;
 pub mod pipeline;
 pub mod util;
 
-pub use authoring::{diagram_help, markdown_help, DIAGRAM_HELP, MARKDOWN_HELP};
-pub use export::html::{build_html, workspace_script_tag};
-pub use export::html::{
-    FootnoteDisplay, HtmlExportOptions, ScriptEmbed, ThemeMode, WorkspaceChrome,
-};
-pub use export::ExportOutput;
-pub use export::OutputFormat;
-pub use md::{normalize_footnote_definition_lines, ExtractedFootnote};
-pub use pipeline::{render_file_section, RenderResources, ResolvedInputs};
-pub use util::html_escape;
-
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+pub use authoring::{diagram_help, markdown_help, DIAGRAM_HELP, MARKDOWN_HELP};
+pub use export::{
+    html::{
+        build_html, workspace_script_tag, FootnoteDisplay, HtmlExportOptions,
+        ScriptEmbed, ThemeMode, WorkspaceChrome,
+    },
+    ExportOutput, OutputFormat,
+};
+pub use md::{normalize_footnote_definition_lines, ExtractedFootnote};
+pub use pipeline::{render_file_section, RenderResources, ResolvedInputs};
+pub use util::html_escape;
 
 /// Options for converting Markdown files or directories into HTML.
 #[derive(Debug, Clone)]
@@ -123,7 +123,13 @@ pub fn export_with_resources(
     title_hint: Option<&Path>,
 ) -> Result<ExportOutput> {
     let resolved = pipeline::resolve_inputs(opts)?;
-    pipeline::export_with_resources(opts, html_opts, resources, &resolved.files, title_hint)
+    pipeline::export_with_resources(
+        opts,
+        html_opts,
+        resources,
+        &resolved.files,
+        title_hint,
+    )
 }
 
 /// Resolve `--input` / `--dir` / `--exclude` into a deduplicated file list.

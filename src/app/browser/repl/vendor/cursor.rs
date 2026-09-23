@@ -1,9 +1,13 @@
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::{
+    io::{BufRead, BufReader},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+};
 
 use anyhow::{Context, Result};
 
@@ -50,7 +54,9 @@ fn wrap_agent_prompt(user_line: &str) -> String {
 pub fn agent_executable() -> PathBuf {
     std::env::var("PAGEMD_CURSOR_AGENT")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| which::which("agent").unwrap_or_else(|_| PathBuf::from("agent")))
+        .unwrap_or_else(|_| {
+            which::which("agent").unwrap_or_else(|_| PathBuf::from("agent"))
+        })
 }
 
 pub fn detect_cursor() -> bool {
@@ -66,7 +72,8 @@ pub fn ensure_browser_workspace() -> Result<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("pagemd")
         .join("browser-workspace");
-    std::fs::create_dir_all(&root).with_context(|| format!("create {}", root.display()))?;
+    std::fs::create_dir_all(&root)
+        .with_context(|| format!("create {}", root.display()))?;
     Ok(root)
 }
 
@@ -90,11 +97,15 @@ fn bootstrap_workspace_trust(agent: &Path, workspace: &Path) -> Result<()> {
         .arg(workspace)
         .arg("ok")
         .output()
-        .with_context(|| format!("bootstrap workspace trust ({})", agent.display()))?;
+        .with_context(|| {
+            format!("bootstrap workspace trust ({})", agent.display())
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("trust browser workspace failed (try `agent login`)\n{stderr}");
+        anyhow::bail!(
+            "trust browser workspace failed (try `agent login`)\n{stderr}"
+        );
     }
 
     if let Some(parent) = marker.parent() {
@@ -134,9 +145,9 @@ impl CursorAgentSession {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("spawn agent ({})", self.agent.display()))?;
+        let mut child = cmd.spawn().with_context(|| {
+            format!("spawn agent ({})", self.agent.display())
+        })?;
 
         if let Some(stderr) = child.stderr.take() {
             thread::spawn(move || {
@@ -149,7 +160,8 @@ impl CursorAgentSession {
             });
         }
 
-        let stdout = child.stdout.take().context("agent stdout pipe missing")?;
+        let stdout =
+            child.stdout.take().context("agent stdout pipe missing")?;
         {
             let mut guard = self
                 .running
@@ -204,7 +216,8 @@ impl CursorRelay {
     pub async fn send_user_line(&self, line: &str) -> Result<()> {
         let session = Arc::clone(&self.0);
         let line = line.to_owned();
-        let mut join = tokio::task::spawn_blocking(move || session.run_turn(&line));
+        let mut join =
+            tokio::task::spawn_blocking(move || session.run_turn(&line));
 
         tokio::select! {
             res = &mut join => {

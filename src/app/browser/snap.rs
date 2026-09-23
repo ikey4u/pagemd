@@ -3,7 +3,10 @@ use serde_json::Value;
 
 use super::cdp::CdpSession;
 
-pub async fn capture_page(session: &CdpSession, preferred_url: Option<&str>) -> Result<Value> {
+pub async fn capture_page(
+    session: &CdpSession,
+    preferred_url: Option<&str>,
+) -> Result<Value> {
     session.attach_to_best_tab(preferred_url).await?;
     session
         .evaluate(
@@ -53,7 +56,10 @@ pub fn format_snap(value: &Value) -> String {
     out
 }
 
-pub async fn capture_html(session: &CdpSession, preferred_url: Option<&str>) -> Result<String> {
+pub async fn capture_html(
+    session: &CdpSession,
+    preferred_url: Option<&str>,
+) -> Result<String> {
     session.attach_to_best_tab(preferred_url).await?;
     let value = session
         .evaluate(
@@ -85,7 +91,11 @@ pub async fn capture_body_html(
     Ok(html)
 }
 
-async fn ensure_non_empty_page(session: &CdpSession, html: &str, label: &str) -> Result<()> {
+async fn ensure_non_empty_page(
+    session: &CdpSession,
+    html: &str,
+    label: &str,
+) -> Result<()> {
     if !html.trim().is_empty() {
         return Ok(());
     }
@@ -115,7 +125,9 @@ pub fn html_to_markdown(html: &str) -> Result<String> {
 /// Strip BOM / zero-width chars common in CMS HTML (e.g. Tencent Cloud docs).
 fn cleanup_markdown(md: &str) -> String {
     md.chars()
-        .filter(|c| !matches!(c, '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}'))
+        .filter(|c| {
+            !matches!(c, '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}')
+        })
         .collect::<String>()
         .trim()
         .to_string()

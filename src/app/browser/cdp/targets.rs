@@ -1,7 +1,8 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::Value;
-use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct PageTarget {
@@ -27,7 +28,9 @@ pub async fn list_page_targets(port: u16) -> Result<Vec<PageTarget>> {
         if target.get("type").and_then(|v| v.as_str()) != Some("page") {
             continue;
         }
-        let Some(ws_url) = target.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) else {
+        let Some(ws_url) =
+            target.get("webSocketDebuggerUrl").and_then(|v| v.as_str())
+        else {
             continue;
         };
         pages.push(PageTarget {
@@ -76,7 +79,9 @@ pub fn score_target(target: &PageTarget, preferred: Option<&str>) -> i32 {
         score += (url.len() as i32).min(100);
     } else if url == "about:blank" {
         score -= 500;
-    } else if url.starts_with("chrome://") || url.starts_with("chrome-untrusted://") {
+    } else if url.starts_with("chrome://")
+        || url.starts_with("chrome-untrusted://")
+    {
         score -= 2_000;
     } else if url.starts_with("devtools://") {
         score -= 5_000;
@@ -154,7 +159,11 @@ mod tests {
                 ws_url: "ws://b".into(),
             },
         ];
-        let best = pick_best_page_target(&targets, Some("https://b.test/page#section")).unwrap();
+        let best = pick_best_page_target(
+            &targets,
+            Some("https://b.test/page#section"),
+        )
+        .unwrap();
         assert_eq!(best.url, "https://b.test/page");
     }
 }

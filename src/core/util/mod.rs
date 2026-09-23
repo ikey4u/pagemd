@@ -34,9 +34,13 @@ pub fn script_escape(script: &str) -> String {
 }
 pub fn regex(pattern: &'static str) -> &'static Regex {
     static CACHE: OnceLock<
-        std::sync::Mutex<std::collections::HashMap<&'static str, &'static Regex>>,
+        std::sync::Mutex<
+            std::collections::HashMap<&'static str, &'static Regex>,
+        >,
     > = OnceLock::new();
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let cache = CACHE.get_or_init(|| {
+        std::sync::Mutex::new(std::collections::HashMap::new())
+    });
     if let Some(value) = cache
         .lock()
         .expect("regex cache poisoned")
@@ -45,7 +49,8 @@ pub fn regex(pattern: &'static str) -> &'static Regex {
     {
         return value;
     }
-    let compiled = Box::leak(Box::new(Regex::new(pattern).expect("invalid regex")));
+    let compiled =
+        Box::leak(Box::new(Regex::new(pattern).expect("invalid regex")));
     cache
         .lock()
         .expect("regex cache poisoned")

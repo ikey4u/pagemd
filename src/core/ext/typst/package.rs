@@ -3,8 +3,10 @@
 //! Fetch helpers are only called from `build.rs` (via `#[path]`); the main crate uses `parse_manifest` only.
 #![allow(dead_code)]
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
@@ -51,15 +53,19 @@ pub fn is_installed(dir: &Path) -> bool {
     dir.join("typst.toml").is_file()
 }
 
-pub fn load_manifest_from_workspace(workspace: &Path) -> Result<Vec<PackageSpec>> {
+pub fn load_manifest_from_workspace(
+    workspace: &Path,
+) -> Result<Vec<PackageSpec>> {
     let path = packages_root(workspace).join("manifest.toml");
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("read Typst package manifest {}", path.display()))?;
+    let text = fs::read_to_string(&path).with_context(|| {
+        format!("read Typst package manifest {}", path.display())
+    })?;
     parse_manifest(&text)
 }
 
 pub fn parse_manifest(text: &str) -> Result<Vec<PackageSpec>> {
-    let manifest: Manifest = toml::from_str(text).context("parse typst-packages manifest.toml")?;
+    let manifest: Manifest =
+        toml::from_str(text).context("parse typst-packages manifest.toml")?;
     Ok(manifest
         .package
         .into_iter()
@@ -93,9 +99,11 @@ fn fetch_package(spec: &PackageSpec, dest: &Path) -> Result<()> {
         .with_context(|| format!("read body from {url}"))?;
 
     if dest.exists() {
-        fs::remove_dir_all(dest).with_context(|| format!("remove existing {}", dest.display()))?;
+        fs::remove_dir_all(dest)
+            .with_context(|| format!("remove existing {}", dest.display()))?;
     }
-    fs::create_dir_all(dest).with_context(|| format!("create {}", dest.display()))?;
+    fs::create_dir_all(dest)
+        .with_context(|| format!("create {}", dest.display()))?;
 
     let decoder = GzDecoder::new(bytes.as_ref());
     let mut archive = Archive::new(decoder);

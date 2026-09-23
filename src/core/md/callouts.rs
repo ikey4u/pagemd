@@ -1,13 +1,16 @@
 use std::path::Path;
 
 use anyhow::Result;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
+use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
 
-use crate::core::md::footnotes::{ExtractedFootnote, FootnoteDisplay, FootnoteRegistry};
-use crate::core::md::preprocess::{callout_label, FoldState};
-use crate::core::md::render::render_markdown_with_depth;
-use crate::core::util::html_escape;
+use crate::core::{
+    md::{
+        footnotes::{ExtractedFootnote, FootnoteDisplay, FootnoteRegistry},
+        preprocess::{callout_label, FoldState},
+        render::render_markdown_with_depth,
+    },
+    util::html_escape,
+};
 
 pub struct CalloutRenderContext<'a> {
     pub base_dir: &'a Path,
@@ -22,7 +25,10 @@ pub struct CalloutRenderContext<'a> {
     pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
-fn render_nested_markdown(content: &str, ctx: &mut CalloutRenderContext<'_>) -> Result<String> {
+fn render_nested_markdown(
+    content: &str,
+    ctx: &mut CalloutRenderContext<'_>,
+) -> Result<String> {
     if ctx.depth >= 8 {
         Ok(format!("<p>{}</p>\n", html_escape(content.trim())))
     } else {

@@ -1,25 +1,35 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::sync::{oneshot, Mutex};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::{oneshot, Mutex},
+    task::JoinHandle,
+};
 
-use super::cdp::CdpSession;
-use super::runtime::BrowserRuntime;
-use super::sandbox;
-use super::session_md::SessionMarkdown;
-use super::snap::format_snap;
-use super::tools::{self, format_eval_result, parse_max_chars, truncate};
-use super::undo::{DomTarget, UndoStack};
+use super::{
+    cdp::CdpSession,
+    runtime::BrowserRuntime,
+    sandbox,
+    session_md::SessionMarkdown,
+    snap::format_snap,
+    tools::{self, format_eval_result, parse_max_chars, truncate},
+    undo::{DomTarget, UndoStack},
+};
 
 const DEFAULT_MAX_CHARS: usize = 50_000;
 const CDP_LOCK_WAIT: Duration = Duration::from_secs(3);
@@ -35,7 +45,9 @@ struct BridgeState {
     preferred_url: Option<String>,
 }
 
-async fn acquire_cdp(state: &BridgeState) -> Result<tokio::sync::MutexGuard<'_, ()>> {
+async fn acquire_cdp(
+    state: &BridgeState,
+) -> Result<tokio::sync::MutexGuard<'_, ()>> {
     match tokio::time::timeout(CDP_LOCK_WAIT, state.cdp_lock.lock()).await {
         Ok(guard) => Ok(guard),
         Err(_) => Err(anyhow::anyhow!(
@@ -156,10 +168,14 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
 }
 
 fn unauthorized() -> Response {
-    (StatusCode::UNAUTHORIZED, "missing or invalid bearer token").into_response()
+    (StatusCode::UNAUTHORIZED, "missing or invalid bearer token")
+        .into_response()
 }
 
-async fn health(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn health(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -171,7 +187,10 @@ async fn health(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Re
     .into_response()
 }
 
-async fn snap(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn snap(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -304,7 +323,9 @@ async fn eval(
         Ok(value) => {
             let undo_depth = if record_undo {
                 let mut undo = state.undo.lock().await;
-                if let Err(err) = undo.commit_record(&state.session, target).await {
+                if let Err(err) =
+                    undo.commit_record(&state.session, target).await
+                {
                     return tool_error(err);
                 }
                 undo.len()
@@ -411,7 +432,10 @@ async fn goto(
     }
 }
 
-async fn reload(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn reload(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -459,7 +483,10 @@ async fn undo_step(
     }
 }
 
-async fn url(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn url(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -469,7 +496,10 @@ async fn url(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Respo
     }
 }
 
-async fn title(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn title(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -479,7 +509,10 @@ async fn title(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Res
     }
 }
 
-async fn undo_depth(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn undo_depth(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -491,7 +524,10 @@ async fn undo_depth(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -
     .into_response()
 }
 
-async fn sandbox_begin(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn sandbox_begin(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }
@@ -514,7 +550,10 @@ async fn sandbox_begin(State(state): State<Arc<BridgeState>>, headers: HeaderMap
     }
 }
 
-async fn markdown_save(State(state): State<Arc<BridgeState>>, headers: HeaderMap) -> Response {
+async fn markdown_save(
+    State(state): State<Arc<BridgeState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return unauthorized();
     }

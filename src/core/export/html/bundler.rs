@@ -1,12 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+    time::Duration,
+};
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use regex::Captures;
-use reqwest::blocking::Client;
-use reqwest::header::CONTENT_TYPE;
+use reqwest::{blocking::Client, header::CONTENT_TYPE};
 
 use crate::core::util::{html_escape, regex};
 
@@ -57,9 +58,13 @@ pub fn fetch_remote_resource(url: &str) -> Result<(Vec<u8>, String)> {
         .headers()
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(';').next().unwrap_or(value).trim().to_string())
+        .map(|value| {
+            value.split(';').next().unwrap_or(value).trim().to_string()
+        })
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| mime_from_ext(extension_from_reference(url)).to_string());
+        .unwrap_or_else(|| {
+            mime_from_ext(extension_from_reference(url)).to_string()
+        });
     let bytes = response
         .bytes()
         .with_context(|| format!("Failed to read {url}"))?;
@@ -89,11 +94,13 @@ fn resource_to_data_uri(src: &str, base_dir: &Path) -> Result<String> {
     }
 
     let path = local_resource_path(src, base_dir);
-    let data = std::fs::read(&path).with_context(|| format!("Cannot read {}", path.display()))?;
+    let data = std::fs::read(&path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
     if data.len() > MAX_INLINE_RESOURCE_BYTES {
         bail!("Resource is too large to inline: {}", path.display());
     }
-    let mime = mime_from_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
+    let mime =
+        mime_from_ext(path.extension().and_then(|e| e.to_str()).unwrap_or(""));
     Ok(data_uri_from_bytes(mime, &data))
 }
 
@@ -143,7 +150,11 @@ fn inline_resource_for_attr(src: &str, base_dir: &Path) -> String {
     }
 }
 
-fn replace_attr_resources(input: &str, pattern: &'static str, base_dir: &Path) -> String {
+fn replace_attr_resources(
+    input: &str,
+    pattern: &'static str,
+    base_dir: &Path,
+) -> String {
     regex(pattern)
         .replace_all(input, |caps: &Captures<'_>| {
             let value = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
@@ -230,7 +241,8 @@ mod tests {
 
     #[test]
     fn css_url_fragment_references_are_left_unchanged() {
-        let input = r#"<path marker-end="url(#arr)" marker-start="url(#start)"/>"#;
+        let input =
+            r#"<path marker-end="url(#arr)" marker-start="url(#start)"/>"#;
         let output = inline_css_urls(input, Path::new("."));
         assert_eq!(output, input);
     }

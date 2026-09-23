@@ -2,30 +2,40 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use pulldown_cmark::{Event, Options, Parser as MdParser, Tag, TagEnd};
-use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
-use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
-use syntect::parsing::SyntaxSet;
+use syntect::{
+    easy::HighlightLines,
+    highlighting::ThemeSet,
+    html::{styled_line_to_highlighted_html, IncludeBackground},
+    parsing::SyntaxSet,
+};
 
-use crate::core::export::html::bundler::{image_to_data_uri, inline_raw_html_resources};
-use crate::core::ext::diagram::{
-    is_diagram_html_info, mermaid_client_html, mermaid_error_html, plantuml_error_html,
-    render_diagram_html, render_mermaid, render_plantuml,
+use crate::core::{
+    export::html::bundler::{image_to_data_uri, inline_raw_html_resources},
+    ext::{
+        diagram::{
+            is_diagram_html_info, mermaid_client_html, mermaid_error_html,
+            plantuml_error_html, render_diagram_html, render_mermaid,
+            render_plantuml,
+        },
+        math::latex_to_svg,
+        typst,
+    },
+    md::{
+        callouts::{render_callout, render_details, CalloutRenderContext},
+        footnotes::{
+            footnote_def_html, footnote_ref_html, footnote_slot_labels,
+            plain_footnote_title, sort_extracted_footnotes,
+            split_footnote_text, ExtractedFootnote, FootnoteDisplay,
+            FootnoteRegistry, FootnoteTextSegment,
+        },
+        preprocess::{
+            parse_internal_block_info, preprocess_markdown_extensions,
+            InternalFence,
+        },
+    },
+    model::{HeadingOutline, RenderedSection},
+    util::{eprint_fence_render_error, html_escape, unique_heading_id},
 };
-use crate::core::ext::math::latex_to_svg;
-use crate::core::ext::typst;
-use crate::core::md::callouts::{render_callout, render_details, CalloutRenderContext};
-use crate::core::md::footnotes::{
-    footnote_def_html, footnote_ref_html, footnote_slot_labels, plain_footnote_title,
-    sort_extracted_footnotes, split_footnote_text, ExtractedFootnote, FootnoteDisplay,
-    FootnoteRegistry, FootnoteTextSegment,
-};
-use crate::core::md::preprocess::{
-    parse_internal_block_info, preprocess_markdown_extensions, InternalFence,
-};
-use crate::core::model::{HeadingOutline, RenderedSection};
-use crate::core::util::unique_heading_id;
-use crate::core::util::{eprint_fence_render_error, html_escape};
 
 struct PendingImage {
     src: String,
@@ -134,7 +144,11 @@ fn footnote_title_attr(
         .filter(|title| !title.is_empty())
 }
 
-fn push_extracted_footnote(extracted: &mut Vec<ExtractedFootnote>, label: &str, body: &str) {
+fn push_extracted_footnote(
+    extracted: &mut Vec<ExtractedFootnote>,
+    label: &str,
+    body: &str,
+) {
     if extracted.iter().any(|f| f.label == label) {
         return;
     }
@@ -194,7 +208,8 @@ fn render_footnote_slot(
         }
         // Tooltip mode: plain escaped text only — citation quotes may contain raw HTML.
         FootnoteDisplay::Tooltip => {
-            let body_html = format!("<p>{}</p>", html_escape(&plain_footnote_title(body)));
+            let body_html =
+                format!("<p>{}</p>", html_escape(&plain_footnote_title(body)));
             footnote_def_html(label, &body_html, display)
         }
         FootnoteDisplay::EndList => {
@@ -216,7 +231,9 @@ fn try_render_footnote_html(
     }
     let mut out = String::new();
     for label in labels {
-        out.push_str(&render_footnote_slot(&label, footnotes, display, extracted));
+        out.push_str(&render_footnote_slot(
+            &label, footnotes, display, extracted,
+        ));
     }
     // Host always replaces the slot(s) (including with empty), so defs leave the body.
     if display == FootnoteDisplay::Host {
@@ -229,7 +246,12 @@ fn try_render_footnote_html(
     }
 }
 
-fn append_inline_math_html(buf: &mut String, text: &str, math_font_size: f64, font_dir: &str) {
+fn append_inline_math_html(
+    buf: &mut String,
+    text: &str,
+    math_font_size: f64,
+    font_dir: &str,
+) {
     let bytes = text.as_bytes();
     let mut plain_start = 0usize;
     let mut i = 0usize;
@@ -248,14 +270,20 @@ fn append_inline_math_html(buf: &mut String, text: &str, math_font_size: f64, fo
             while j < bytes.len() {
                 if bytes[j] == b'$' && !is_escaped_byte(text, j) {
                     let prev_close_is_dollar = j > 0 && bytes[j - 1] == b'$';
-                    let next_close_is_dollar = j + 1 < bytes.len() && bytes[j + 1] == b'$';
+                    let next_close_is_dollar =
+                        j + 1 < bytes.len() && bytes[j + 1] == b'$';
                     if !prev_close_is_dollar && !next_close_is_dollar {
                         let expr = text[i + 1..j].trim();
                         if !expr.is_empty()
                             && !expr.contains('\n')
                             && !is_invalid_inline_math_candidate(expr)
                         {
-                            if let Ok(svg) = latex_to_svg(expr, false, math_font_size, font_dir) {
+                            if let Ok(svg) = latex_to_svg(
+                                expr,
+                                false,
+                                math_font_size,
+                                font_dir,
+                            ) {
                                 matched = Some((j, svg));
                                 break;
                             }
@@ -287,7 +315,10 @@ fn render_display_math_paragraph(
     font_dir: &str,
 ) -> Option<String> {
     let trimmed = plain.trim();
-    if trimmed.len() < 4 || !trimmed.starts_with("$$") || !trimmed.ends_with("$$") {
+    if trimmed.len() < 4
+        || !trimmed.starts_with("$$")
+        || !trimmed.ends_with("$$")
+    {
         return None;
     }
 
@@ -427,7 +458,9 @@ pub fn render_markdown_with_depth(
     for event in &events {
         if skip_footnote_definition_depth > 0 {
             match event {
-                Event::Start(Tag::FootnoteDefinition(_)) => skip_footnote_definition_depth += 1,
+                Event::Start(Tag::FootnoteDefinition(_)) => {
+                    skip_footnote_definition_depth += 1
+                }
                 Event::End(TagEnd::FootnoteDefinition) => {
                     skip_footnote_definition_depth -= 1;
                 }
@@ -452,17 +485,28 @@ pub fn render_markdown_with_depth(
                         "diagram" | "diagram-html" | "diagram_html"
                             if is_diagram_html_info(&lang_info) =>
                         {
-                            html.push_str(&render_diagram_html(&buf_str, base_dir));
+                            html.push_str(&render_diagram_html(
+                                &buf_str, base_dir,
+                            ));
                         }
                         "math" | "latex" => {
-                            match latex_to_svg(buf_str.trim(), true, math_font_size, font_dir) {
+                            match latex_to_svg(
+                                buf_str.trim(),
+                                true,
+                                math_font_size,
+                                font_dir,
+                            ) {
                                 Ok(svg) => {
-                                    html.push_str("<div class=\"math-display\">");
+                                    html.push_str(
+                                        "<div class=\"math-display\">",
+                                    );
                                     html.push_str(&svg);
                                     html.push_str("</div>\n");
                                 }
                                 Err(_) => {
-                                    html.push_str("<pre class=\"math-error\"><code>");
+                                    html.push_str(
+                                        "<pre class=\"math-error\"><code>",
+                                    );
                                     html.push_str(&html_escape(&buf_str));
                                     html.push_str("</code></pre>\n");
                                 }
@@ -475,30 +519,49 @@ pub fn render_markdown_with_depth(
                                 match render_mermaid(&buf_str) {
                                     Ok(rendered) => html.push_str(&rendered),
                                     Err(err) => {
-                                        eprint_fence_render_error("Mermaid", &err, &buf_str);
-                                        html.push_str(&mermaid_error_html(&buf_str));
+                                        eprint_fence_render_error(
+                                            "Mermaid", &err, &buf_str,
+                                        );
+                                        html.push_str(&mermaid_error_html(
+                                            &buf_str,
+                                        ));
                                     }
                                 }
                             }
                         }
-                        "plantuml" | "puml" | "uml" => match render_plantuml(&buf_str) {
-                            Ok(rendered) => html.push_str(&rendered),
-                            Err(err) => {
-                                eprint_fence_render_error("PlantUML", &err, &buf_str);
-                                html.push_str(&plantuml_error_html(&buf_str));
+                        "plantuml" | "puml" | "uml" => {
+                            match render_plantuml(&buf_str) {
+                                Ok(rendered) => html.push_str(&rendered),
+                                Err(err) => {
+                                    eprint_fence_render_error(
+                                        "PlantUML", &err, &buf_str,
+                                    );
+                                    html.push_str(&plantuml_error_html(
+                                        &buf_str,
+                                    ));
+                                }
                             }
-                        },
+                        }
                         "typst" => match typst::render_typst(&buf_str) {
                             Ok(rendered) => html.push_str(&rendered),
                             Err(err) => {
-                                eprint_fence_render_error("Typst", &err, &buf_str);
-                                html.push_str(&typst::typst_error_html(&buf_str));
+                                eprint_fence_render_error(
+                                    "Typst", &err, &buf_str,
+                                );
+                                html.push_str(&typst::typst_error_html(
+                                    &buf_str,
+                                ));
                             }
                         },
-                        "pagemd-callout" | "pagemd-callout+" | "pagemd-callout-"
-                        | "pagemd-details" | "pagemd-details+" | "pagemd-details-" => {
+                        "pagemd-callout" | "pagemd-callout+"
+                        | "pagemd-callout-" | "pagemd-details"
+                        | "pagemd-details+" | "pagemd-details-" => {
                             match parse_internal_block_info(&lang_info) {
-                                Some(InternalFence::Callout { kind, title, fold }) => {
+                                Some(InternalFence::Callout {
+                                    kind,
+                                    title,
+                                    fold,
+                                }) => {
                                     match render_callout(
                                         &kind,
                                         &title,
@@ -517,13 +580,20 @@ pub fn render_markdown_with_depth(
                                             extracted_footnotes,
                                         },
                                     ) {
-                                        Ok(rendered) => html.push_str(&rendered),
-                                        Err(_) => html.push_str(&highlight_code(
-                                            &buf_str, &lang_str, ss, theme,
-                                        )),
+                                        Ok(rendered) => {
+                                            html.push_str(&rendered)
+                                        }
+                                        Err(_) => {
+                                            html.push_str(&highlight_code(
+                                                &buf_str, &lang_str, ss, theme,
+                                            ))
+                                        }
                                     }
                                 }
-                                Some(InternalFence::Details { title, open }) => {
+                                Some(InternalFence::Details {
+                                    title,
+                                    open,
+                                }) => {
                                     match render_details(
                                         &title,
                                         &buf_str,
@@ -541,20 +611,29 @@ pub fn render_markdown_with_depth(
                                             extracted_footnotes,
                                         },
                                     ) {
-                                        Ok(rendered) => html.push_str(&rendered),
-                                        Err(_) => html.push_str(&highlight_code(
-                                            &buf_str, &lang_str, ss, theme,
-                                        )),
+                                        Ok(rendered) => {
+                                            html.push_str(&rendered)
+                                        }
+                                        Err(_) => {
+                                            html.push_str(&highlight_code(
+                                                &buf_str, &lang_str, ss, theme,
+                                            ))
+                                        }
                                     }
                                 }
                                 None => {
-                                    html.push_str(&highlight_code(&buf_str, &lang_str, ss, theme));
+                                    html.push_str(&highlight_code(
+                                        &buf_str, &lang_str, ss, theme,
+                                    ));
                                 }
                             }
                         }
                         _ => {
                             let highlighted = if lang_str.is_empty() {
-                                format!("<pre><code>{}</code></pre>\n", html_escape(&buf_str))
+                                format!(
+                                    "<pre><code>{}</code></pre>\n",
+                                    html_escape(&buf_str)
+                                )
                             } else {
                                 highlight_code(&buf_str, &lang_str, ss, theme)
                             };
@@ -605,12 +684,24 @@ pub fn render_markdown_with_depth(
                             heading_html.push_str(&html_escape(code));
                             heading_html.push_str("</code>");
                         }
-                        Event::Start(Tag::Emphasis) => heading_html.push_str("<em>"),
-                        Event::End(TagEnd::Emphasis) => heading_html.push_str("</em>"),
-                        Event::Start(Tag::Strong) => heading_html.push_str("<strong>"),
-                        Event::End(TagEnd::Strong) => heading_html.push_str("</strong>"),
-                        Event::Start(Tag::Strikethrough) => heading_html.push_str("<del>"),
-                        Event::End(TagEnd::Strikethrough) => heading_html.push_str("</del>"),
+                        Event::Start(Tag::Emphasis) => {
+                            heading_html.push_str("<em>")
+                        }
+                        Event::End(TagEnd::Emphasis) => {
+                            heading_html.push_str("</em>")
+                        }
+                        Event::Start(Tag::Strong) => {
+                            heading_html.push_str("<strong>")
+                        }
+                        Event::End(TagEnd::Strong) => {
+                            heading_html.push_str("</strong>")
+                        }
+                        Event::Start(Tag::Strikethrough) => {
+                            heading_html.push_str("<del>")
+                        }
+                        Event::End(TagEnd::Strikethrough) => {
+                            heading_html.push_str("</del>")
+                        }
                         Event::Start(Tag::Link {
                             dest_url,
                             title: link_title,
@@ -619,14 +710,19 @@ pub fn render_markdown_with_depth(
                             let title_attr = if link_title.is_empty() {
                                 String::new()
                             } else {
-                                format!(" title=\"{}\"", html_escape(link_title))
+                                format!(
+                                    " title=\"{}\"",
+                                    html_escape(link_title)
+                                )
                             };
                             heading_html.push_str(&format!(
                                 "<a href=\"{}\"{title_attr}>",
                                 html_escape(dest_url)
                             ));
                         }
-                        Event::End(TagEnd::Link) => heading_html.push_str("</a>"),
+                        Event::End(TagEnd::Link) => {
+                            heading_html.push_str("</a>")
+                        }
                         Event::Start(Tag::Image {
                             dest_url,
                             title: img_title,
@@ -646,23 +742,36 @@ pub fn render_markdown_with_depth(
                         }
                         Event::InlineMath(math) => {
                             heading_plain.push_str(math);
-                            if let Ok(svg) = latex_to_svg(math, false, math_font_size, font_dir) {
-                                heading_html.push_str("<span class=\"math-inline\">");
+                            if let Ok(svg) = latex_to_svg(
+                                math,
+                                false,
+                                math_font_size,
+                                font_dir,
+                            ) {
+                                heading_html
+                                    .push_str("<span class=\"math-inline\">");
                                 heading_html.push_str(&svg);
                                 heading_html.push_str("</span>");
                             }
                         }
                         Event::FootnoteReference(label) => {
                             heading_plain.push_str(label);
-                            let title = footnote_title_attr(label, footnotes, footnote_display);
-                            heading_html.push_str(&footnote_ref_html(label, title.as_deref()));
+                            let title = footnote_title_attr(
+                                label,
+                                footnotes,
+                                footnote_display,
+                            );
+                            heading_html.push_str(&footnote_ref_html(
+                                label,
+                                title.as_deref(),
+                            ));
                         }
-                        Event::Html(raw) => {
-                            heading_html.push_str(&inline_raw_html_resources(raw, base_dir))
-                        }
-                        Event::InlineHtml(raw) => {
-                            heading_html.push_str(&inline_raw_html_resources(raw, base_dir))
-                        }
+                        Event::Html(raw) => heading_html.push_str(
+                            &inline_raw_html_resources(raw, base_dir),
+                        ),
+                        Event::InlineHtml(raw) => heading_html.push_str(
+                            &inline_raw_html_resources(raw, base_dir),
+                        ),
                         Event::SoftBreak | Event::HardBreak => {
                             heading_plain.push(' ');
                             heading_html.push(' ');
@@ -671,7 +780,8 @@ pub fn render_markdown_with_depth(
                             let lvl = *level;
                             let plain = std::mem::take(heading_plain);
                             let body = std::mem::take(heading_html);
-                            let id = unique_heading_id(&plain, &mut heading_ids);
+                            let id =
+                                unique_heading_id(&plain, &mut heading_ids);
                             if first_heading && lvl == 1 {
                                 title = plain.clone();
                                 first_heading = false;
@@ -681,7 +791,9 @@ pub fn render_markdown_with_depth(
                                 id: id.clone(),
                                 text: plain,
                             });
-                            html.push_str(&format!("<h{lvl} id=\"{id}\">{body}</h{lvl}>\n"));
+                            html.push_str(&format!(
+                                "<h{lvl} id=\"{id}\">{body}</h{lvl}>\n"
+                            ));
                             ctx = Context::Normal;
                         }
                         _ => {}
@@ -692,12 +804,14 @@ pub fn render_markdown_with_depth(
             Context::Image(pending) => match event {
                 Event::End(TagEnd::Image) => {
                     let alt = html_escape(&pending.alt_buf);
-                    current_target(&mut html, &mut paragraph_html).push_str(&format!(
-                        "<img src=\"{}\" alt=\"{}\"{}>",
-                        pending.src.as_str(),
-                        alt,
-                        pending.title_attr.as_str()
-                    ));
+                    current_target(&mut html, &mut paragraph_html).push_str(
+                        &format!(
+                            "<img src=\"{}\" alt=\"{}\"{}>",
+                            pending.src.as_str(),
+                            alt,
+                            pending.title_attr.as_str()
+                        ),
+                    );
                     ctx = Context::Normal;
                 }
                 _ => push_plain_text(&mut pending.alt_buf, event),
@@ -706,8 +820,12 @@ pub fn render_markdown_with_depth(
             Context::Normal => match event {
                 Event::Start(Tag::CodeBlock(kind)) => {
                     let lang = match kind {
-                        pulldown_cmark::CodeBlockKind::Fenced(l) => l.to_string(),
-                        pulldown_cmark::CodeBlockKind::Indented => String::new(),
+                        pulldown_cmark::CodeBlockKind::Fenced(l) => {
+                            l.to_string()
+                        }
+                        pulldown_cmark::CodeBlockKind::Indented => {
+                            String::new()
+                        }
                     };
                     ctx = Context::CodeBlock {
                         lang,
@@ -795,16 +913,19 @@ pub fn render_markdown_with_depth(
                     } else {
                         format!(" title=\"{}\"", html_escape(link_title))
                     };
-                    current_target(&mut html, &mut paragraph_html).push_str(&format!(
-                        "<a href=\"{}\"{title_attr}>",
-                        html_escape(dest_url)
-                    ));
+                    current_target(&mut html, &mut paragraph_html).push_str(
+                        &format!(
+                            "<a href=\"{}\"{title_attr}>",
+                            html_escape(dest_url)
+                        ),
+                    );
                 }
                 Event::End(TagEnd::Link) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("</a>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("</a>");
                 }
 
                 Event::Html(raw) => {
@@ -817,10 +938,13 @@ pub fn render_markdown_with_depth(
                         footnote_display,
                         extracted_footnotes,
                     ) {
-                        current_target(&mut html, &mut paragraph_html).push_str(&rendered);
+                        current_target(&mut html, &mut paragraph_html)
+                            .push_str(&rendered);
                     } else {
                         current_target(&mut html, &mut paragraph_html)
-                            .push_str(&inline_raw_html_resources(raw, base_dir));
+                            .push_str(&inline_raw_html_resources(
+                                raw, base_dir,
+                            ));
                     }
                 }
                 Event::InlineHtml(raw) => {
@@ -833,10 +957,13 @@ pub fn render_markdown_with_depth(
                         footnote_display,
                         extracted_footnotes,
                     ) {
-                        current_target(&mut html, &mut paragraph_html).push_str(&rendered);
+                        current_target(&mut html, &mut paragraph_html)
+                            .push_str(&rendered);
                     } else {
                         current_target(&mut html, &mut paragraph_html)
-                            .push_str(&inline_raw_html_resources(raw, base_dir));
+                            .push_str(&inline_raw_html_resources(
+                                raw, base_dir,
+                            ));
                     }
                 }
 
@@ -850,7 +977,11 @@ pub fn render_markdown_with_depth(
                     let plain = paragraph_plain.take().unwrap_or_default();
                     if paragraph_is_plain {
                         if let Some(display_html) =
-                            render_display_math_paragraph(&plain, math_font_size, font_dir)
+                            render_display_math_paragraph(
+                                &plain,
+                                math_font_size,
+                                font_dir,
+                            )
                         {
                             html.push_str(&display_html);
                             html.push('\n');
@@ -916,9 +1047,15 @@ pub fn render_markdown_with_depth(
                     let align_class = table_alignments
                         .get(table_col_index)
                         .map(|a| match a {
-                            pulldown_cmark::Alignment::Left => " class=\"left\"",
-                            pulldown_cmark::Alignment::Right => " class=\"right\"",
-                            pulldown_cmark::Alignment::Center => " class=\"center\"",
+                            pulldown_cmark::Alignment::Left => {
+                                " class=\"left\""
+                            }
+                            pulldown_cmark::Alignment::Right => {
+                                " class=\"right\""
+                            }
+                            pulldown_cmark::Alignment::Center => {
+                                " class=\"center\""
+                            }
                             pulldown_cmark::Alignment::None => "",
                         })
                         .unwrap_or("");
@@ -941,37 +1078,43 @@ pub fn render_markdown_with_depth(
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("<em>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("<em>");
                 }
                 Event::End(TagEnd::Emphasis) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("</em>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("</em>");
                 }
                 Event::Start(Tag::Strong) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("<strong>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("<strong>");
                 }
                 Event::End(TagEnd::Strong) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("</strong>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("</strong>");
                 }
                 Event::Start(Tag::Strikethrough) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("<del>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("<del>");
                 }
                 Event::End(TagEnd::Strikethrough) => {
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    current_target(&mut html, &mut paragraph_html).push_str("</del>");
+                    current_target(&mut html, &mut paragraph_html)
+                        .push_str("</del>");
                 }
 
                 Event::Code(code) => {
@@ -1010,9 +1153,11 @@ pub fn render_markdown_with_depth(
                         if paragraph_html.is_some() {
                             paragraph_is_plain = false;
                         }
-                        current_target(&mut html, &mut paragraph_html).push_str("<br>\n");
+                        current_target(&mut html, &mut paragraph_html)
+                            .push_str("<br>\n");
                     } else if paragraph_html.is_some() {
-                        current_target(&mut html, &mut paragraph_html).push('\n');
+                        current_target(&mut html, &mut paragraph_html)
+                            .push('\n');
                     } else {
                         html.push('\n');
                     }
@@ -1021,7 +1166,8 @@ pub fn render_markdown_with_depth(
                     if let Some(plain) = paragraph_plain.as_mut() {
                         plain.push('\n');
                         paragraph_is_plain = false;
-                        current_target(&mut html, &mut paragraph_html).push_str("<br>\n");
+                        current_target(&mut html, &mut paragraph_html)
+                            .push_str("<br>\n");
                     } else {
                         html.push_str("<br>\n");
                     }
@@ -1034,7 +1180,9 @@ pub fn render_markdown_with_depth(
                     }
                     let target = current_target(&mut html, &mut paragraph_html);
                     if *checked {
-                        target.push_str("<input type=\"checkbox\" checked disabled> ");
+                        target.push_str(
+                            "<input type=\"checkbox\" checked disabled> ",
+                        );
                     } else {
                         target.push_str("<input type=\"checkbox\" disabled> ");
                     }
@@ -1045,7 +1193,8 @@ pub fn render_markdown_with_depth(
                         plain.push_str(label);
                         paragraph_is_plain = false;
                     }
-                    let title = footnote_title_attr(label, footnotes, footnote_display);
+                    let title =
+                        footnote_title_attr(label, footnotes, footnote_display);
                     current_target(&mut html, &mut paragraph_html)
                         .push_str(&footnote_ref_html(label, title.as_deref()));
                 }
@@ -1088,7 +1237,10 @@ fn highlight_code(
     for line in syntect::util::LinesWithEndings::from(code) {
         match hl.highlight_line(line, ss) {
             Ok(ranges) => {
-                match styled_line_to_highlighted_html(&ranges[..], IncludeBackground::No) {
+                match styled_line_to_highlighted_html(
+                    &ranges[..],
+                    IncludeBackground::No,
+                ) {
                     Ok(html_line) => out.push_str(&html_line),
                     Err(_) => out.push_str(&html_escape(line)),
                 }
