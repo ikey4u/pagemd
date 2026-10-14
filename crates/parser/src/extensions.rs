@@ -1,0 +1,807 @@
+fn canonical_callout_kind(kind: &str) -> Option<&'static str> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "note" => Some("note"),
+        "abstract" | "summary" | "tldr" => Some("abstract"),
+        "info" | "todo" => Some("info"),
+        "tip" | "hint" => Some("tip"),
+        "success" | "check" | "done" => Some("success"),
+        "question" | "help" | "faq" => Some("question"),
+        "warning" | "warn" | "attention" => Some("warning"),
+        "failure" | "fail" | "missing" => Some("failure"),
+        "danger" | "error" => Some("danger"),
+        "bug" => Some("bug"),
+        "example" => Some("example"),
+        "quote" | "cite" => Some("quote"),
+        "important" => Some("important"),
+        "caution" => Some("caution"),
+        _ => None,
+    }
+}
+
+pub fn callout_label(kind: &str) -> &'static str {
+    match kind {
+        "note" => "Note",
+        "abstract" => "Abstract",
+        "info" => "Info",
+        "tip" => "Tip",
+        "success" => "Success",
+        "question" => "Question",
+        "warning" => "Warning",
+        "failure" => "Failure",
+        "danger" => "Danger",
+        "bug" => "Bug",
+        "example" => "Example",
+        "quote" => "Quote",
+        "important" => "Important",
+        "caution" => "Caution",
+        _ => "Note",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldState {
+    Open,
+    Closed,
+}
+
+pub enum InternalFence {
+    Callout {
+        kind: String,
+        title: String,
+        fold: Option<FoldState>,
+    },
+    Details {
+        title: String,
+        open: bool,
+    },
+}
+
+fn split_fold_suffix(token: &str) -> (&str, Option<FoldState>) {
+    if let Some(base) = token.strip_suffix('+') {
+        if !base.is_empty() {
+            return (base, Some(FoldState::Open));
+        }
+    }
+    if let Some(base) = token.strip_suffix('-') {
+        if !base.is_empty() {
+            return (base, Some(FoldState::Closed));
+        }
+    }
+    (token, None)
+}
+
+fn unquote_title(title: &str) -> String {
+    let title = title.trim();
+    title
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| title.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(title)
+        .to_string()
+}
+
+fn parse_callout_marker(
+    text: &str,
+) -> Option<(String, String, Option<FoldState>)> {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("[!") {
+        return None;
+    }
+    let end = trimmed.find(']')?;
+    let inner = trimmed.get(2..end)?;
+    let (raw_kind, inner_fold) = split_fold_suffix(inner.trim());
+    let kind = canonical_callout_kind(raw_kind)?.to_string();
+    let rest = &trimmed[end + 1..];
+    let (after_fold, title_src) = if let Some(stripped) = rest.strip_prefix('+')
+    {
+        (Some(FoldState::Open), stripped)
+    } else if let Some(stripped) = rest.strip_prefix('-') {
+        (Some(FoldState::Closed), stripped)
+    } else {
+        (None, rest)
+    };
+    Some((
+        kind,
+        title_src.trim().to_string(),
+        after_fold.or(inner_fold),
+    ))
+}
+
+fn is_details_kind(kind: &str) -> bool {
+    matches!(kind, "details" | "fold" | "collapse")
+}
+
+fn parse_details_info(text: &str) -> Option<(FoldState, String)> {
+    let trimmed = text.trim();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let head = parts.next()?.to_ascii_lowercase();
+    let (base, fold) = split_fold_suffix(&head);
+    if !is_details_kind(base) {
+        return None;
+    }
+    let open = match fold {
+        Some(FoldState::Open) => FoldState::Open,
+        _ => FoldState::Closed,
+    };
+    Some((open, unquote_title(parts.next().unwrap_or(""))))
+}
+
+fn parse_admonition_info(
+    text: &str,
+) -> Option<(String, String, Option<FoldState>)> {
+    let trimmed = text.trim();
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let head = parts.next()?.to_ascii_lowercase();
+    let (base, fold) = split_fold_suffix(&head);
+    let kind = canonical_callout_kind(base)?.to_string();
+    Some((kind, unquote_title(parts.next().unwrap_or("")), fold))
+}
+
+fn strip_blockquote_marker(line: &str) -> Option<&str> {
+    let mut spaces = 0usize;
+    for ch in line.chars() {
+        if ch == ' ' && spaces < 4 {
+            spaces += 1;
+            continue;
+        }
+        if ch == '>' && spaces <= 3 {
+            let rest = &line[spaces + 1..];
+            return Some(rest.strip_prefix(' ').unwrap_or(rest));
+        }
+        return None;
+    }
+    None
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
+}
+
+fn max_backtick_run(text: &str) -> usize {
+    let mut max_run = 0usize;
+    let mut current = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current += 1;
+            max_run = max_run.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    max_run
+}
+
+pub fn code_fence_length(texts: &[&str]) -> usize {
+    let max_run = texts
+        .iter()
+        .map(|text| max_backtick_run(text))
+        .max()
+        .unwrap_or(0);
+    if max_run >= 3 {
+        max_run + 1
+    } else {
+        3
+    }
+}
+
+fn fence_safe_text(text: &str) -> String {
+    text.replace('`', "'")
+}
+
+fn internal_callout_fence(
+    kind: &str,
+    title: &str,
+    content: &str,
+    fold: Option<FoldState>,
+) -> String {
+    let safe_title = fence_safe_text(title);
+    let title_suffix = if safe_title.is_empty() {
+        String::new()
+    } else {
+        format!(" {safe_title}")
+    };
+    let tag = match fold {
+        Some(FoldState::Open) => "pagemd-callout+",
+        Some(FoldState::Closed) => "pagemd-callout-",
+        None => "pagemd-callout",
+    };
+    let header = format!("{tag} {kind}{title_suffix}");
+    let fence = "`".repeat(code_fence_length(&[content, &header]));
+    let mut out = format!("{fence}{header}\n");
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
+fn internal_details_fence(
+    open: FoldState,
+    title: &str,
+    content: &str,
+) -> String {
+    let safe_title = fence_safe_text(title);
+    let tag = if matches!(open, FoldState::Open) {
+        "pagemd-details+"
+    } else {
+        "pagemd-details"
+    };
+    let header = if safe_title.is_empty() {
+        tag.to_string()
+    } else {
+        format!("{tag} {safe_title}")
+    };
+    let fence = "`".repeat(code_fence_length(&[content, &header]));
+    let mut out = format!("{fence}{header}\n");
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
+fn internal_math_fence(content: &str) -> String {
+    let fence = "`".repeat(code_fence_length(&[content]));
+    let mut out = format!("{fence}math\n");
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
+fn looks_like_table_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.is_empty() && trimmed.contains('|')
+}
+
+fn next_non_empty_line<'a>(
+    lines: &'a [&str],
+    start: usize,
+) -> Option<(usize, &'a str)> {
+    let mut index = start;
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        if !trimmed.is_empty() {
+            return Some((index, trimmed));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn content_includes_table(content: &str) -> bool {
+    content.lines().any(looks_like_table_line)
+}
+
+fn should_absorb_blank_inside_callout_table(
+    content: &str,
+    lines: &[&str],
+    index: usize,
+) -> bool {
+    if !content_includes_table(content) {
+        return false;
+    }
+    let Some((_, next)) = next_non_empty_line(lines, index + 1) else {
+        return false;
+    };
+    looks_like_table_line(next)
+}
+
+fn attach_trailing_callout_structure(
+    content: &mut String,
+    lines: &[&str],
+    i: &mut usize,
+) {
+    while *i < lines.len() {
+        if lines[*i].trim().is_empty()
+            && should_absorb_blank_inside_callout_table(content, lines, *i)
+        {
+            content.push('\n');
+            *i += 1;
+        } else if content_includes_table(content)
+            && looks_like_table_line(lines[*i])
+        {
+            content.push_str(lines[*i].trim());
+            content.push('\n');
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+}
+
+fn collect_indented_admonition_content(
+    lines: &[&str],
+    i: &mut usize,
+) -> String {
+    let mut content = String::new();
+    while *i < lines.len() {
+        let line = lines[*i];
+        if line.trim().is_empty() {
+            content.push('\n');
+            *i += 1;
+        } else if let Some(stripped) = line.strip_prefix("    ") {
+            content.push_str(stripped);
+            content.push('\n');
+            *i += 1;
+        } else if let Some(stripped) = line.strip_prefix('\t') {
+            content.push_str(stripped);
+            content.push('\n');
+            *i += 1;
+        } else if leading_spaces(line) > 0 {
+            content.push_str(line.trim_start());
+            content.push('\n');
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+    content
+}
+
+fn is_colon_fence_open(line: &str) -> bool {
+    let Some(rest) = line.trim().strip_prefix(":::") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    !rest.is_empty()
+        && (parse_details_info(rest).is_some()
+            || parse_admonition_info(rest).is_some())
+}
+
+fn collect_colon_fence_content(lines: &[&str], i: &mut usize) -> String {
+    let mut content = String::new();
+    let mut depth = 1usize;
+    while *i < lines.len() {
+        let trimmed = lines[*i].trim();
+        if trimmed == ":::" {
+            depth -= 1;
+            if depth == 0 {
+                *i += 1;
+                break;
+            }
+        } else if is_colon_fence_open(lines[*i]) {
+            depth += 1;
+        }
+        content.push_str(lines[*i]);
+        content.push('\n');
+        *i += 1;
+    }
+    content
+}
+
+fn collect_blockquote_callout_content(lines: &[&str], i: &mut usize) -> String {
+    let mut content = String::new();
+    while *i < lines.len() {
+        if let Some(line) = strip_blockquote_marker(lines[*i]) {
+            content.push_str(line);
+            content.push('\n');
+            *i += 1;
+        } else if lines[*i].trim().is_empty()
+            && should_absorb_blank_inside_callout_table(&content, lines, *i)
+        {
+            content.push('\n');
+            *i += 1;
+        } else if content_includes_table(&content)
+            && looks_like_table_line(lines[*i])
+        {
+            content.push_str(lines[*i].trim());
+            content.push('\n');
+            *i += 1;
+        } else {
+            break;
+        }
+    }
+    content
+}
+
+/// Strip a leading YAML frontmatter block (`---` … `---`) so it is not rendered.
+///
+/// Only a **valid YAML mapping** (or an empty block) is treated as frontmatter.
+/// Invalid YAML / markdown accidentally wrapped in `---` … `---` is left intact
+/// so tools that fence documents with thematic breaks do not render blank pages.
+pub fn strip_yaml_frontmatter(source: &str) -> String {
+    let body = source.strip_prefix('\u{FEFF}').unwrap_or(source);
+    let lines: Vec<&str> = body.lines().collect();
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return source.to_string();
+    }
+
+    let mut close_idx = None;
+    for (idx, line) in lines.iter().enumerate().skip(1) {
+        if line.trim() == "---" {
+            close_idx = Some(idx);
+            break;
+        }
+    }
+    let Some(close_idx) = close_idx else {
+        return source.to_string();
+    };
+
+    let yaml = lines[1..close_idx].join("\n");
+    if !yaml.trim().is_empty() {
+        match serde_yaml::from_str::<serde_yaml::Value>(&yaml) {
+            Ok(serde_yaml::Value::Mapping(_)) => {}
+            Ok(_) => {
+                // A leading thematic break followed by a later `---` is not frontmatter.
+                return source.to_string();
+            }
+            Err(err) => {
+                // Keep the source: Pack intent docs (and similar) often wrap the
+                // whole Markdown body in `---` fences. Stripping would blank the page.
+                eprintln!("Warning: not treating leading --- block as frontmatter ({err})");
+                return source.to_string();
+            }
+        }
+    }
+
+    let mut out = lines[close_idx + 1..].join("\n");
+    if body.ends_with('\n') && (out.is_empty() || !out.ends_with('\n')) {
+        out.push('\n');
+    }
+    out
+}
+
+pub fn preprocess_markdown_extensions(source: &str) -> String {
+    let source = strip_yaml_frontmatter(source);
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        if let Some(first) = strip_blockquote_marker(lines[i]) {
+            if let Some((kind, title, fold)) = parse_callout_marker(first) {
+                i += 1;
+                let mut content =
+                    collect_blockquote_callout_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_callout_fence(
+                    &kind, &title, &content, fold,
+                ));
+                continue;
+            }
+        }
+
+        let trimmed = lines[i].trim_start();
+        if trimmed.starts_with("$$") {
+            let math_start = trimmed.trim_end();
+            if math_start.len() >= 4 && math_start.ends_with("$$") {
+                let inner = math_start[2..math_start.len() - 2].trim();
+                if !inner.is_empty() && !inner.contains("$$") {
+                    out.push_str(&internal_math_fence(inner));
+                    i += 1;
+                    continue;
+                }
+            } else if math_start == "$$" {
+                let start_i = i;
+                i += 1;
+                let mut content = String::new();
+                while i < lines.len() && lines[i].trim() != "$$" {
+                    content.push_str(lines[i]);
+                    content.push('\n');
+                    i += 1;
+                }
+                let found_closing = i < lines.len() && lines[i].trim() == "$$";
+                if found_closing && !content.trim().is_empty() {
+                    i += 1;
+                    out.push_str(&internal_math_fence(content.trim()));
+                    continue;
+                }
+                let end_i = if found_closing { i + 1 } else { i };
+                for line in &lines[start_i..end_i] {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                i = end_i;
+                continue;
+            }
+        }
+
+        if let Some(rest) = trimmed.strip_prefix(":::") {
+            if let Some((open, title)) = parse_details_info(rest) {
+                i += 1;
+                let mut content = collect_colon_fence_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_details_fence(open, &title, &content));
+                continue;
+            }
+            if let Some((kind, title, fold)) = parse_admonition_info(rest) {
+                i += 1;
+                let mut content = collect_colon_fence_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_callout_fence(
+                    &kind, &title, &content, fold,
+                ));
+                continue;
+            }
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("!!!") {
+            if let Some((open, title)) = parse_details_info(rest) {
+                i += 1;
+                let mut content =
+                    collect_indented_admonition_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_details_fence(open, &title, &content));
+                continue;
+            }
+            if let Some((kind, title, fold)) = parse_admonition_info(rest) {
+                i += 1;
+                let mut content =
+                    collect_indented_admonition_content(&lines, &mut i);
+                attach_trailing_callout_structure(&mut content, &lines, &mut i);
+                out.push_str(&internal_callout_fence(
+                    &kind, &title, &content, fold,
+                ));
+                continue;
+            }
+        }
+
+        out.push_str(lines[i]);
+        out.push('\n');
+        i += 1;
+    }
+
+    out
+}
+
+pub fn parse_internal_block_info(info: &str) -> Option<InternalFence> {
+    let info = info.trim();
+    let (tag, rest) = info
+        .split_once(char::is_whitespace)
+        .map(|(tag, rest)| (tag, rest.trim()))
+        .unwrap_or((info, ""));
+    match tag {
+        "pagemd-details" | "pagemd-details-" => Some(InternalFence::Details {
+            title: rest.to_string(),
+            open: false,
+        }),
+        "pagemd-details+" => Some(InternalFence::Details {
+            title: rest.to_string(),
+            open: true,
+        }),
+        "pagemd-callout" | "pagemd-callout+" | "pagemd-callout-" => {
+            let fold = match tag {
+                "pagemd-callout+" => Some(FoldState::Open),
+                "pagemd-callout-" => Some(FoldState::Closed),
+                _ => None,
+            };
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let kind = parts.next()?.to_string();
+            let title = parts.next().unwrap_or("").trim().to_string();
+            Some(InternalFence::Callout { kind, title, fold })
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{preprocess_markdown_extensions, strip_yaml_frontmatter};
+
+    #[test]
+    fn yaml_frontmatter_is_stripped_before_render() {
+        let input = "---\nposition: 2\npath: /docs/intro\ntitle: Hello\n---\n\n# Body\n";
+        let out = strip_yaml_frontmatter(input);
+        assert!(!out.contains("position:"));
+        assert!(!out.contains("path:"));
+        assert!(out.contains("# Body"));
+
+        let pre = preprocess_markdown_extensions(input);
+        assert!(!pre.contains("position:"));
+        assert!(pre.contains("# Body"));
+    }
+
+    #[test]
+    fn invalid_yaml_frontmatter_is_kept() {
+        let input = "---\ntitle: [unterminated\n---\n\nVisible\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+        assert!(out.contains("Visible"));
+    }
+
+    #[test]
+    fn markdown_wrapped_in_thematic_breaks_is_not_blanked() {
+        // Pack intent docs sometimes wrap the whole body in `---` … `---`.
+        let input = "---\n# Title\n\nBody paragraph.\n\n## 引用\n\n[^1] : `a.toml` — note\n---\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+        assert!(out.contains("# Title"));
+        assert!(out.contains("Body paragraph"));
+    }
+
+    #[test]
+    fn content_starting_with_thematic_break_is_kept() {
+        let input = "---\n\n# Not frontmatter\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn thematic_break_with_later_rule_is_not_treated_as_frontmatter() {
+        let input = "---\n\n# Title\n\n---\n\nAfter\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn empty_yaml_frontmatter_is_stripped() {
+        let input = "---\n---\n\n# Body\n";
+        let out = strip_yaml_frontmatter(input);
+        assert_eq!(out, "\n# Body\n");
+    }
+
+    /// Helper: apply fix then parse with pulldown-cmark, strip ZWSP, return HTML.
+    fn render_emphasis(input: &str) -> String {
+        crate::to_html(input)
+    }
+
+    #[test]
+    fn callout_absorbs_table_rows_without_blockquote_prefix() {
+        let input = "> [!NOTE] Title\n> | Col | Ref |\n| --- | --- |\n| A | Item[^tbl]. |\n\n[^tbl]: Footnote.\n";
+        let out = preprocess_markdown_extensions(input);
+        assert!(out.contains("| --- | --- |"));
+        assert!(out.contains("Item[^tbl]."));
+        assert!(out.contains("[^tbl]: Footnote."));
+    }
+
+    #[test]
+    fn details_fence_becomes_internal_block() {
+        let out = preprocess_markdown_extensions(
+            ":::details Secrets\nHidden **body**.\n:::\n",
+        );
+        assert!(out.contains("pagemd-details Secrets"));
+        assert!(out.contains("Hidden **body**."));
+        assert!(!out.contains(":::details"));
+    }
+
+    #[test]
+    fn details_plus_starts_open() {
+        let out = preprocess_markdown_extensions(
+            ":::details+ Open me\nShown.\n:::\n",
+        );
+        assert!(out.contains("pagemd-details+ Open me"));
+    }
+
+    #[test]
+    fn github_callout_fold_markers_are_preserved() {
+        let closed =
+            preprocess_markdown_extensions("> [!NOTE]- Folded\n> Secret.\n");
+        assert!(closed.contains("pagemd-callout- note Folded"));
+        let open =
+            preprocess_markdown_extensions("> [!TIP]+ Open fold\n> Visible.\n");
+        assert!(open.contains("pagemd-callout+ tip Open fold"));
+        let inside =
+            preprocess_markdown_extensions("> [!WARNING-] Inside\n> Body.\n");
+        assert!(inside.contains("pagemd-callout- warning Inside"));
+    }
+
+    #[test]
+    fn nested_details_keep_inner_fence() {
+        let out = preprocess_markdown_extensions(
+            ":::details Outer\n:::details Inner\nsecret\n:::\nstill outer\n:::\n",
+        );
+        assert!(out.contains("pagemd-details Outer"));
+        assert!(out.contains(":::details Inner"));
+        assert!(out.contains("still outer"));
+    }
+
+    #[test]
+    fn cjk_emphasis_with_corner_brackets() {
+        // 是**「陷入无法恢复的状态」**—— should produce <strong>
+        let html = render_emphasis("是**「陷入无法恢复的状态」**——\n");
+        assert!(
+            html.contains("<strong>「陷入无法恢复的状态」</strong>"),
+            "expected bold with corner brackets, got: {html}"
+        );
+    }
+
+    #[test]
+    fn cjk_emphasis_with_fullwidth_parens() {
+        let html = render_emphasis("是**（重要）**后\n");
+        assert!(
+            html.contains("<strong>（重要）</strong>"),
+            "expected bold with fullwidth parens, got: {html}"
+        );
+    }
+
+    #[test]
+    fn cjk_emphasis_with_angle_brackets() {
+        let html = render_emphasis("是**《标题》**后\n");
+        assert!(
+            html.contains("<strong>《标题》</strong>"),
+            "expected bold with angle brackets, got: {html}"
+        );
+    }
+
+    #[test]
+    fn cjk_emphasis_with_square_brackets() {
+        let html = render_emphasis("是**【注意】**后\n");
+        assert!(
+            html.contains("<strong>【注意】</strong>"),
+            "expected bold with square brackets, got: {html}"
+        );
+    }
+
+    #[test]
+    fn normal_cjk_emphasis_unaffected() {
+        // No open/close punct inside — should work without fix too
+        let html = render_emphasis("这是**加粗**文本\n");
+        assert!(
+            html.contains("<strong>加粗</strong>"),
+            "normal CJK bold broken: {html}"
+        );
+    }
+
+    #[test]
+    fn ascii_emphasis_unaffected() {
+        let html = render_emphasis("This is **bold** text\n");
+        assert!(
+            html.contains("<strong>bold</strong>"),
+            "ASCII bold broken: {html}"
+        );
+    }
+
+    #[test]
+    fn code_span_not_affected() {
+        let html = render_emphasis("`是**「不加粗」**后`\n");
+        assert!(
+            html.contains("<code>是**「不加粗」**后</code>"),
+            "code span should preserve raw text, got: {html}"
+        );
+    }
+
+    #[test]
+    fn no_zwsp_in_output() {
+        let html = render_emphasis("是**「测试」**后\n");
+        assert!(
+            !html.contains('\u{200B}'),
+            "ZWSP leaked into output: {html}"
+        );
+    }
+
+    #[test]
+    fn unmatched_stars_stay_literal() {
+        let html = render_emphasis("是**「只有开头\n");
+        assert!(
+            !html.contains("<strong>"),
+            "unmatched ** should not produce bold: {html}"
+        );
+    }
+
+    #[test]
+    fn digit_before_stars_not_triggered() {
+        // '0' is not CJK letter — fix should NOT activate
+        let html = render_emphasis("100**（税）**元\n");
+        assert!(
+            !html.contains("<strong>"),
+            "digit before ** should not trigger fix: {html}"
+        );
+    }
+
+    #[test]
+    fn punctuation_before_stars_already_works() {
+        // ，is fullwidth comma (Po) — flanking rule already satisfied without fix
+        let html = render_emphasis("，**默认即装上熵增守卫**：\n");
+        assert!(
+            html.contains("<strong>默认即装上熵增守卫</strong>"),
+            "punct-before case broken: {html}"
+        );
+    }
+
+    #[test]
+    fn nested_emphasis_inside_cjk_brackets() {
+        let html = render_emphasis("是**「*斜体*」**后\n");
+        assert!(
+            html.contains("<strong>") && html.contains("<em>斜体</em>"),
+            "nested emphasis broken: {html}"
+        );
+    }
+}

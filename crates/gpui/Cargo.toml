@@ -1,0 +1,17 @@
+[package]
+name = "pagemd-gpui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "PageMD's built-in native GPUI renderer"
+[workspace]
+[dependencies]
+pagemd-parser = { path = "../parser" }
+gpui-kit = "=0.7.3"
+html-escape = "0.2"
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
+unicode-linebreak = "0.1"
+[dev-dependencies]
+gpui-kit = { version = "=0.7.3", features = ["test-support"] }

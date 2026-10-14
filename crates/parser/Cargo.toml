@@ -1,0 +1,21 @@
+[package]
+name = "pagemd-parser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Shared PageMD parsing and renderer interfaces"
+
+[workspace]
+
+[features]
+default = []
+serde = ["dep:serde"]
+json = ["serde"]
+log = []
+
+[dependencies]
+pulldown-cmark = "0.13"
+serde = { version = "1", features = ["derive"], optional = true }
+unicode-general-category = "1.1"
+serde_yaml = "0.9"

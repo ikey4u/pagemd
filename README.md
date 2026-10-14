@@ -14,6 +14,28 @@ let html = render_to_html("# Hello", &RenderOptions::default())?;
 
 Browser extension documentation is available at `extension/README.md`.
 
+## Parsing and renderers
+
+PageMD uses the shared [pagemd-parser](crates/parser/README.md) library for
+Markdown analysis and dialect preprocessing. Its immutable `ParsedDocument`
+contains the AST, source-aware events and original source coordinates.
+
+The `Renderer` trait separates parsing from output. Built-in backends are
+`pagemd::HtmlRenderer` for the complete HTML pipeline and
+[pagemd-gpui](crates/gpui/README.md)'s `GpuiRenderer` for native text views.
+PageMD's CLI and HTML export use the shared parser and HTML implementation.
+Native applications depend directly on `pagemd-gpui`, so they
+can retain native selection, editing and streaming without the HTML/Typst/browser
+stack. The full PageMD library also exports `pagemd::gpui` with its `gpui` feature.
+
+Additional renderers implement `Renderer` and consume the same parsed document.
+`pagemd::analyze_markdown` exposes the parsing entry point; `pagemd::parser`
+exports the shared types and options.
+
+## Fixture data
+
+Tests and examples use synthetic text, identifiers, paths and reserved example domains. Do not copy live conversations, provider details, credentials or personal paths into fixtures; preserve only the syntax needed to reproduce a bug.
+
 ## Installation
 
 Install the CLI from git. Pass `--locked` so Cargo uses the repository `Cargo.lock` instead of re-resolving crates:
@@ -22,7 +44,7 @@ Install the CLI from git. Pass `--locked` so Cargo uses the repository `Cargo.lo
 cargo install --git https://github.com/ikey4u/pagemd --locked
 ```
 
-`--locked` is required. Without it, Cargo may pull incompatible pre-release versions of the Mermaid renderer stack (`merman` / `merman-core` / `merman-render`) and the build fails.
+Use `--locked` to build the tested parser and renderer dependency set. The HTML and GPUI backends share the stable Mermaid stack pinned in `Cargo.toml`.
 
 From a local clone:
 
@@ -62,12 +84,12 @@ Run a `.pagemd.js` file from the CLI (no REPL): open Chrome, navigate to `--url`
 Scripts may declare `const defaultParams = { … }` and read `params` in hooks. Override from the command line with `--param KEY=VALUE` or `--params '{…}'`. Use `--usage` to dump the script's params without launching Chrome.
 
 ```bash
-pagemd browser script meeting-docs.pagemd.js --usage
+pagemd browser script example-docs.pagemd.js --usage
 
-pagemd browser script meeting-docs.pagemd.js \
-  --url https://cloud.tencent.com/document/product/1095/83658 \
-  -o meeting-docs \
-  --param stopUrl=https://cloud.tencent.com/document/product/1095/94313
+pagemd browser script example-docs.pagemd.js \
+  --url https://docs.example.com/document/product/100/1 \
+  -o example-docs \
+  --param stopUrl=https://docs.example.com/document/product/100/2
 
 pagemd browser script site.pagemd.js --url https://example.com/a --headless
 ```

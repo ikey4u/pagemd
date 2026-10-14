@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use pulldown_cmark::{Event, Options, Parser as MdParser, Tag, TagEnd};
+use pagemd_parser::{
+    events::{Event, Tag, TagEnd},
+    ParseOptions, ParsedDocument, Renderer,
+};
 use syntect::{
     easy::HighlightLines,
     highlighting::ThemeSet,
@@ -181,15 +184,19 @@ fn append_rich_text(
 }
 
 fn render_footnote_body_markup(body: &str) -> String {
-    use pulldown_cmark::html;
-
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TABLES);
-    let parser = MdParser::new_ext(body.trim(), opts);
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    out.trim().to_string()
+    let mut options = ParseOptions::default();
+    options.constructs.gfm_strikethrough = true;
+    options.constructs.gfm_table = true;
+    let document = pagemd_parser::parse(body.trim(), &options)
+        .expect("footnote parsing options are valid");
+    pagemd_parser::HtmlFragmentRenderer::new(pagemd_parser::CompileOptions {
+        allow_dangerous_html: true,
+        ..Default::default()
+    })
+    .render(&document, ())
+    .expect("HTML fragment rendering is infallible")
+    .trim()
+    .to_string()
 }
 
 fn render_footnote_slot(
@@ -387,34 +394,74 @@ pub fn render_markdown_with_depth(
     let mut parse_source = preprocessed;
     footnotes.prepare_parse_unit(&mut parse_source);
 
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_FOOTNOTES);
+    let document = pagemd_parser::parse(&parse_source, &ParseOptions::gfm())?;
+    HtmlRenderer.render(
+        &document,
+        HtmlRenderContext {
+            base_dir,
+            math_font_size,
+            font_dir,
+            ss,
+            ts,
+            footnotes,
+            depth,
+            client_mermaid,
+            footnote_display,
+            extracted_footnotes,
+        },
+    )
+}
 
-    let parser = MdParser::new_ext(&parse_source, opts);
-    // Strip ZWSP (U+200B) injected by fix_emphasis_cjk_punctuation from all text content.
-    // The ZWSP was only needed to satisfy pulldown-cmark's flanking rules during parsing;
-    // it must not appear in final output.
-    let events: Vec<Event> = parser
-        .map(|event| match event {
-            Event::Text(ref t) if t.contains('\u{200B}') => {
-                Event::Text(t.replace('\u{200B}', "").into())
-            }
-            Event::Code(ref t) if t.contains('\u{200B}') => {
-                Event::Code(t.replace('\u{200B}', "").into())
-            }
-            Event::InlineMath(ref t) if t.contains('\u{200B}') => {
-                Event::InlineMath(t.replace('\u{200B}', "").into())
-            }
-            Event::DisplayMath(ref t) if t.contains('\u{200B}') => {
-                Event::DisplayMath(t.replace('\u{200B}', "").into())
-            }
-            other => other,
-        })
-        .collect();
+/// PageMD's complete HTML backend: highlighting, math/diagram SVG, resources,
+/// callouts, footnotes and document outline, consuming shared parsing results.
+#[derive(Default)]
+pub struct HtmlRenderer;
 
+/// Per-render resources and section context, independent of Markdown parsing.
+pub struct HtmlRenderContext<'a> {
+    pub base_dir: &'a Path,
+    pub math_font_size: f64,
+    pub font_dir: &'a str,
+    pub ss: &'a SyntaxSet,
+    pub ts: &'a ThemeSet,
+    pub footnotes: &'a FootnoteRegistry,
+    pub depth: usize,
+    pub client_mermaid: bool,
+    pub footnote_display: FootnoteDisplay,
+    pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
+}
+
+impl Renderer for HtmlRenderer {
+    type Output = RenderedSection;
+    type Error = anyhow::Error;
+    type Context<'a> = HtmlRenderContext<'a>;
+
+    fn render<'a>(
+        &mut self,
+        document: &ParsedDocument,
+        context: HtmlRenderContext<'a>,
+    ) -> Result<RenderedSection> {
+        render_parsed_document(document, context)
+    }
+}
+
+fn render_parsed_document(
+    document: &ParsedDocument,
+    context: HtmlRenderContext<'_>,
+) -> Result<RenderedSection> {
+    let HtmlRenderContext {
+        base_dir,
+        math_font_size,
+        font_dir,
+        ss,
+        ts,
+        footnotes,
+        depth,
+        client_mermaid,
+        footnote_display,
+        extracted_footnotes,
+    } = context;
+    let events: Vec<Event<'static>> = document.events().cloned().collect();
     let mut html = String::new();
     let mut title = String::new();
     let mut outline: Vec<HeadingOutline> = Vec::new();
@@ -447,7 +494,8 @@ pub fn render_markdown_with_depth(
 
     let mut ctx = Context::Normal;
     let mut in_table_head = false;
-    let mut table_alignments: Vec<pulldown_cmark::Alignment> = Vec::new();
+    let mut table_alignments: Vec<pagemd_parser::events::Alignment> =
+        Vec::new();
     let mut table_col_index: usize = 0;
     let mut paragraph_html: Option<String> = None;
     let mut paragraph_plain: Option<String> = None;
@@ -820,10 +868,10 @@ pub fn render_markdown_with_depth(
             Context::Normal => match event {
                 Event::Start(Tag::CodeBlock(kind)) => {
                     let lang = match kind {
-                        pulldown_cmark::CodeBlockKind::Fenced(l) => {
+                        pagemd_parser::events::CodeBlockKind::Fenced(l) => {
                             l.to_string()
                         }
-                        pulldown_cmark::CodeBlockKind::Indented => {
+                        pagemd_parser::events::CodeBlockKind::Indented => {
                             String::new()
                         }
                     };
@@ -1047,16 +1095,16 @@ pub fn render_markdown_with_depth(
                     let align_class = table_alignments
                         .get(table_col_index)
                         .map(|a| match a {
-                            pulldown_cmark::Alignment::Left => {
+                            pagemd_parser::events::Alignment::Left => {
                                 " class=\"left\""
                             }
-                            pulldown_cmark::Alignment::Right => {
+                            pagemd_parser::events::Alignment::Right => {
                                 " class=\"right\""
                             }
-                            pulldown_cmark::Alignment::Center => {
+                            pagemd_parser::events::Alignment::Center => {
                                 " class=\"center\""
                             }
-                            pulldown_cmark::Alignment::None => "",
+                            pagemd_parser::events::Alignment::None => "",
                         })
                         .unwrap_or("");
                     if in_table_head {

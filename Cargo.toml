@@ -24,21 +24,25 @@ serde = { version = "1", features = ["derive"] }
 tar = "0.4"
 toml = "0.8"
 
+[features]
+default = []
+gpui = ["dep:pagemd-gpui"]
+
 [dependencies]
+pagemd-parser = { path = "crates/parser" }
+pagemd-gpui = { path = "crates/gpui", optional = true }
 clap = { version = "4.6", features = ["derive"] }
-pulldown-cmark = { version = "0.13", features = [] }
 syntect = "5.3"
 base64 = "0.22"
-# Pre-release: pin the merman layout stack exactly. `cargo install` (no --locked)
-# and `cargo update` can otherwise mix merman-render with a newer merman-core.
-merman = { version = "=0.8.0-alpha.6", features = ["complete-svg-elk"] }
-merman-core = "=0.8.0-alpha.6"
-merman-render = "=0.8.0-alpha.6"
-merman-layout-elk = "=0.8.0-alpha.6"
-merman-elk-layered = "=0.8.0-alpha.6"
-dugong = "=0.8.0-alpha.6"
-dugong-graphlib = "=0.8.0-alpha.6"
-manatee = "=0.8.0-alpha.6"
+# Keep the stable Mermaid layout stack aligned across HTML and GPUI builds.
+merman = { version = "=0.8.0", features = ["complete-svg-elk"] }
+merman-core = "=0.8.0"
+merman-render = "=0.8.0"
+merman-layout-elk = "=0.8.0"
+merman-elk-layered = "=0.8.0"
+dugong = "=0.8.0"
+dugong-graphlib = "=0.8.0"
+manatee = "=0.8.0"
 plantuml_encoding = "2.0.3"
 regex = "1.12"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -77,3 +81,5 @@ rust-embed = "8"
 # time 0.3.47 conflicts with typst-library 0.14 blanket From impls (E0119),
 # so pin the version until typst fixes it; remove this line once resolved.
 time = "=0.3.46"
+
+# GPUI's existing dependency API delegates to the shared PageMD parser.

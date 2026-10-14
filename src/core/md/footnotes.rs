@@ -721,16 +721,17 @@ mod tests {
 
     #[test]
     fn pulldown_emits_footnote_reference_with_stub_definition() {
-        use pulldown_cmark::{Event, Options, Parser as MdParser};
+        use pagemd_parser::{events::Event, ParseOptions};
 
         let source = "Text[^a].\n\n[^a]: Footnote.\n";
         let registry = FootnoteRegistry::from_markdown(source);
         let mut parse_source =
             crate::core::md::preprocess::preprocess_markdown_extensions(source);
         registry.prepare_parse_unit(&mut parse_source);
-        let mut opts = Options::empty();
-        opts.insert(Options::ENABLE_FOOTNOTES);
-        let parser = MdParser::new_ext(&parse_source, opts);
+        let mut opts = ParseOptions::default();
+        opts.constructs.gfm_footnote_definition = true;
+        let document = pagemd_parser::parse(&parse_source, &opts).unwrap();
+        let parser = document.events().cloned();
         let events: Vec<Event> = parser.collect();
         assert!(events
             .iter()

@@ -35,48 +35,50 @@ Hooks read `params.*`. `stop(context)` also gets:
 
 ```bash
 # Inspect params without launching Chrome
-pagemd browser script meeting-docs.pagemd.js --usage
+pagemd browser script example-docs.pagemd.js --usage
 
-pagemd browser script meeting-docs.pagemd.js \
-  --url https://cloud.tencent.com/document/product/1095/83658 \
-  --filter '/document/product/1095/*' \
-  -o meeting-docs \
-  --param stopUrl=https://cloud.tencent.com/document/product/1095/94313 \
-  --param 'noiseSelectors=["#document-feedback-container"]'
+pagemd browser script example-docs.pagemd.js \
+  --url https://docs.example.com/document/product/100/1 \
+  --filter '/document/product/100/*' \
+  -o example-docs \
+  --param stopUrl=https://docs.example.com/document/product/100/2 \
+  --param 'noiseSelectors=["#document-feedback"]'
 
 # or a JSON object
-pagemd browser script meeting-docs.pagemd.js \
-  --url https://cloud.tencent.com/document/product/1095/83658 \
+pagemd browser script example-docs.pagemd.js \
+  --url https://docs.example.com/document/product/100/1 \
   --filter '/document/*' \
-  --params '{"stopUrl":"https://cloud.tencent.com/document/product/1095/94313"}'
+  --params '{"stopUrl":"https://docs.example.com/document/product/100/2"}'
 ```
 
 Inside the REPL (`pagemd browser dev`):
 
 ```
-/run meeting-docs.pagemd.js --usage
-/run meeting-docs.pagemd.js --param stopUrl=https://…/94313
+/run example-docs.pagemd.js --usage
+/run example-docs.pagemd.js --param stopUrl=https://docs.example.com/document/product/100/2
 ```
 
 `--param KEY=VALUE` parses VALUE as JSON when possible (`3`, `true`, `"…"`, `[…]`, `{…}`), otherwise as a string. Repeat `--param` as needed; `--params '{…}'` merges a whole object.
 
 ## Full example
 
-Crawl Tencent Meeting [Open Platform documentation](https://cloud.tencent.com/document/product/1095/83658) into Markdown. Same logic as the side-panel hooks, packaged as a standard `.pagemd.js`:
+The domain, identifiers and CSS selectors below are synthetic; replace them with your target site's values.
+
+Crawl a fictional [documentation site](https://docs.example.com/document/product/100/1) into Markdown. Same logic as the side-panel hooks, packaged as a standard `.pagemd.js`:
 
 ```js
 const usage =
-  "Crawl Tencent Meeting Open Platform documentation into Markdown (clean → extract → next page).";
+  "Crawl example documentation into Markdown (clean → extract → next page).";
 
 const defaultParams = {
-  stopUrl: "https://cloud.tencent.com/document/product/1095/94313",
-  contentSelector: "div.J-mainContent.responsible.documents-container",
+  stopUrl: "https://docs.example.com/document/product/100/2",
+  contentSelector: "article.document-content",
   noiseSelectors: [
-    "#document-feedback-container",
-    ".J-relatedArticleLayout",
+    "#document-feedback",
+    ".related-articles",
   ],
   stripSelectors: ["nav", ".ads"],
-  nextSelector: "a.next.J-docDetailPaginationPage",
+  nextSelector: "a.next-page",
 };
 
 const paramHelp = {
@@ -136,13 +138,13 @@ function stop(context) {
 Run it:
 
 ```bash
-pagemd browser script meeting-docs.pagemd.js --usage
+pagemd browser script example-docs.pagemd.js --usage
 
-pagemd browser script meeting-docs.pagemd.js \
-  --url https://cloud.tencent.com/document/product/1095/83658 \
-  --filter '/document/product/1095/*' \
-  -o meeting-docs \
-  --param stopUrl=https://cloud.tencent.com/document/product/1095/94313
+pagemd browser script example-docs.pagemd.js \
+  --url https://docs.example.com/document/product/100/1 \
+  --filter '/document/product/100/*' \
+  -o example-docs \
+  --param stopUrl=https://docs.example.com/document/product/100/2
 ```
 
 ### Equivalent side-panel IIFEs
@@ -152,7 +154,7 @@ The extension editor also accepts one-off IIFEs (what you paste into Clean / Ext
 ```js
 // Clean
 (function() {
-  const sels = ['#document-feedback-container', '.J-relatedArticleLayout'];
+  const sels = ['#document-feedback', '.related-articles'];
   let removed = 0;
   sels.forEach(s =>
     document.querySelectorAll(s).forEach(el => { el.remove(); removed++; })
@@ -162,7 +164,7 @@ The extension editor also accepts one-off IIFEs (what you paste into Clean / Ext
 
 // Extract
 (function() {
-  const el = document.querySelector("div.J-mainContent.responsible.documents-container");
+  const el = document.querySelector("article.document-content");
   if (!el) return null;
   const clone = el.cloneNode(true);
   clone.querySelectorAll('nav, .ads').forEach(e => e.remove());
@@ -174,7 +176,7 @@ The extension editor also accepts one-off IIFEs (what you paste into Clean / Ext
 
 // Navigate
 (function() {
-  const next = document.querySelector("a.next.J-docDetailPaginationPage");
+  const next = document.querySelector("a.next-page");
   if (!next || next.classList.contains('disabled'))
     return { success: false };
   next.click();
@@ -183,7 +185,7 @@ The extension editor also accepts one-off IIFEs (what you paste into Clean / Ext
 
 // Stop
 (function(context) {
-  if (context.currentUrl === 'https://cloud.tencent.com/document/product/1095/94313')
+  if (context.currentUrl === 'https://docs.example.com/document/product/100/2')
     return { shouldStop: true, reason: 'Reached target' };
   return { shouldStop: false };
 })()

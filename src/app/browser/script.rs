@@ -1362,7 +1362,7 @@ function stop(context) { return { shouldStop: false }; }
             "https://example.com/*"
         ));
         assert!(!url_matches_pattern(
-            "https://other.com/a",
+            "https://other.example.com/a",
             "https://example.com/*"
         ));
         assert!(url_matches_pattern(
@@ -1370,11 +1370,11 @@ function stop(context) { return { shouldStop: false }; }
             "https://example.com/docs"
         ));
         assert!(url_matches_pattern(
-            "https://cloud.tencent.com/document/product/1814/1",
+            "https://docs.example.com/document/product/200/1",
             "/document/*"
         ));
         assert!(!url_matches_pattern(
-            "https://cloud.tencent.com/other/product/1814/1",
+            "https://docs.example.com/other/product/200/1",
             "/document/*"
         ));
         assert!(url_matches_pattern(
@@ -1523,7 +1523,7 @@ function stop(context) { return { shouldStop: false }; }
     fn parse_script_with_default_params_and_hooks() {
         let source = r#"
 const defaultParams = {
-  stopUrl: "https://cloud.tencent.com/document/product/1095/94313",
+  stopUrl: "https://docs.example.com/document/product/100/2",
   contentSelector: "article",
 };
 function clean() { return { removed: 0 }; }

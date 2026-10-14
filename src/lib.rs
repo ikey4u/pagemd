@@ -46,6 +46,8 @@ pub mod core;
 /// `CARGO_PKG_VERSION`, plus `-<git>` and `+dirty` when `build.rs` can see a git checkout.
 pub const PAGEMD_VERSION: &str = env!("PAGEMD_VERSION");
 
+/// Built-in complete HTML renderer.
+pub use core::md::{FootnoteRegistry, HtmlRenderContext, HtmlRenderer};
 pub use core::{
     build_html, diagram_help, export_to_file, export_with_resources,
     html_escape, markdown_help, normalize_footnote_definition_lines,
@@ -58,3 +60,9 @@ pub use core::{
 
 /// CLI / binary entrypoint (`pagemd` executable).
 pub use app::run;
+/// Built-in native GPUI renderer (enable the `gpui` feature).
+#[cfg(feature = "gpui")]
+pub use pagemd_gpui as gpui;
+/// Shared Markdown parsing and backend-neutral renderer interface.
+pub use pagemd_parser as parser;
+pub use pagemd_parser::{parse as analyze_markdown, ParsedDocument, Renderer};
