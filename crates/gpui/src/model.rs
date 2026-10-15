@@ -380,6 +380,10 @@ impl Builder<'_> {
                 for child in crate::html::nodes(&n.value) {
                     self.inline(&child, mark.clone(), start, spans, objects);
                 }
+                // The converted children already own their text spans. Adding
+                // another span for the HTML node duplicates those bytes and
+                // can split a later UTF-8 character in GPUI's text runs.
+                return;
             }
             _ => {}
         }

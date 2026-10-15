@@ -188,3 +188,54 @@ fn fenced_code_uses_block_typography_without_inline_backgrounds(
         });
     });
 }
+
+#[test]
+fn inline_html_spans_cover_each_utf8_byte_once() {
+    fn check_paragraph(paragraph: &crate::model::Paragraph) {
+        let mut cursor = 0;
+        for span in &paragraph.spans {
+            assert_eq!(
+                span.range.start, cursor,
+                "overlapping or missing span in {:?}",
+                paragraph.text
+            );
+            assert!(paragraph.text.get(span.range.clone()).is_some());
+            cursor = span.range.end;
+        }
+        assert_eq!(cursor, paragraph.text.len());
+    }
+    fn check_block(block: &crate::model::Block) {
+        use crate::model::Kind;
+        match &block.kind {
+            Kind::Paragraph(p)
+            | Kind::Heading(_, p)
+            | Kind::Code(_, p)
+            | Kind::Math(p) => check_paragraph(p),
+            Kind::Group(blocks) | Kind::Quote(blocks) => {
+                blocks.iter().for_each(check_block)
+            }
+            Kind::List { items, .. } => {
+                for (_, blocks) in items {
+                    blocks.iter().for_each(check_block);
+                }
+            }
+            Kind::Table { rows, .. } => {
+                for p in rows.iter().flatten() {
+                    check_paragraph(p);
+                }
+            }
+            Kind::Rule => {}
+        }
+    }
+    for source in [
+        "Before<br>挑战**修复**：保留 `sample.rs`。",
+        "**Before<br/>挑战修复** after<br />结束。",
+        "| Artifact | Verify |\n| --- | --- |\n| `sample.rs` | 完成<br>**挑战修复**：保留 UTF-8。 |",
+        "<div><p>Before<br><strong>挑战修复</strong> after.</p></div>",
+    ] {
+        let document = pagemd_parser::parse(source, &GpuiRenderer::parse_options()).unwrap();
+        let (blocks, _) = crate::model::build(&document);
+        assert!(!blocks.is_empty());
+        blocks.iter().for_each(check_block);
+    }
+}
