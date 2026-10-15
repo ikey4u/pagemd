@@ -505,7 +505,34 @@ impl Element for NativeTextLeaf {
         }
         let _ = layout.paint_foreground(window, cx);
         if !self.links.is_empty() {
-            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            let hovered_link =
+                link_at_position(layout, &self.links, window.mouse_position());
+            if hovered_link.is_some() {
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            }
+            // Moving within one text hitbox does not otherwise redraw it.
+            // Refresh the cursor when entering or leaving an actual link.
+            let hit = hitbox.clone();
+            let links = self.links.clone();
+            let hover_layout = layout.clone();
+            let view = window.current_view();
+            let mut hovered_link = hovered_link;
+            window.on_mouse_event(
+                move |event: &MouseMoveEvent, phase, window, cx| {
+                    if !phase.bubble() {
+                        return;
+                    }
+                    let updated = if hit.is_hovered(window) {
+                        link_at_position(&hover_layout, &links, event.position)
+                    } else {
+                        None
+                    };
+                    if updated != hovered_link {
+                        hovered_link = updated;
+                        cx.notify(view);
+                    }
+                },
+            );
             let down = self.down.clone();
             let hit = hitbox.clone();
             window.on_mouse_event(
@@ -562,6 +589,19 @@ impl Element for NativeTextLeaf {
         }
     }
 }
+fn link_at_position(
+    layout: &TextLayout,
+    links: &[(Range<usize>, SharedString)],
+    position: Point<Pixels>,
+) -> Option<usize> {
+    let index = layout.index_for_position(position).ok()?;
+    links.iter().position(|(range, _)| range.contains(&index))
+}
+
+#[cfg(test)]
+#[path = "paragraph_tests.rs"]
+mod tests;
+
 fn paint_range(
     layout: &TextLayout,
     span: Range<usize>,
