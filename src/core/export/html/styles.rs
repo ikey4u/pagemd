@@ -1449,44 +1449,6 @@ img {
   background: var(--color-error-pre-bg);
 }
 
-.typst-display {
-  margin: 1.5rem 0;
-  padding: 0;
-  overflow-x: auto;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  text-align: center;
-}
-
-.typst-canvas {
-  min-width: max-content;
-  display: flex;
-  justify-content: center;
-  padding: 0.25rem 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.typst-canvas svg {
-  max-width: 100%;
-  height: auto;
-  background: transparent !important;
-}
-
-.typst-error {
-  color: var(--color-error-panel-text);
-  background: var(--color-error-panel-bg);
-  border-color: var(--color-error-panel-border);
-  text-align: left;
-}
-
-.typst-error pre {
-  margin: 0.75rem 0 0;
-  background: var(--color-error-pre-bg);
-}
-
 .diagram-html-display {
   margin: 1.5rem 0;
   overflow-x: auto;

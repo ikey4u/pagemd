@@ -1,7 +1,7 @@
 //! PageMD library: convert Markdown into a self-contained, styled HTML document.
 //!
 //! The full rendering stack (callouts, footnotes, syntax highlighting, math,
-//! Mermaid/PlantUML/Typst diagrams, asset inlining, and embedded CSS) lives in
+//! Mermaid/PlantUML diagrams, asset inlining, and embedded CSS) lives in
 //! [`core`]. The `pagemd` CLI is a thin front-end over the same APIs.
 //!
 //! # Quick start

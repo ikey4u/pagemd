@@ -28,7 +28,6 @@ Math: inline `$E=mc^2$`; display `$$...$$` or fenced ```math / ```latex.
 Diagrams (fenced):
 - ```mermaid / ```mmd — flowcharts, sequence, class, state, ER
 - ```plantuml / ```puml — UML (needs network for render)
-- ```typst — figures via Typst (optional `@preview/cetz` etc.)
 - ```diagram html — raw HTML/SVG + Tailwind utility classes (runtime embedded)
 
 Callouts:
@@ -46,7 +45,6 @@ pub const DIAGRAM_HELP: &str = "\
 PageMD diagram fences:
 - ```mermaid / ```mmd — flowcharts, sequence, class, state, ER
 - ```plantuml / ```puml — UML (needs network for render)
-- ```typst — figures via Typst (optional `@preview/cetz` etc.)
 - ```diagram html — raw HTML/SVG + Tailwind utility classes (runtime embedded)
 ";
 
@@ -64,7 +62,7 @@ mod tests {
         );
         assert!(help.contains("mermaid"));
         assert!(help.contains("diagram html"));
-        assert!(help.contains("plantuml") || help.contains("typst"));
+        assert!(help.contains("plantuml"));
         assert!(help.contains("[!NOTE]"));
         assert!(help.contains(":::details"));
         assert!(help.contains("$E=mc^2$") || help.contains("Math:"));
@@ -76,7 +74,7 @@ mod tests {
         let help = diagram_help();
         assert!(help.contains("mermaid"));
         assert!(help.contains("diagram html"));
-        assert!(help.contains("typst"));
+        assert!(!help.contains("```typst"));
         assert!(help.contains("plantuml"));
         assert!(help.len() < 800, "diagram help too long: {}", help.len());
     }

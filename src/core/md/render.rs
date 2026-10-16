@@ -21,7 +21,6 @@ use crate::core::{
             render_plantuml,
         },
         math::latex_to_svg,
-        typst,
     },
     md::{
         callouts::{render_callout, render_details, CalloutRenderContext},
@@ -590,17 +589,6 @@ fn render_parsed_document(
                                 }
                             }
                         }
-                        "typst" => match typst::render_typst(&buf_str) {
-                            Ok(rendered) => html.push_str(&rendered),
-                            Err(err) => {
-                                eprint_fence_render_error(
-                                    "Typst", &err, &buf_str,
-                                );
-                                html.push_str(&typst::typst_error_html(
-                                    &buf_str,
-                                ));
-                            }
-                        },
                         "pagemd-callout" | "pagemd-callout+"
                         | "pagemd-callout-" | "pagemd-details"
                         | "pagemd-details+" | "pagemd-details-" => {

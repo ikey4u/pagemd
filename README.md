@@ -12,6 +12,11 @@ use pagemd::{render_to_html, RenderOptions};
 let html = render_to_html("# Hello", &RenderOptions::default())?;
 ```
 
+Embedded Typst diagrams are no longer supported. Typst fences are displayed as
+highlighted source code. Use Mermaid or `diagram html` for embedded figures;
+Markdown, math, PlantUML, and resource embedding remain available. Builds no longer
+include the Typst compiler, fonts, or bundled packages.
+
 Browser extension documentation is available at `extension/README.md`.
 
 ## Parsing and renderers
@@ -25,7 +30,7 @@ The `Renderer` trait separates parsing from output. Built-in backends are
 [pagemd-gpui](crates/gpui/README.md)'s `GpuiRenderer` for native text views.
 PageMD's CLI and HTML export use the shared parser and HTML implementation.
 Native applications depend directly on `pagemd-gpui`, so they
-can retain native selection, editing and streaming without the HTML/Typst/browser
+can retain native selection, editing and streaming without the HTML/browser
 stack. The full PageMD library also exports `pagemd::gpui` with its `gpui` feature.
 
 Additional renderers implement `Renderer` and consume the same parsed document.

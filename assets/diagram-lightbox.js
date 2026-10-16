@@ -7,7 +7,6 @@
   var SELECTOR = [
     ".mermaid-display",
     ".plantuml-display",
-    ".typst-display",
     ".diagram-html-display",
   ].join(",");
 

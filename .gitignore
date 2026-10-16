@@ -9,7 +9,6 @@ build/
 target/
 **/target/
 
-assets/typst-packages/preview/
 extension/chrome/wasm/pkg/
 
 .vscode/

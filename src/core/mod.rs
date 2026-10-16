@@ -5,6 +5,7 @@
 //! the same APIs.
 
 pub mod authoring;
+mod cli_help;
 pub mod export;
 pub mod ext;
 pub mod import;
@@ -137,4 +138,4 @@ pub fn resolve_inputs(opts: &ConvertOptions) -> Result<ResolvedInputs> {
     pipeline::resolve_inputs(opts)
 }
 
-pub use ext::typst::PAGEMD_LONG_ABOUT;
+pub use cli_help::PAGEMD_LONG_ABOUT;

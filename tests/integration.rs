@@ -65,10 +65,6 @@ fn plantuml_count(html: &str) -> usize {
     html.matches("plantuml-display").count()
 }
 
-fn typst_count(html: &str) -> usize {
-    html.matches("class=\"typst-display\"").count()
-}
-
 fn diagram_html_count(html: &str) -> usize {
     html.matches("class=\"diagram-html-display\"").count()
 }
@@ -1035,16 +1031,6 @@ fn plantuml_uses_a_stable_light_canvas_in_all_page_themes() {
 }
 
 #[test]
-fn typst_code_block_renders_svg() {
-    let html = render_html(
-        "```typst\n#circle(radius: 30pt, fill: blue.lighten(30%))\n#text(size: 14pt)[Hello Typst]\n```\n",
-    );
-    assert_eq!(typst_count(&html), 1);
-    assert!(html.contains("<svg") || html.contains("Typst render failed"));
-    assert!(!html.contains("language-typst"));
-}
-
-#[test]
 fn diagram_html_code_block_renders_raw_html() {
     let html = render_html(
         "```diagram html\n<div class=\"rounded-xl bg-sky-50 p-4\">Graph node</div>\n```\n",
@@ -1179,25 +1165,6 @@ fn eager_html_without_diagram_html_does_not_ship_tailwind_runtime() {
     );
     assert!(!html.contains("data-pagemd-diagram-html"));
     assert!(!html.contains("type=\"text/tailwindcss\""));
-}
-
-#[test]
-fn bundled_typst_packages_are_embedded() {
-    assert_eq!(pagemd::core::ext::typst::bundled_specs().len(), 3);
-}
-
-#[test]
-fn typst_cetz_package_renders_svg() {
-    let html = render_html(
-        "```typst\n#import \"@preview/cetz:0.3.2\"\n#cetz.canvas({\n  import cetz.draw: *\n  circle((0, 0), radius: 1)\n})\n```\n",
-    );
-    assert_eq!(typst_count(&html), 1);
-    assert!(
-        html.contains("<svg"),
-        "expected cetz diagram SVG, got: {}",
-        &html[..html.len().min(500)]
-    );
-    assert!(!html.contains("Typst render failed"));
 }
 
 #[test]
@@ -1415,4 +1382,13 @@ fn default_export_keeps_workspace_chrome_for_headings() {
     assert!(html.contains("data-doc-workspace"));
     assert!(html.contains("doc-topbar"));
     assert!(html.contains("data-pagemd-workspace"));
+}
+
+#[test]
+fn typst_fence_is_preserved_as_code() {
+    let html = render_html("```typst\n#circle(radius: 30pt)\n```\n");
+    assert!(html.contains("language-typst"));
+    assert!(html.contains("#circle"));
+    assert!(!html.contains("class=\"typst-display\""));
+    assert!(!pagemd::diagram_help().contains("```typst"));
 }

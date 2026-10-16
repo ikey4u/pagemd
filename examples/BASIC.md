@@ -106,7 +106,7 @@ fn main() {
 ```
 
 ```typescript
-const features = ['markdown', 'math', 'mermaid', 'plantuml', 'typst', 'diagram html', 'callouts'];
+const features = ['markdown', 'math', 'mermaid', 'plantuml', 'diagram html', 'callouts'];
 console.log(features.join(', '));
 ```
 
@@ -160,11 +160,9 @@ flowchart TB
     Pipeline[render_markdown_with_depth] --> Engines
     Engines --> Merman[merman SVG]
     Engines --> PlantUML[PlantUML SVG]
-    Engines --> Typst[Typst SVG]
     Engines --> HtmlDiag[diagram html + inlined Tailwind]
     Merman --> Bundle[Single HTML]
     PlantUML --> Bundle
-    Typst --> Bundle
     HtmlDiag --> Bundle
   end
 
@@ -195,7 +193,7 @@ sequenceDiagram
     alt mermaid / mmd
       Core->>Merman: render_svg_sync
       Merman-->>Core: SVG
-    else plantuml / typst / diagram html
+    else plantuml / diagram html
       Core->>Core: engine-specific render
     end
   end
@@ -292,7 +290,7 @@ gantt
   section Render
     Markdown + extensions    :b1, after a2, 5
     Mermaid via merman       :b2, after b1, 3
-    PlantUML / Typst / HTML  :b3, after b1, 4
+    PlantUML / HTML  :b3, after b1, 4
   section Export
     Build nav + outline      :c1, after b2, 2
     Write single HTML        :c2, after c1, 1
@@ -309,26 +307,6 @@ User -> PageMD: Convert examples/BASIC.md
 PageMD -> HTML: Embed content and resources
 HTML --> User: Open locally
 @enduml
-```
-
-## Typst
-
-Built-in packages (offline): `@preview/cetz:0.3.2`, `@preview/fletcher:0.5.8`, `@preview/codelst:2.0.2`.
-
-```typst
-#import "@preview/cetz:0.3.2"
-#cetz.canvas({
-  import cetz.draw: *
-  circle((0, 0), radius: 1, fill: rgb("#0969da").lighten(35%))
-  content((0, 0), [$arrow.r$ PageMD], anchor: "center")
-})
-```
-
-Plain Typst (no package) also works:
-
-```typst
-#circle(radius: 28pt, fill: rgb("#0969da").lighten(40%))
-#text(size: 12pt)[Typst → SVG]
 ```
 
 ## HTML Diagram
@@ -398,10 +376,6 @@ Architecture (convert vs view, engines, artifacts):
     <div class="rounded-xl border border-amber-200 bg-amber-50 p-3">
       <div class="text-xs font-bold text-amber-700">PlantUML</div>
       <div class="mt-1 font-semibold text-slate-800">Fetched at convert time, SVG embedded</div>
-    </div>
-    <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-      <div class="text-xs font-bold text-emerald-700">Typst</div>
-      <div class="mt-1 font-semibold text-slate-800">Offline @preview packages via rust-embed</div>
     </div>
     <div class="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
       <div class="text-xs font-bold text-indigo-700">diagram html</div>
