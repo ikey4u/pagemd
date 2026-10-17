@@ -2,6 +2,57 @@
 use pagemd_parser::{mdast::Node, ParseOptions};
 
 #[test]
+fn cjk_punctuation_emphasis_allows_adjacent_latin_text_and_digits() {
+    for (source, expected) in [
+        ("**中文句号。**EML", "<p><strong>中文句号。</strong>EML</p>"),
+        ("**中文逗号，**EML", "<p><strong>中文逗号，</strong>EML</p>"),
+        ("**中文冒号：**ABC", "<p><strong>中文冒号：</strong>ABC</p>"),
+        (
+            "**中文括号（说明）**v2",
+            "<p><strong>中文括号（说明）</strong>v2</p>",
+        ),
+        ("**中文句号。**123", "<p><strong>中文句号。</strong>123</p>"),
+        (
+            "ASCII**「中文」**after",
+            "<p>ASCII<strong>「中文」</strong>after</p>",
+        ),
+        ("ASCII*（重点）*after", "<p>ASCII<em>（重点）</em>after</p>"),
+        (
+            "前***中文。***EML",
+            "<p>前<em><strong>中文。</strong></em>EML</p>",
+        ),
+        (
+            "**中文。**EML**重点。**ABC",
+            "<p><strong>中文。</strong>EML<strong>重点。</strong>ABC</p>",
+        ),
+    ] {
+        assert_eq!(pagemd_parser::to_html(source), expected, "{source}");
+    }
+}
+
+#[test]
+fn cjk_latin_boundary_normalization_preserves_non_prose_and_ascii_rules() {
+    for source in [
+        "`**中文。**EML`",
+        "```md\n**中文。**EML\n```",
+        "    **中文。**EML",
+        "\\*\\*中文。\\*\\*EML",
+        "[链接](https://example.com/**中文。**EML)",
+        "<div title=\"**中文。**EML\">text</div>",
+        "**English.**after",
+        "ABC**(English)**after",
+        "**中文。 **EML",
+    ] {
+        assert_eq!(
+            pagemd_parser::fix_emphasis_cjk_punctuation(source),
+            source,
+            "{source}"
+        );
+    }
+    assert!(!pagemd_parser::to_html("100**（税）**元").contains("<strong>"));
+}
+
+#[test]
 fn cjk_emphasis_handles_punctuation_next_to_chinese() {
     for (source, expected) in [
         (

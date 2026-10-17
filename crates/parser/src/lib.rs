@@ -280,11 +280,15 @@ fn insertion_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
         let before = source[..start].chars().next_back();
         let after = source[end..].chars().next();
         if before.is_some_and(is_punctuation)
-            && after.is_some_and(is_cjk_letter)
+            && (after.is_some_and(is_cjk_letter)
+                || (before.is_some_and(is_cjk_punctuation)
+                    && after.is_some_and(char::is_alphanumeric)))
         {
             offsets.push(start);
         }
-        if before.is_some_and(is_cjk_letter)
+        if (before.is_some_and(is_cjk_letter)
+            || (before.is_some_and(char::is_alphabetic)
+                && after.is_some_and(is_cjk_punctuation)))
             && after.is_some_and(is_punctuation)
         {
             offsets.push(end);
@@ -314,6 +318,16 @@ fn is_cjk_letter(ch: char) -> bool {
         | '\u{3041}'..='\u{3096}' | '\u{30a1}'..='\u{30fa}' | '\u{31f0}'..='\u{31ff}'
         | '\u{1100}'..='\u{11ff}' | '\u{3131}'..='\u{318e}' | '\u{a960}'..='\u{a97f}'
         | '\u{ac00}'..='\u{d7af}' | '\u{d7b0}'..='\u{d7ff}')
+}
+
+// CJK punctuation remains a CJK boundary when the neighboring prose switches
+// to Latin letters or digits, as in **中文。**EML. Keep ASCII punctuation's
+// CommonMark rules and the existing restriction on digit-led opening markers.
+fn is_cjk_punctuation(ch: char) -> bool {
+    is_punctuation(ch)
+        && matches!(ch,
+            '\u{3001}'..='\u{303f}' | '\u{fe10}'..='\u{fe1f}'
+            | '\u{fe30}'..='\u{fe4f}' | '\u{ff01}'..='\u{ff65}')
 }
 
 // PageMD accepts padded inline math. Pulldown-cmark's delimiter flanking

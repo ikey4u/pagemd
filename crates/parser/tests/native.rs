@@ -37,6 +37,36 @@ fn cjk_ast_offsets_and_points_refer_to_the_original_crlf_source() {
 }
 
 #[test]
+fn cjk_latin_boundaries_preserve_source_events_and_utf8_positions() {
+    let source = "前**中文。**EML\r\n\r\nASCII**「中文」**after";
+    let parsed = pagemd_parser::parse(source, &ParseOptions::gfm()).unwrap();
+    assert_eq!(parsed.source(), source);
+    let location = pagemd_parser::Location::new(source.as_bytes());
+    let mut strong = Vec::new();
+    visit(parsed.ast(), &mut |node| {
+        let position = node.position().unwrap();
+        assert_eq!(
+            location.to_point(position.start.offset).unwrap(),
+            position.start
+        );
+        assert_eq!(
+            location.to_point(position.end.offset).unwrap(),
+            position.end
+        );
+        if matches!(node, Node::Strong(_)) {
+            strong.push(&source[position.start.offset..position.end.offset]);
+        }
+    });
+    assert_eq!(strong, ["**中文。**", "**「中文」**"]);
+    for event in parsed.source_events() {
+        assert!(source.get(event.range.clone()).is_some());
+        if let pagemd_parser::events::Event::Text(text) = &event.event {
+            assert!(!text.contains('\u{200b}'));
+        }
+    }
+}
+
+#[test]
 fn user_zero_width_characters_and_entities_are_preserved() {
     for source in [
         "前**「重\u{200b}点」**后",
