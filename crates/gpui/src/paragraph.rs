@@ -317,12 +317,14 @@ impl Element for NativeParagraph {
                         PlanKind::Text(range) => {
                             let (element, layout) =
                                 self.fragment(range.clone(), typography);
-                            let mut wrapper = div()
-                                .w(plan.size.width)
-                                .h(plan.size.height)
-                                .whitespace_nowrap();
+                            let mut wrapper =
+                                div().w(plan.size.width).h(plan.size.height);
                             wrapper.style().text =
                                 typography.subtract(&Default::default());
+                            // These fragments are already wrapped by `wrap`.
+                            // Apply nowrap after copying typography so that its
+                            // whitespace refinement cannot restore wrapping.
+                            wrapper = wrapper.whitespace_nowrap();
                             (
                                 wrapper.child(element).into_any_element(),
                                 Some(layout),

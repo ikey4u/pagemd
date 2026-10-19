@@ -134,6 +134,64 @@ fn mixed_inline_elements_share_a_baseline_and_hidden_reveals_work(
     assert!(revealed.get().top() < px(-999_000.));
 }
 
+struct WrappedMixedHost {
+    document: Entity<MarkdownViewState>,
+    width: f32,
+}
+impl Render for WrappedMixedHost {
+    fn render(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .w(px(self.width))
+            .text_size(px(16.))
+            .line_height(px(24.))
+            .child(MarkdownView::new(&self.document).markdown_extensions(
+                MarkdownExtensions::default().plugin(Formula),
+            ))
+    }
+}
+
+#[gpui_kit::test]
+fn mixed_inline_fragments_never_wrap_a_second_time(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    for source in [
+        "- **Handshake**:\n  - `hello { protocol, id, capabilities, last_epoch, cursors }` $\\rightarrow$ `welcome { protocol, epoch, capabilities, mode }`（确认后激活）。",
+        "1. **多层转换（JSON $\\rightarrow$ HTTP SSE 文本字节流 $\\rightarrow$ 二进制 Chunk 隧道 $\\rightarrow$ 拼包解析 SSE 文本 $\\rightarrow$ 还原 JSON）**",
+    ] {
+        for width in [180., 240., 360., 600., 816.] {
+            let mut document = None;
+            let (_, cx) = cx.add_window_view(|window, cx| {
+                let state = render(source, cx);
+                document = Some(state.clone());
+                Root::new(
+                    cx.new(|_| WrappedMixedHost {
+                        document: state,
+                        width,
+                    }),
+                    window,
+                    cx,
+                )
+            });
+            let document = document.unwrap();
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                let frame = document.read(cx).frame.borrow();
+                assert!(!frame.objects.is_empty());
+                for (_, run) in &frame.runs {
+                    assert!(
+                        !run.layout().wrapped_text().contains('\n'),
+                        "a prewrapped fragment wrapped again at {width}px: {:?}",
+                        run.layout().wrapped_text(),
+                    );
+                }
+            });
+        }
+    }
+}
+
 struct CodeStyleHost(Entity<MarkdownViewState>);
 impl Render for CodeStyleHost {
     fn render(
