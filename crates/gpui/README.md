@@ -4,6 +4,9 @@
 It owns `MarkdownViewState`, block layout, inline shaping, document updates,
 selection/source mapping, search highlights and reveal geometry. It never calls
 GPUI Kit's Markdown or HTML `TextView` and needs no Cargo patch or parser bridge.
+Hovering link text shows its destination in a native tooltip, including wrapped
+links and local file references. Tooltip targets follow the visible glyph rows;
+paragraph gutters retain normal text selection and do not activate links.
 The format-independent GPUI selection service supplies window-wide gestures,
 copy integration and touch handles.
 

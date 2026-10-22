@@ -2,7 +2,10 @@
 //! text run, so CJK kerning and wrapping never split at formatting boundaries.
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
-use gpui_kit::{base::TextSelectionRun, *};
+use gpui_kit::{
+    base::{TestSupportExt as _, TextSelectionRun},
+    *,
+};
 
 use crate::{
     model::{self, Paragraph},
@@ -89,9 +92,10 @@ impl NativeParagraph {
         range: Range<usize>,
         typography: &TextStyle,
     ) -> (AnyElement, TextLayout) {
-        let text =
-            StyledText::new(self.paragraph.text[range.clone()].to_owned())
-                .with_runs(self.runs(range.clone(), typography));
+        let content: SharedString =
+            self.paragraph.text[range.clone()].to_owned().into();
+        let text = StyledText::new(content.clone())
+            .with_runs(self.runs(range.clone(), typography));
         let layout = text.layout().clone();
         let links: Vec<_> =
             self.paragraph
@@ -112,6 +116,7 @@ impl NativeParagraph {
                 .collect();
         let element = NativeTextLeaf {
             text,
+            content,
             range: self.paragraph.range.start + range.start
                 ..self.paragraph.range.start + range.end,
             highlights: self.highlights.clone(),
@@ -418,6 +423,7 @@ impl Element for NativeParagraph {
 }
 struct NativeTextLeaf {
     text: StyledText,
+    content: SharedString,
     range: Range<usize>,
     highlights: Vec<RangeHighlight>,
     selection_color: Hsla,
@@ -434,7 +440,7 @@ impl IntoElement for NativeTextLeaf {
 }
 impl Element for NativeTextLeaf {
     type RequestLayoutState = ();
-    type PrepaintState = Hitbox;
+    type PrepaintState = (Hitbox, Vec<AnyElement>);
     fn id(&self) -> Option<ElementId> {
         Some(("pagemd-text", self.range.start).into())
     }
@@ -469,11 +475,58 @@ impl Element for NativeTextLeaf {
         state: &mut (),
         window: &mut Window,
         cx: &mut App,
-    ) -> Hitbox {
+    ) -> Self::PrepaintState {
         // Prepaint the text directly, including offscreen measurement views.
         // A container may cull its children; reveal still needs their glyph geometry.
         self.text.prepaint(id, inspector, bounds, state, window, cx);
-        window.insert_hitbox(bounds, HitboxBehavior::Normal)
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        // Register tooltip targets before the first mouse move. One transparent
+        // target per wrapped glyph row keeps tooltips off paragraph gutters and
+        // leaves native text shaping, selection and link clicks untouched.
+        let mut tooltips = Vec::new();
+        for (index, (range, url)) in self.links.iter().enumerate() {
+            for (row, bounds) in
+                link_bounds(self.text.layout(), &self.content, range.clone())
+                    .into_iter()
+                    .enumerate()
+            {
+                let url = url.clone();
+                let mut tooltip = div()
+                    .id(SharedString::from(format!(
+                        "link-tooltip-{index}-{row}:{url}"
+                    )))
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .tooltip(move |window, cx| {
+                        let url = url.clone();
+                        gpui_kit::component::tooltip::Tooltip::element(
+                            move |_, _| {
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "markdown-link-destination:{url}"
+                                    )))
+                                    .test_support()
+                                    .max_w(px(480.))
+                                    .whitespace_normal()
+                                    .child(url.clone())
+                            },
+                        )
+                        .build(window, cx)
+                    })
+                    .into_any_element();
+                tooltip.layout_as_root(
+                    size(
+                        AvailableSpace::Definite(bounds.size.width),
+                        AvailableSpace::Definite(bounds.size.height),
+                    ),
+                    window,
+                    cx,
+                );
+                tooltip.prepaint_at(bounds.origin, window, cx);
+                tooltips.push(tooltip);
+            }
+        }
+        (hitbox, tooltips)
     }
     fn paint(
         &mut self,
@@ -481,10 +534,11 @@ impl Element for NativeTextLeaf {
         _: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         _: &mut (),
-        hitbox: &mut Hitbox,
+        state: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let (hitbox, tooltips) = state;
         let layout = self.text.layout();
         let _ = layout.paint_background(window, cx);
         for highlight in &self.highlights {
@@ -506,6 +560,9 @@ impl Element for NativeTextLeaf {
             );
         }
         let _ = layout.paint_foreground(window, cx);
+        for tooltip in tooltips {
+            tooltip.paint(window, cx);
+        }
         if !self.links.is_empty() {
             let hovered_link =
                 link_at_position(layout, &self.links, window.mouse_position());
@@ -591,6 +648,50 @@ impl Element for NativeTextLeaf {
         }
     }
 }
+fn link_bounds(
+    layout: &TextLayout,
+    text: &str,
+    range: Range<usize>,
+) -> Vec<Bounds<Pixels>> {
+    let mut rows: Vec<Bounds<Pixels>> = Vec::new();
+    let Some(text) = text.get(range.clone()) else {
+        return rows;
+    };
+    let height = layout.line_height();
+    for (offset, ch) in text.char_indices() {
+        if ch == '\n' || ch == '\r' {
+            continue;
+        }
+        let index = range.start + offset;
+        let (Some(mut start), Some(end)) = (
+            layout.position_for_index(index),
+            layout.position_for_index(index + ch.len_utf8()),
+        ) else {
+            continue;
+        };
+        // Caret positions at soft wraps have upstream affinity; the tooltip
+        // starts on the next row when this character's glyph is there.
+        if layout.index_for_position(start + point(px(0.1), height / 2.))
+            != Ok(index)
+        {
+            start = point(layout.bounds().left(), start.y + height);
+        }
+        if start.y != end.y || end.x <= start.x {
+            continue;
+        }
+        match rows.last_mut() {
+            Some(last)
+                if last.top() == start.y
+                    && (last.right() - start.x).abs() < px(1.) =>
+            {
+                last.size.width = end.x - last.left();
+            }
+            _ => rows.push(Bounds::new(start, size(end.x - start.x, height))),
+        }
+    }
+    rows
+}
+
 fn link_at_position(
     layout: &TextLayout,
     links: &[(Range<usize>, SharedString)],
