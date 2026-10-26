@@ -7,7 +7,7 @@ use pagemd_parser::{
     ParsedDocument,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Mark {
     pub bold: bool,
     pub italic: bool,
@@ -146,6 +146,59 @@ fn hull(
 }
 pub(crate) fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
     a.start < b.end && b.start < a.end
+}
+/// A selection contained in one leaf and one inline style can copy plain text.
+/// Structural boundaries and inline objects retain the original source.
+pub(crate) fn selection_has_one_style(
+    blocks: &[Block],
+    range: &Range<usize>,
+) -> bool {
+    blocks.iter().any(|block| match &block.kind {
+        Kind::Paragraph(p) | Kind::Heading(_, p) | Kind::Code(_, p) => {
+            paragraph_has_one_style(p, range)
+        }
+        Kind::Group(children) | Kind::Quote(children) => {
+            selection_has_one_style(children, range)
+        }
+        Kind::List { items, .. } => items
+            .iter()
+            .any(|(_, children)| selection_has_one_style(children, range)),
+        Kind::Table { rows, .. } => rows
+            .iter()
+            .flatten()
+            .any(|p| paragraph_has_one_style(p, range)),
+        Kind::Math(_) | Kind::Rule => false,
+    })
+}
+fn paragraph_has_one_style(p: &Paragraph, range: &Range<usize>) -> bool {
+    if range.start >= range.end
+        || range.start < p.range.start
+        || range.end > p.range.end
+    {
+        return false;
+    }
+    let local = range.start - p.range.start..range.end - p.range.start;
+    if p.objects
+        .iter()
+        .any(|object| overlaps(&object.range, &local))
+    {
+        return false;
+    }
+    let mut spans = p.spans.iter().filter(|span| overlaps(&span.range, &local));
+    let Some(first) = spans.next() else {
+        return false;
+    };
+    let mut end = first.range.end;
+    if first.range.start > local.start {
+        return false;
+    }
+    for span in spans {
+        if span.mark != first.mark || span.range.start > end {
+            return false;
+        }
+        end = end.max(span.range.end);
+    }
+    end >= local.end
 }
 pub(crate) fn build(document: &ParsedDocument) -> (Vec<Block>, Arc<Index>) {
     let mut builder = Builder {

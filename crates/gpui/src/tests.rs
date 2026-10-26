@@ -397,3 +397,47 @@ fn inline_html_spans_cover_each_utf8_byte_once() {
         blocks.iter().for_each(check_block);
     }
 }
+
+#[gpui_kit::test]
+fn source_across_styles_preserves_structure_and_plain_runs(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    for (source, selection, plain) in [
+        ("plain **bold** tail", "bold", true),
+        ("plain **bold** tail", "bold tail", false),
+        ("plain **bold** tail", "plain bold", false),
+        ("**bold _italic_ bold**", "bold italic", false),
+        ("[link](https://example.com)", "link", true),
+        ("# Heading", "Heading", true),
+        ("```rust\nlet value = 1;\n```", "let value", true),
+        ("first\n\nsecond", "first\nsecond", false),
+        ("- first\n- second", "first\nsecond", false),
+        ("| A | B |\n| - | - |\n| one | two |", "one two", false),
+        ("before $x$ after", "x", false),
+        ("before ![image](image.png) after", "image", false),
+    ] {
+        let state = cx.update(|cx| render(source, cx));
+        cx.update(|cx| {
+            state.update(cx, |state, cx| {
+                let rendered = state.rendered_text();
+                let start = rendered.as_str().find(selection).expect(selection);
+                let range = start..start + selection.len();
+                state.frame.borrow_mut().selected = Some(range);
+                state.set_selection_format(SelectionFormat::Source, cx);
+                let original = state.selected_text();
+                state.set_selection_format(
+                    SelectionFormat::SourceAcrossStyles,
+                    cx,
+                );
+                assert_eq!(
+                    state.selected_text(),
+                    if plain { selection } else { &original },
+                    "{source}"
+                );
+                state.select_all(cx);
+                assert_eq!(state.selected_text(), source);
+            })
+        });
+    }
+}

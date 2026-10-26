@@ -8,10 +8,10 @@ description = "PageMD's built-in native GPUI renderer"
 [workspace]
 [dependencies]
 pagemd-parser = { path = "../parser" }
-gpui-kit = "=0.7.3"
+gpui-kit = "=0.8.1"
 html-escape = "0.2"
 html5ever = "0.27"
 markup5ever_rcdom = "0.3"
 unicode-linebreak = "0.1"
 [dev-dependencies]
-gpui-kit = { version = "=0.7.3", features = ["test-support"] }
+gpui-kit = { version = "=0.8.1", features = ["test-support"] }

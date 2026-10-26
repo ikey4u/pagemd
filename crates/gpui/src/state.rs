@@ -224,22 +224,35 @@ impl MarkdownViewState {
         let rendered = self.rendered_text();
         if self.all_selected {
             return match self.format {
-                SelectionFormat::Source => self.document.source().to_owned(),
+                SelectionFormat::Source
+                | SelectionFormat::SourceAcrossStyles => {
+                    self.document.source().to_owned()
+                }
                 SelectionFormat::Plain => rendered.as_str().to_owned(),
             };
         }
         let Some(range) = self.frame.borrow().selected.clone() else {
             return String::new();
         };
-        match self.format {
+        let format = match self.format {
+            SelectionFormat::SourceAcrossStyles
+                if model::selection_has_one_style(&self.blocks, &range) =>
+            {
+                SelectionFormat::Plain
+            }
+            SelectionFormat::SourceAcrossStyles => SelectionFormat::Source,
+            format => format,
+        };
+        match format {
             SelectionFormat::Plain => {
                 rendered.as_str().get(range).unwrap_or_default().to_owned()
             }
-            SelectionFormat::Source => self
-                .selected_source_range()
-                .and_then(|r| self.document.source().get(r))
-                .unwrap_or_default()
-                .to_owned(),
+            SelectionFormat::Source | SelectionFormat::SourceAcrossStyles => {
+                self.selected_source_range()
+                    .and_then(|r| self.document.source().get(r))
+                    .unwrap_or_default()
+                    .to_owned()
+            }
         }
     }
     pub fn select_all(&mut self, cx: &mut Context<Self>) {
