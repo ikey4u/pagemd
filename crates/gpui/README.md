@@ -10,6 +10,10 @@ paragraph gutters retain normal text selection and do not activate links.
 The format-independent GPUI selection service supplies window-wide gestures,
 copy integration and touch handles.
 
+Consecutive lines in Markdown blockquotes keep their visible line breaks,
+matching PageMD's HTML renderer. Soft breaks in ordinary paragraphs still
+collapse to spaces. Source selection and copying retain the original Markdown.
+
 ```rust,ignore
 use pagemd_gpui::{GpuiRenderer, Renderer, MarkdownView};
 let document = pagemd_parser::parse(source, &GpuiRenderer::parse_options())?;

@@ -153,6 +153,7 @@ pub(crate) fn build(document: &ParsedDocument) -> (Vec<Block>, Arc<Index>) {
         text: String::new(),
         mapping: vec![],
         definitions: HashMap::new(),
+        blockquote_depth: 0,
     };
     fn definitions(node: &Node, out: &mut HashMap<String, String>) {
         if let Node::Definition(n) = node {
@@ -186,6 +187,7 @@ struct Builder<'a> {
     text: String,
     mapping: Vec<SourceSpan>,
     definitions: HashMap<String, String>,
+    blockquote_depth: usize,
 }
 impl Builder<'_> {
     fn block(&mut self, node: &Node) -> Option<Block> {
@@ -214,9 +216,13 @@ impl Builder<'_> {
                 }
                 Kind::Group(children)
             }
-            Node::Blockquote(n) => Kind::Quote(
-                n.children.iter().filter_map(|c| self.block(c)).collect(),
-            ),
+            Node::Blockquote(n) => {
+                self.blockquote_depth += 1;
+                let children =
+                    n.children.iter().filter_map(|c| self.block(c)).collect();
+                self.blockquote_depth -= 1;
+                Kind::Quote(children)
+            }
             Node::List(n) => Kind::List {
                 ordered: n.ordered,
                 start: n.start.unwrap_or(1),
@@ -342,11 +348,19 @@ impl Builder<'_> {
         }
         let offset = self.text.len();
         match node {
-            Node::Text(n) => self.append(
-                &n.value.replace("\r\n", " ").replace(['\n', '\r'], " "),
-                node,
-                false,
-            ),
+            Node::Text(n) => {
+                // Match the HTML renderer: quoted lines retain visible breaks,
+                // while ordinary paragraph soft breaks collapse to spaces.
+                let newline =
+                    if self.blockquote_depth > 0 { "\n" } else { " " };
+                self.append(
+                    &n.value
+                        .replace("\r\n", newline)
+                        .replace(['\n', '\r'], newline),
+                    node,
+                    false,
+                );
+            }
             Node::InlineCode(n) => {
                 mark.code = true;
                 self.append(&n.value, node, true);

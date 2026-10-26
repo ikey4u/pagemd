@@ -21,6 +21,106 @@ fn native_raw_html_and_soft_breaks_keep_readable_text(cx: &mut TestAppContext) {
         });
     }
 }
+#[gpui_kit::test]
+fn native_blockquote_soft_breaks_preserve_lines_and_source(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    for (source, expected) in [
+        (
+            "> Owner: Sloud\n> Scope: `worker`\n> 依据: Rust &amp; API\n> Status: **needs changes**",
+            "Owner: Sloud\nScope: worker\n依据: Rust & API\nStatus: needs changes\n",
+        ),
+        (
+            "> outer\n> line\n>\n> > nested\n> > line\n>\n> after\n> nested\n\nnormal\nparagraph",
+            "outer\nline\nnested\nline\nafter\nnested\nnormal paragraph\n",
+        ),
+        (
+            "> - item\n>   continuation\n\n- ordinary\n  continuation",
+            "item\ncontinuation\nordinary continuation\n",
+        ),
+        (
+            "> first\r\n> second  \r\n> third\r\n\r\nnormal\r\nparagraph",
+            "first\nsecond\nthird\nnormal paragraph\n",
+        ),
+    ] {
+        let state = cx.update(|cx| render(source, cx));
+        cx.update(|cx| {
+            state.update(cx, |state, cx| {
+                let text = state.rendered_text();
+                assert_eq!(text.as_str(), expected, "source: {source}");
+                assert_eq!(text.source(), source);
+                for word in ["Sloud", "worker", "依据", "needs changes"] {
+                    if let Some(start) = source.find(word) {
+                        let range = text
+                            .range_for_source(start..start + word.len())
+                            .unwrap();
+                        assert_eq!(&text.as_str()[range], word);
+                    }
+                }
+                // Soft breaks retain character-level mappings in both directions.
+                for (start, _) in source.match_indices('\n') {
+                    if let Some(range) = text.range_for_source(start..start + 1)
+                    {
+                        assert!(matches!(
+                            &text.as_str()[range.clone()],
+                            "\n" | " "
+                        ));
+                        assert!(
+                            text.source_for_range(range)
+                                .unwrap()
+                                .contains(&start)
+                        );
+                    }
+                }
+                state.select_all(cx);
+                assert_eq!(state.selected_text(), source);
+                state.set_selection_format(SelectionFormat::Plain, cx);
+                assert_eq!(state.selected_text(), expected);
+            });
+        });
+    }
+}
+
+#[gpui_kit::test]
+fn native_blockquote_fields_layout_on_separate_rows(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut document = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let state = render(
+            "> Owner: Sloud\n> Scope: `worker`\n> Status: **needs changes**",
+            cx,
+        );
+        document = Some(state.clone());
+        Root::new(
+            cx.new(|_| MixedHost {
+                document: state,
+                revealed: Rc::new(Cell::new(Bounds::default())),
+                hidden: false,
+            }),
+            window,
+            cx,
+        )
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        let state = document.as_ref().unwrap().read(cx);
+        let frame = state.frame.borrow();
+        let layout = frame.runs[0].1.layout();
+        let text = state.rendered_text();
+        let mut previous = None;
+        for label in ["Owner:", "Scope:", "Status:"] {
+            let row = layout
+                .position_for_index(text.as_str().find(label).unwrap())
+                .unwrap();
+            if let Some(y) = previous {
+                assert!(row.y > y, "{label} must start on its own row");
+            }
+            previous = Some(row.y);
+        }
+    });
+}
+
 struct Formula;
 impl MarkdownPlugin for Formula {
     fn name(&self) -> &str {
