@@ -31,15 +31,7 @@ pagemd-gpui = { path = "crates/gpui", optional = true }
 clap = { version = "4.6", features = ["derive"] }
 syntect = "5.3"
 base64 = "0.22"
-# Keep the stable Mermaid layout stack aligned across HTML and GPUI builds.
-merman = { version = "=0.8.0", features = ["complete-svg-elk"] }
-merman-core = "=0.8.0"
-merman-render = "=0.8.0"
-merman-layout-elk = "=0.8.0"
-merman-elk-layered = "=0.8.0"
-dugong = "=0.8.0"
-dugong-graphlib = "=0.8.0"
-manatee = "=0.8.0"
+bezel_mermaid = { package = "bezel-mermaid", git = "https://github.com/crabtalk/bezel.git", rev = "556c045372074c5cf76426626f19fb376fdfb2c0" }
 plantuml_encoding = "2.0.3"
 regex = "1.12"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

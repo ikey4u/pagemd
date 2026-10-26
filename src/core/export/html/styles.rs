@@ -1368,6 +1368,18 @@ img {
   box-shadow: none;
 }
 
+/* Bezel SVG tokens follow the document theme, including script-free exports. */
+.mermaid-display {
+  --bezel-bg: var(--mermaid-bg);
+  --bezel-fg: var(--mermaid-fg);
+  --bezel-muted: var(--mermaid-muted);
+  --bezel-line: var(--mermaid-line);
+  --bezel-surface: var(--mermaid-surface);
+  --bezel-surface-alt: var(--mermaid-surface);
+  --bezel-border: var(--mermaid-border);
+  --bezel-accent: var(--mermaid-accent);
+}
+
 .mermaid-canvas {
   display: block;
   width: max-content;

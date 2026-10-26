@@ -852,6 +852,27 @@ fn mermaid_code_block_renders_svg() {
 }
 
 #[test]
+fn native_mermaid_uses_bezel_and_keeps_diagram_ids_unique() {
+    let html = render_html("```mermaid\nflowchart LR\naccTitle: Accessible diagram\nA[开始] --> B[完成]\n```\n\n```mermaid\nflowchart LR\naccTitle: Accessible diagram\nA[开始] --> B[完成]\n```\n");
+    assert_eq!(mermaid_count(&html), 2);
+    let ids: Vec<_> = regex::Regex::new(r#"id="(pagemd-mermaid-[^"]+)""#)
+        .unwrap().captures_iter(&html).map(|c| c[1].to_owned()).collect();
+    assert!(!ids.is_empty());
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(ids.len(), unique.len(), "duplicate SVG ids across diagrams");
+    assert!(html.contains("bezel-"));
+    assert!(html.contains("开始"));
+    assert!(!html.contains("foreignObject"));
+}
+
+#[test]
+fn invalid_native_mermaid_keeps_its_source_in_the_error_block() {
+    let html = render_html("```mermaid\nsequenceDiagram\nA sends B hello\n```\n");
+    assert!(html.contains("Mermaid render failed"));
+    assert!(html.contains("A sends B hello"));
+}
+
+#[test]
 fn client_mermaid_uses_native_light_and_dark_themes() {
     let script = include_str!("../assets/mermaid-init.js");
 

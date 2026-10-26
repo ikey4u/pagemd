@@ -66,3 +66,6 @@ pub use pagemd_gpui as gpui;
 /// Shared Markdown parsing and backend-neutral renderer interface.
 pub use pagemd_parser as parser;
 pub use pagemd_parser::{parse as analyze_markdown, ParsedDocument, Renderer};
+
+/// Headless Mermaid engine shared by static HTML and embedding applications.
+pub use bezel_mermaid as mermaid;
