@@ -11,7 +11,10 @@ The format-independent GPUI selection service supplies window-wide gestures,
 copy integration and touch handles. The renderer targets GPUI Kit 0.8.1.
 `SelectionFormat::SourceAcrossStyles` copies plain text inside one style and
 preserves source across formatting, block boundaries and inline objects;
-select-all always retains the complete source.
+select-all always retains the complete source. Hosts quoting the visible selection can
+call `selected_text_with_format(SelectionFormat::Plain)` without changing the
+view's configured clipboard mode. This reads the actual highlighted text even
+when a source mapping covers an entire HTML node.
 
 Consecutive lines in Markdown blockquotes keep their visible line breaks,
 matching PageMD's HTML renderer. Soft breaks in ordinary paragraphs still

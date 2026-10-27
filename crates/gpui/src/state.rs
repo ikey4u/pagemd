@@ -221,9 +221,16 @@ impl MarkdownViewState {
         }
     }
     pub fn selected_text(&self) -> String {
+        self.selected_text_with_format(self.format)
+    }
+    /// Read the exact selected display text with `Plain`, or its source with
+    /// `Source`, without changing the view's configured clipboard format.
+    /// Source mappings can cover an entire HTML node or inline object even
+    /// when the visible text selection covers only part of it.
+    pub fn selected_text_with_format(&self, format: SelectionFormat) -> String {
         let rendered = self.rendered_text();
         if self.all_selected {
-            return match self.format {
+            return match format {
                 SelectionFormat::Source
                 | SelectionFormat::SourceAcrossStyles => {
                     self.document.source().to_owned()
@@ -234,7 +241,7 @@ impl MarkdownViewState {
         let Some(range) = self.frame.borrow().selected.clone() else {
             return String::new();
         };
-        let format = match self.format {
+        let format = match format {
             SelectionFormat::SourceAcrossStyles
                 if model::selection_has_one_style(&self.blocks, &range) =>
             {

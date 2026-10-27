@@ -441,3 +441,54 @@ fn source_across_styles_preserves_structure_and_plain_runs(
         });
     }
 }
+
+#[gpui_kit::test]
+fn explicit_selection_format_reads_only_the_selection_without_changing_copy_mode(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    for (source, selected) in [
+        ("<p>before <strong>selected</strong> after</p>", "selected"),
+        ("前文 **选中的中文🙂** 后文", "选中的中文🙂"),
+        ("Intro `code **literal**` tail", "code **literal**"),
+        ("left &amp; right", "&"),
+        ("> first\n> selected\n> last", "selected"),
+    ] {
+        let state = cx.update(|cx| render(source, cx));
+        cx.update(|cx| {
+            state.update(cx, |state, cx| {
+                let rendered = state.rendered_text();
+                let start = rendered.as_str().find(selected).unwrap();
+                state.frame.borrow_mut().selected =
+                    Some(start..start + selected.len());
+                let original = state.selected_text();
+                if source.starts_with("<p>") {
+                    assert_eq!(
+                        original, source,
+                        "HTML source maps the complete node"
+                    );
+                }
+                assert_eq!(
+                    state.selected_text_with_format(SelectionFormat::Plain),
+                    selected
+                );
+                assert_eq!(
+                    state.selected_text(),
+                    original,
+                    "reading must not change the clipboard mode"
+                );
+                state.select_all(cx);
+                assert_eq!(
+                    state.selected_text_with_format(SelectionFormat::Plain),
+                    rendered.as_str()
+                );
+                assert_eq!(state.selected_text(), source);
+                state.clear_selection(cx);
+                assert_eq!(
+                    state.selected_text_with_format(SelectionFormat::Plain),
+                    ""
+                );
+            })
+        });
+    }
+}
