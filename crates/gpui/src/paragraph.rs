@@ -256,8 +256,18 @@ impl Element for NativeParagraph {
         let runs = self.runs(0..paragraph.text.len(), &typography);
         let text_style = typography.clone();
         let rem = window.rem_size();
+        // Indivisible inline objects establish a real intrinsic minimum.
+        // Otherwise flex layout shrinks the paragraph's box while its object
+        // keeps painting at full width, leaving scroll containers unaware.
+        let mut layout_style = Style::default();
+        layout_style.min_size.width = metrics
+            .iter()
+            .map(|(_, size, _)| size.width)
+            .max()
+            .unwrap_or(px(0.))
+            .into();
         let id = window.request_measured_layout(
-            Default::default(),
+            layout_style,
             move |known, available, window, _| {
                 let width = known
                     .width
@@ -937,7 +947,7 @@ fn wrap(
         line_height,
     );
     let _ = row_height;
-    (plans, size(max_width.min(width), y + final_height))
+    (plans, size(max_width, y + final_height))
 }
 
 fn align_row(

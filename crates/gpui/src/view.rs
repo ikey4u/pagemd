@@ -2,7 +2,7 @@
 use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui_kit::{
-    base::{TextSelection, TextSelectionRegistration},
+    base::{TestSupportExt as _, TextSelection, TextSelectionRegistration},
     component::ActiveTheme as _,
     *,
 };
@@ -620,6 +620,11 @@ impl Blocks {
                     }
                     for (column, p) in row.iter().enumerate() {
                         let mut cell = div()
+                            .id(SharedString::from(format!(
+                                "pagemd-table-cell-{}-{i}-{column}",
+                                block.range.start
+                            )))
+                            .test_support()
                             .flex_1()
                             .min_w_0()
                             .px_3()
@@ -637,7 +642,12 @@ impl Blocks {
                             }
                             _ => cell,
                         };
-                        d = d.child(cell.child(self.paragraph(p)));
+                        // Keep an indivisible formula inside its own cell.
+                        // The paragraph reports its full intrinsic width so a
+                        // narrow cell can scroll instead of painting over peers.
+                        d = d.child(
+                            cell.overflow_x_scroll().child(self.paragraph(p)),
+                        );
                     }
                     table = table.child(d);
                 }

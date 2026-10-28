@@ -492,3 +492,120 @@ fn explicit_selection_format_reads_only_the_selection_without_changing_copy_mode
         });
     }
 }
+
+struct WideFormula;
+impl MarkdownPlugin for WideFormula {
+    fn name(&self) -> &str {
+        "wide-formula"
+    }
+    fn parse(
+        &self,
+        node: &pagemd_parser::mdast::Node,
+        cx: &MarkdownParseContext<'_>,
+    ) -> Option<MarkdownNode> {
+        Formula.parse(node, cx)
+    }
+    fn render_inline(
+        &self,
+        _: &MarkdownNode,
+        _: &InlineRenderContext,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<InlineElement> {
+        Some(InlineElement::new(
+            div().w(px(600.)).h(px(30.)).bg(rgb(0x00ff00)),
+        ))
+    }
+}
+struct TableHost {
+    document: Entity<MarkdownViewState>,
+    width: f32,
+}
+impl Render for TableHost {
+    fn render(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div().size_full().child(
+            div()
+                .w(px(self.width))
+                .text_size(px(16.))
+                .line_height(px(24.))
+                .child(MarkdownView::new(&self.document).markdown_extensions(
+                    MarkdownExtensions::default().plugin(WideFormula),
+                )),
+        )
+    }
+}
+#[gpui_kit::test]
+fn wide_table_formula_scrolls_within_its_cell(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(gpui_kit::init);
+    let mut state = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let document = render(
+            "| Formula | Neighbor |\n| --- | --- |\n| $x$ | keep visible |",
+            cx,
+        );
+        state = Some(document.clone());
+        Root::new(
+            cx.new(|_| TableHost {
+                document,
+                width: 360.,
+            }),
+            window,
+            cx,
+        )
+    });
+    let document = state.unwrap();
+    cx.run_until_parked();
+    let (before, peer) = cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        let cell = window.find("pagemd-table-cell-0-1-0").bounds();
+        let peer = window.find("pagemd-table-cell-0-1-1").bounds();
+        assert!(cell.right() <= peer.left());
+        let object = document.read(cx).frame.borrow().objects[0].1;
+        assert_eq!(object.size.width, px(600.));
+        assert!(object.size.width > cell.size.width);
+        (object.left(), peer)
+    });
+    cx.update(|window, cx| {
+        window.scroll(
+            "pagemd-table-cell-0-1-0",
+            ScrollDelta::Pixels(point(px(-120.), px(0.))),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(
+            document.read(cx).frame.borrow().objects[0].1.left() < before,
+            "the entire formula must remain reachable by scrolling"
+        );
+        assert_eq!(window.find("pagemd-table-cell-0-1-1").bounds(), peer);
+    });
+}
+#[gpui_kit::test]
+fn native_table_currency_copy_and_mapping_remain_literal(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let source = "| Price | Result |\n| --- | --- |\n| CPU $0.000014/vCPU·s；RAM $0.0000045/GiB·s | $0.082800 ≈ **¥0.5521** |";
+    let state = cx.update(|cx| render(source, cx));
+    cx.update(|cx| {
+        state.update(cx, |state, cx| {
+            let text = state.rendered_text();
+            for label in ["$0.000014", "$0.0000045", "$0.082800", "¥0.5521"] {
+                assert!(text.as_str().contains(label));
+                let at = source.find(label).unwrap();
+                let range =
+                    text.range_for_source(at..at + label.len()).unwrap();
+                assert_eq!(&text.as_str()[range], label);
+            }
+            state.select_all(cx);
+            assert_eq!(state.selected_text(), source);
+        });
+    });
+}
