@@ -275,3 +275,33 @@ fn currencies_coexist_with_numeric_padded_and_explicit_math() {
         assert_eq!(document.source(), source);
     }
 }
+
+#[test]
+fn isolated_currency_does_not_swallow_real_math_or_its_formatting() {
+    let mut options = ParseOptions::gfm();
+    options.constructs.math_text = true;
+    options.constructs.math_flow = true;
+    for (source, expected) in [
+        ("Budget $5 per call; formula $x^2$.", vec!["x^2"]),
+        ("价格 $150/月另收。计算 $x + y$。", vec!["x + y"]),
+        ("$-5 per request, then $2 + x$.", vec!["2 + x"]),
+        (
+            "The fee is $0.25/hour; use $ 2 + y $ for math.",
+            vec!["2 + y"],
+        ),
+        ("$2 xy$ plus $z$.", vec!["2 xy", "z"]),
+        (
+            r"$2 \text{per hour}$ plus $z$.",
+            vec![r"2 \text{per hour}", "z"],
+        ),
+    ] {
+        let document = pagemd_parser::parse(source, &options).unwrap();
+        let mut math = Vec::new();
+        visit(document.ast(), &mut |node| {
+            if let Node::InlineMath(math_node) = node {
+                math.push(math_node.value.clone());
+            }
+        });
+        assert_eq!(math, expected, "{source}");
+    }
+}

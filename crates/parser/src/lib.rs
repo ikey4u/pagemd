@@ -458,8 +458,17 @@ fn currency_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
                     if end < limit && eligible(end) {
                         if bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
                             offsets.extend([start, end]);
+                            start = end + 1;
+                        } else if (end + 1..limit).any(eligible)
+                            && currency_prose(&source[start + 1..end])
+                        {
+                            // An isolated price must not consume the opening
+                            // dollar of a later real formula ("$5 per call $x$").
+                            offsets.push(start);
+                            start = end;
+                        } else {
+                            start = end + 1;
                         }
-                        start = end + 1;
                     } else {
                         start += 1;
                     }
@@ -477,4 +486,13 @@ fn currency_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
     offsets.sort_unstable();
     offsets.dedup();
     offsets
+}
+
+fn currency_prose(value: &str) -> bool {
+    let value = value.trim_start_matches(['+', '-']);
+    value.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && !value.contains('\\')
+        && value
+            .split_whitespace()
+            .any(|word| word.chars().filter(|c| c.is_alphabetic()).count() > 1)
 }
