@@ -66,13 +66,18 @@ impl Prepared {
         original: &mdast::Node,
         options: &ParseOptions,
     ) -> Option<Self> {
+        let currency = if options.constructs.math_text {
+            currency_math_offsets(source, original)
+        } else {
+            Vec::new()
+        };
         let mut offsets = insertion_offsets(source, original);
         if options.constructs.math_text {
-            offsets.extend(padded_math_offsets(source, original));
+            offsets.extend(padded_math_offsets(source, original, &currency));
         }
         offsets.sort_unstable();
         offsets.dedup();
-        if offsets.is_empty() {
+        if offsets.is_empty() && currency.is_empty() {
             return None;
         }
         // Use a character absent from decoded prose as well as the raw source:
@@ -87,7 +92,11 @@ impl Prepared {
                     && !decoded.contains(*marker)
                     && !fields.contains(&marker.escape_debug().to_string())
             })?;
-        let (text, inserted) = prepare(source, &offsets, marker);
+        let mut insertions: Vec<_> =
+            offsets.into_iter().map(|at| (at, marker)).collect();
+        insertions.extend(currency.into_iter().map(|at| (at, '\\')));
+        insertions.sort_by_key(|&(at, _)| at);
+        let (text, inserted) = prepare_insertions(source, &insertions);
         Some(Self {
             text,
             marker,
@@ -187,14 +196,23 @@ fn prepare(
     offsets: &[usize],
     marker: char,
 ) -> (String, Vec<Range<usize>>) {
-    let mut text =
-        String::with_capacity(source.len() + offsets.len() * marker.len_utf8());
-    let mut inserted = Vec::with_capacity(offsets.len());
+    prepare_insertions(
+        source,
+        &offsets.iter().map(|&at| (at, marker)).collect::<Vec<_>>(),
+    )
+}
+
+fn prepare_insertions(
+    source: &str,
+    insertions: &[(usize, char)],
+) -> (String, Vec<Range<usize>>) {
+    let mut text = String::with_capacity(source.len() + insertions.len() * 3);
+    let mut inserted = Vec::with_capacity(insertions.len());
     let mut previous = 0;
-    for &offset in offsets {
+    for &(offset, character) in insertions {
         text.push_str(&source[previous..offset]);
         let start = text.len();
-        text.push(marker);
+        text.push(character);
         inserted.push(start..text.len());
         previous = offset;
     }
@@ -332,7 +350,11 @@ fn is_cjk_punctuation(ch: char) -> bool {
 
 // PageMD accepts padded inline math. Pulldown-cmark's delimiter flanking
 // needs temporary non-whitespace neighbors; source mapping removes them.
-fn padded_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
+fn padded_math_offsets(
+    source: &str,
+    root: &mdast::Node,
+    currency: &[usize],
+) -> Vec<usize> {
     fn collect(node: &mdast::Node, ranges: &mut Vec<Range<usize>>) {
         if let mdast::Node::Text(text) = node {
             if let Some(position) = &text.position {
@@ -363,6 +385,7 @@ fn padded_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
         while i < range.end {
             if bytes[i] != b'$'
                 || escaped(i)
+                || currency.contains(&i)
                 || bytes.get(i + 1) == Some(&b'$')
                 || (i > 0 && bytes[i - 1] == b'$')
             {
@@ -372,7 +395,10 @@ fn padded_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
             let start = i;
             let mut end = i + 1;
             while end < range.end && !matches!(bytes[end], b'\n' | b'\r') {
-                if bytes[end] == b'$' && !escaped(end) {
+                if bytes[end] == b'$'
+                    && !escaped(end)
+                    && !currency.contains(&end)
+                {
                     break;
                 }
                 end += 1;
@@ -393,4 +419,62 @@ fn padded_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
         }
     }
     out
+}
+
+// A dollar immediately followed by a digit cannot close inline math: in
+// "$5 and $10" it starts the next price. Escape both dollars only in the
+// prepared parse, preserving the original bytes and source coordinates.
+fn currency_math_offsets(source: &str, root: &mdast::Node) -> Vec<usize> {
+    fn visit(source: &str, node: &mdast::Node, offsets: &mut Vec<usize>) {
+        if matches!(node, mdast::Node::Text(_) | mdast::Node::InlineMath(_)) {
+            if let Some(position) = node.position() {
+                let bytes = source.as_bytes();
+                let eligible = |i: usize| {
+                    bytes[i] == b'$'
+                        && bytes.get(i + 1) != Some(&b'$')
+                        && (i == 0 || bytes[i - 1] != b'$')
+                        && bytes[..i]
+                            .iter()
+                            .rev()
+                            .take_while(|&&b| b == b'\\')
+                            .count()
+                            % 2
+                            == 0
+                };
+                let mut start = position.start.offset;
+                let limit = position.end.offset;
+                while start < limit {
+                    if !eligible(start) {
+                        start += 1;
+                        continue;
+                    }
+                    let mut end = start + 1;
+                    while end < limit
+                        && !matches!(bytes[end], b'\n' | b'\r')
+                        && !eligible(end)
+                    {
+                        end += 1;
+                    }
+                    if end < limit && eligible(end) {
+                        if bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
+                            offsets.extend([start, end]);
+                        }
+                        start = end + 1;
+                    } else {
+                        start += 1;
+                    }
+                }
+            }
+        }
+        if let Some(children) = node.children() {
+            for child in children {
+                visit(source, child, offsets);
+            }
+        }
+    }
+    let mut offsets = Vec::new();
+    visit(source, root, &mut offsets);
+    offsets.sort_unstable();
+    offsets.dedup();
+    offsets
 }

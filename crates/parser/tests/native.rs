@@ -211,3 +211,67 @@ fn padded_inline_math_has_original_positions_and_no_temporary_markers() {
     });
     assert_eq!(values, ["E=mc^2", "x + y"]);
 }
+
+#[test]
+fn currency_prices_in_tables_stay_prose_and_keep_original_positions() {
+    let source = "| 服务 / 地域 / 档位 | 官方原始单价 | 1C2G × 1h | 2C4G × 1h | 状态、费用边界与规格条件 | 价格原始链接 |\n| --- | --- | --- | --- | --- | --- |\n| E2B Cloud | CPU $0.000014/vCPU·s；RAM $0.0000045/GiB·s | $0.082800 ≈ **¥0.5521** | $0.165600 ≈ **¥1.1042** | 可算；1C2G 的自定义资源权限见 Pro；Pro $150/月另收。Hobby 最长单次 1h，默认 2C4G；价格表与套餐权限须一起看 | [官方价格及套餐](https://e2b.dev/pricing) |";
+    let mut options = ParseOptions::gfm();
+    options.constructs.math_text = true;
+    options.constructs.math_flow = true;
+    let document = pagemd_parser::parse(source, &options).unwrap();
+    let location = pagemd_parser::Location::new(source.as_bytes());
+    let mut strong = Vec::new();
+    visit(document.ast(), &mut |node| {
+        assert!(!matches!(node, Node::InlineMath(_)), "{node:?}");
+        if let Some(position) = node.position() {
+            assert_eq!(
+                location.to_point(position.start.offset).unwrap(),
+                position.start
+            );
+            assert_eq!(
+                location.to_point(position.end.offset).unwrap(),
+                position.end
+            );
+            if matches!(node, Node::Strong(_)) {
+                strong
+                    .push(&source[position.start.offset..position.end.offset]);
+            }
+        }
+    });
+    assert_eq!(strong, ["**¥0.5521**", "**¥1.1042**"]);
+    assert!(document
+        .ast()
+        .to_string()
+        .contains("CPU $0.000014/vCPU·s；RAM $0.0000045/GiB·s"));
+    assert!(!document.source_events().iter().any(|item| matches!(
+        item.event,
+        pagemd_parser::events::Event::InlineMath(_)
+    )));
+}
+
+#[test]
+fn currencies_coexist_with_numeric_padded_and_explicit_math() {
+    let mut options = ParseOptions::gfm();
+    options.constructs.math_text = true;
+    options.constructs.math_flow = true;
+    for source in [
+        "$5 and $10; math $x^2$ and $ 2 + y $.",
+        "Prices $5 and $10. Numeric math $2$ or $2 + x$.",
+        "`$5 and $10` and [price](https://example.com/$5/$10), math $x$.",
+        "前**「价格」**后 $5 and $10; math $x^2$.",
+    ] {
+        let document = pagemd_parser::parse(source, &options).unwrap();
+        let mut math = Vec::new();
+        visit(document.ast(), &mut |node| {
+            if let Node::InlineMath(value) = node {
+                math.push(value.value.clone());
+            }
+        });
+        assert!(
+            math.iter().all(|value| !value.contains("and")),
+            "{source}: {math:?}"
+        );
+        assert!(!math.is_empty(), "real math must survive: {source}");
+        assert_eq!(document.source(), source);
+    }
+}
