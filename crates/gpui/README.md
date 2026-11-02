@@ -8,7 +8,7 @@ Hovering link text shows its destination in a native tooltip, including wrapped
 links and local file references. Tooltip targets follow the visible glyph rows;
 paragraph gutters retain normal text selection and do not activate links.
 The format-independent GPUI selection service supplies window-wide gestures,
-copy integration and touch handles. The renderer targets GPUI Kit 0.8.1.
+copy integration and touch handles. The renderer targets GPUI Kit 0.9.0.
 `SelectionFormat::SourceAcrossStyles` copies plain text inside one style and
 preserves source across formatting, block boundaries and inline objects;
 select-all always retains the complete source. Hosts quoting the visible selection can
