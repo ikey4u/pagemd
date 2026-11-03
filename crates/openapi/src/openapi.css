@@ -1,7 +1,7 @@
-.pagemd-openapi{--oa-fg:var(--foreground,inherit);--oa-muted:var(--muted-foreground,#68717c);--oa-border:var(--border,#e5e7eb);color:var(--oa-fg);font-size:13px;line-height:1.55;max-width:100%;overflow-wrap:anywhere}
-.pagemd-openapi .pagemd-openapi-operation{margin:12px 0;padding:18px 20px;border:1px solid var(--oa-border);border-radius:7px;background:var(--background,transparent)}
+.pagemd-openapi{--oa-fg:var(--foreground,var(--color-text,inherit));--oa-muted:var(--muted-foreground,var(--color-muted-foreground,var(--color-muted,#68717c)));--oa-border:var(--border,var(--color-border,#e5e7eb));color:var(--oa-fg);font-size:13px;line-height:1.55;max-width:100%;overflow-wrap:anywhere}
+.pagemd-openapi .pagemd-openapi-operation{margin:12px 0;padding:18px 20px;border:1px solid var(--oa-border);border-radius:7px;background:var(--background,var(--color-bg,transparent))}
 .pagemd-openapi h3{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px;font-weight:500;line-height:1.6;border:0;padding:0}
-.pagemd-openapi .pagemd-openapi-method{color:var(--primary,#7651a5);font-size:12px;font-weight:600}
+.pagemd-openapi .pagemd-openapi-method{color:var(--primary,var(--color-link,#7651a5));font-size:12px;font-weight:600}
 .pagemd-openapi code{background:transparent;border:0;padding:0;color:inherit;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .pagemd-openapi section{margin-top:20px}
 .pagemd-openapi h4{font-size:13px;font-weight:600;line-height:1.6;margin:0;padding:0;border:0}
@@ -13,5 +13,5 @@
 .pagemd-openapi p{font-size:12px;line-height:1.55;margin:3px 0 0;color:var(--oa-muted);white-space:pre-wrap}
 .pagemd-openapi .pagemd-openapi-comment{margin-top:7px}
 .pagemd-openapi-warning{font-size:12px;color:var(--oa-muted)}
-@media(prefers-color-scheme:dark){.pagemd-openapi{--oa-muted:var(--muted-foreground,#a8afba);--oa-border:var(--border,#383b42)}}
+@media(prefers-color-scheme:dark){.pagemd-openapi{--oa-muted:var(--muted-foreground,var(--color-muted-foreground,var(--color-muted,#a8afba)));--oa-border:var(--border,var(--color-border,#383b42))}}
 @media(max-width:420px){.pagemd-openapi .pagemd-openapi-operation{padding:16px}}
