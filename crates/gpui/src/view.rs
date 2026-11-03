@@ -19,6 +19,8 @@ type LinkClick = Arc<
 pub(crate) type ImageResolver =
     Arc<dyn Fn(&SharedUri) -> ImageSource + Send + Sync>;
 type Reveal = Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>;
+type CodeBlockDecorator =
+    Rc<dyn Fn(Div, Range<usize>, &mut Window, &mut App) -> AnyElement>;
 #[derive(Clone)]
 pub enum ViewStyle {
     Native(MarkdownStyle),
@@ -48,6 +50,7 @@ pub struct MarkdownView {
     link: Option<LinkClick>,
     image: Option<ImageResolver>,
     reveal: Option<Reveal>,
+    code_block_decorator: Option<CodeBlockDecorator>,
     max_lines: Option<usize>,
 }
 impl Styled for MarkdownView {
@@ -79,6 +82,7 @@ impl MarkdownView {
             link: None,
             image: None,
             reveal: None,
+            code_block_decorator: None,
             max_lines: None,
         }
     }
@@ -139,6 +143,15 @@ impl MarkdownView {
         callback: impl Fn(Bounds<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.reveal = Some(Rc::new(callback));
+        self
+    }
+    /// Decorate each native code block without replacing its selectable text.
+    pub fn decorate_code_blocks(
+        mut self,
+        decorator: impl Fn(Div, Range<usize>, &mut Window, &mut App) -> AnyElement
+            + 'static,
+    ) -> Self {
+        self.code_block_decorator = Some(Rc::new(decorator));
         self
     }
     fn resolved_style(&self, cx: &App) -> MarkdownStyle {
@@ -284,6 +297,7 @@ impl Element for MarkdownView {
             image: self.image.clone(),
             highlights,
             frame,
+            code_block_decorator: self.code_block_decorator.clone(),
         };
         for block in blocks.iter() {
             root = root.child(renderer.block(block, window, cx));
@@ -477,6 +491,7 @@ struct Blocks {
     image: Option<ImageResolver>,
     highlights: Vec<RangeHighlight>,
     frame: Rc<std::cell::RefCell<crate::state::Frame>>,
+    code_block_decorator: Option<CodeBlockDecorator>,
 }
 impl Blocks {
     fn paragraph(&self, paragraph: &Paragraph) -> NativeParagraph {
@@ -556,7 +571,12 @@ impl Blocks {
                 // Keep code text's first line at the configured padding;
                 // source-line navigation uses the same native geometry.
                 let _ = lang;
-                d.child(self.paragraph(p)).into_any_element()
+                let code = d.child(self.paragraph(p));
+                if let Some(decorator) = &self.code_block_decorator {
+                    decorator(code, block.range.clone(), window, cx)
+                } else {
+                    code.into_any_element()
+                }
             }
 
             Kind::Math(p) => div()
