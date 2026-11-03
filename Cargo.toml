@@ -26,6 +26,7 @@ default = []
 gpui = ["dep:pagemd-gpui"]
 
 [dependencies]
+pagemd-openapi = { path = "crates/openapi", features = ["io"] }
 pagemd-parser = { path = "crates/parser" }
 pagemd-gpui = { path = "crates/gpui", optional = true }
 clap = { version = "4.6", features = ["derive"] }

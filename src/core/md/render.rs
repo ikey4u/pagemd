@@ -529,6 +529,16 @@ fn render_parsed_document(
                     let buf_str = buf.clone();
                     ctx = Context::Normal;
                     match lang_str.as_str() {
+                        "openapi" => {
+                            let meta = lang_info
+                                .splitn(2, char::is_whitespace)
+                                .nth(1)
+                                .unwrap_or("");
+                            match pagemd_openapi::load_blocking(&buf_str, meta, base_dir) {
+                                Ok(document) => html.push_str(&pagemd_openapi::render_html(&document)),
+                                Err(error) => html.push_str(&format!("<div class=\"pagemd-openapi\"><p role=\"alert\">Couldn’t render API reference: {}</p></div>", html_escape(&error))),
+                            }
+                        }
                         "diagram" | "diagram-html" | "diagram_html"
                             if is_diagram_html_info(&lang_info) =>
                         {

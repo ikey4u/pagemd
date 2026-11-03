@@ -21,6 +21,13 @@ Core Markdown:
   ordered/unordered/task lists, tables, blockquotes, footnotes ([^id] with [^id]: body),
   and fenced code blocks with syntax highlighting (syntect).
 
+OpenAPI API reference cards (display only):
+  Inline YAML/JSON: an openapi fenced code block.
+  External source: ```openapi src=\"./api.yaml\" followed by a newline and ```.
+  Public HTTPS sources are supported. Choose either src or an inline body.
+  The layout is Method, Request, Response, Comment, with item lists for fields
+  and required headers. There are no API execution controls.
+
 Math:
   Inline: $E=mc^2$
   Display: a paragraph that is only $$...$$ on one line, or a fenced block:

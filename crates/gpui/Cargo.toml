@@ -7,6 +7,8 @@ publish = false
 description = "PageMD's built-in native GPUI renderer"
 [workspace]
 [dependencies]
+pagemd-openapi = { path = "../openapi", features = ["io"] }
+url = "2"
 pagemd-parser = { path = "../parser" }
 gpui-kit = "=0.9.0"
 html-escape = "0.2"

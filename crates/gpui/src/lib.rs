@@ -1,6 +1,8 @@
 //! PageMD's independent native renderer. The shared PageMD document is converted
 //! directly into GPUI elements; GPUI Kit's Markdown TextView is never invoked.
 mod extensions;
+mod openapi;
+pub use openapi::{OpenApiPlugin, OpenApiReader, render_openapi_document};
 mod html;
 mod model;
 mod paragraph;

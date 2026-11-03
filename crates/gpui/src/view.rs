@@ -82,6 +82,10 @@ impl MarkdownView {
             max_lines: None,
         }
     }
+    /// Resolve OpenAPI file sources relative to this document folder.
+    pub fn openapi_base(self, folder: std::path::PathBuf) -> Self {
+        self.plugin(crate::OpenApiPlugin::local(folder))
+    }
     pub fn style(mut self, style: impl Into<ViewStyle>) -> Self {
         self.markdown_style = Some(style.into());
         self
@@ -503,6 +507,24 @@ impl Blocks {
                 frame: self.frame.clone(),
             }
             .into_any_element();
+        }
+        // Built-in support remains active when a host supplies unrelated plugins.
+        {
+            use crate::MarkdownPlugin as _;
+            let plugin = crate::OpenApiPlugin::default();
+            let context = crate::MarkdownParseContext {
+                source: &self.source,
+            };
+            if let Some(node) = plugin.parse(&block.node, &context) {
+                return AtomicBlock {
+                    element: plugin
+                        .render(&node, window, cx)
+                        .into_any_element(),
+                    range: block.range.clone(),
+                    frame: self.frame.clone(),
+                }
+                .into_any_element();
+            }
         }
         match &block.kind {
             Kind::Paragraph(p) => div()

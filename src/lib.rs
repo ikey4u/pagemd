@@ -42,6 +42,8 @@
 
 pub mod app;
 pub mod core;
+/// Display-only OpenAPI projection shared by HTML, native and web hosts.
+pub use pagemd_openapi as openapi;
 
 /// `CARGO_PKG_VERSION`, plus `-<git>` and `+dirty` when `build.rs` can see a git checkout.
 pub const PAGEMD_VERSION: &str = env!("PAGEMD_VERSION");

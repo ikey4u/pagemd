@@ -4880,6 +4880,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "pagemd-gpui",
+ "pagemd-openapi",
  "pagemd-parser",
  "plantuml_encoding",
  "ratex-font",
@@ -4910,8 +4911,22 @@ dependencies = [
  "html-escape",
  "html5ever 0.27.0",
  "markup5ever_rcdom",
+ "pagemd-openapi",
  "pagemd-parser",
  "unicode-linebreak",
+ "url",
+]
+
+[[package]]
+name = "pagemd-openapi"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "url",
 ]
 
 [[package]]

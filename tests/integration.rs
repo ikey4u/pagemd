@@ -856,7 +856,10 @@ fn native_mermaid_uses_bezel_and_keeps_diagram_ids_unique() {
     let html = render_html("```mermaid\nflowchart LR\naccTitle: Accessible diagram\nA[开始] --> B[完成]\n```\n\n```mermaid\nflowchart LR\naccTitle: Accessible diagram\nA[开始] --> B[完成]\n```\n");
     assert_eq!(mermaid_count(&html), 2);
     let ids: Vec<_> = regex::Regex::new(r#"id="(pagemd-mermaid-[^"]+)""#)
-        .unwrap().captures_iter(&html).map(|c| c[1].to_owned()).collect();
+        .unwrap()
+        .captures_iter(&html)
+        .map(|c| c[1].to_owned())
+        .collect();
     assert!(!ids.is_empty());
     let unique: std::collections::HashSet<_> = ids.iter().collect();
     assert_eq!(ids.len(), unique.len(), "duplicate SVG ids across diagrams");
@@ -867,7 +870,8 @@ fn native_mermaid_uses_bezel_and_keeps_diagram_ids_unique() {
 
 #[test]
 fn invalid_native_mermaid_keeps_its_source_in_the_error_block() {
-    let html = render_html("```mermaid\nsequenceDiagram\nA sends B hello\n```\n");
+    let html =
+        render_html("```mermaid\nsequenceDiagram\nA sends B hello\n```\n");
     assert!(html.contains("Mermaid render failed"));
     assert!(html.contains("A sends B hello"));
 }
@@ -1412,4 +1416,33 @@ fn typst_fence_is_preserved_as_code() {
     assert!(html.contains("#circle"));
     assert!(!html.contains("class=\"typst-display\""));
     assert!(!pagemd::diagram_help().contains("```typst"));
+}
+
+#[test]
+fn openapi_fences_render_display_only_lists_in_the_accepted_order() {
+    let source = "```openapi\nopenapi: 3.1.0\ninfo: {title: Hidden API title, version: '1'}\npaths:\n  /pets:\n    get:\n      summary: List pets\n      responses:\n        '200': {description: '<script>bad()</script>'}\n```";
+    let html = render_html(source);
+    assert!(html.contains("pagemd-openapi-operation"), "{html}");
+    assert!(html.contains("pagemd-openapi-items"));
+    assert!(html.contains("&lt;script&gt;bad()&lt;/script&gt;"));
+    assert!(!html.contains("Hidden API title"));
+    let method = html.find("pagemd-openapi-method\">GET").unwrap();
+    let request = html.find("Request</h4>").unwrap();
+    let response = html.find("Response</h4>").unwrap();
+    let comment = html.find("Comment</h4>").unwrap();
+    assert!(method < request && request < response && response < comment);
+    assert!(!html.contains("<button"));
+}
+
+#[test]
+fn openapi_source_fence_loads_relative_to_the_markdown_document() {
+    let folder = temp_test_dir("openapi-src");
+    std::fs::write(folder.join("api.yaml"), "openapi: 3.0.4\ninfo: {title: Hidden, version: '1'}\npaths:\n  /external:\n    post:\n      responses: {'204': {description: Created}}\n").unwrap();
+    let html = render_html_at("```openapi src=\"./api.yaml\"\n```", &folder);
+    assert!(html.contains("/external"), "{html}");
+    assert!(!html.contains("api.yaml"));
+    let invalid =
+        render_html_at("```openapi src=\"./api.yaml\"\ninline\n```", &folder);
+    assert!(invalid.contains("role=\"alert\""));
+    std::fs::remove_dir_all(folder).unwrap();
 }

@@ -166,3 +166,24 @@ cargo test
 cargo check
 cargo +nightly fmt --all -- --check
 ```
+
+## OpenAPI reference cards
+
+Use an `openapi` fence containing an OpenAPI 3.0, 3.1 or 3.2 YAML/JSON document,
+or an empty fence with `src="./api.yaml"` (public HTTPS sources are supported too).
+The closing fence belongs on its own line. A source attribute and an inline body
+are mutually exclusive.
+
+Cards show **Method → Request → Response → Comment**. Headers, parameters,
+request fields and response fields are item lists. The cards contain no controls,
+API execution, links, title/version banner or source footer. Empty operations,
+unsupported versions, invalid input and unresolved references have visible states.
+
+HTML sources resolve relative to the Markdown document folder. The native renderer
+supports inline fences by default; call `MarkdownView::openapi_base(folder)` for
+file sources, or register `OpenApiPlugin::new(namespace, base, reader)` for a
+host-owned asynchronous reader (for example, a remote workspace). Source reads
+are bounded to 2 MiB per document, 32 external reference documents and 8 MiB total;
+file readers stay within the configured folder and HTTPS reads omit credentials.
+The `pagemd-openapi` crate exposes the same serializable projection to web/WASM
+hosts; `render_html` and `render_openapi_document` render the shared model.
