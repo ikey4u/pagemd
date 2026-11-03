@@ -44,6 +44,7 @@ pub struct MarkdownView {
     style: StyleRefinement,
     markdown_style: Option<ViewStyle>,
     selectable: Option<bool>,
+    selection_scroll_viewport: Option<ScrollHandle>,
     format: Option<SelectionFormat>,
     scrollable: bool,
     extensions: MarkdownExtensions,
@@ -76,6 +77,7 @@ impl MarkdownView {
             style: StyleRefinement::default(),
             markdown_style: None,
             selectable: None,
+            selection_scroll_viewport: None,
             format: None,
             scrollable: false,
             extensions: MarkdownExtensions::default(),
@@ -96,6 +98,13 @@ impl MarkdownView {
     }
     pub fn selectable(mut self, value: bool) -> Self {
         self.selectable = Some(value);
+        self
+    }
+    /// Uses an ancestor's vertical viewport for drag-selection auto-scroll.
+    /// This keeps a nested horizontal code scroller from becoming the vertical
+    /// auto-scroll boundary of the whole document.
+    pub fn selection_scroll_viewport(mut self, viewport: ScrollHandle) -> Self {
+        self.selection_scroll_viewport = Some(viewport);
         self
     }
     pub fn selection_format(mut self, format: SelectionFormat) -> Self {
@@ -224,6 +233,7 @@ pub struct ViewLayout {
     element: AnyElement,
     state: Entity<MarkdownViewState>,
     selectable: bool,
+    selection_scroll_viewport: Option<ScrollHandle>,
     reveal: Option<Reveal>,
 }
 impl Element for MarkdownView {
@@ -334,6 +344,9 @@ impl Element for MarkdownView {
                 element,
                 state,
                 selectable,
+                selection_scroll_viewport: self
+                    .selection_scroll_viewport
+                    .clone(),
                 reveal: self.reveal.clone(),
             },
         )
@@ -366,8 +379,18 @@ impl Element for MarkdownView {
                     .chain(v.frame.borrow().objects.iter().map(|(_, b)| *b))
                     .collect();
                 let frame = v.frame.borrow();
+                let mut selection_hitbox = hitbox.clone();
+                if let Some(viewport) = &layout.selection_scroll_viewport {
+                    let viewport = viewport.bounds();
+                    if viewport.size.height > px(0.) {
+                        selection_hitbox.content_mask.bounds.origin.y =
+                            viewport.top();
+                        selection_hitbox.content_mask.bounds.size.height =
+                            viewport.size.height;
+                    }
+                }
                 let mut registration =
-                    TextSelectionRegistration::new(hitbox.clone(), bounds)
+                    TextSelectionRegistration::new(selection_hitbox, bounds)
                         .with_text_bounds(text_bounds)
                         .with_rendered_element(&v.selection, window, cx);
                 if let Some(selected) = &frame.selected {
