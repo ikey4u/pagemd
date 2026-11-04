@@ -26,6 +26,7 @@ pub(crate) struct NativeParagraph {
     highlights: Vec<RangeHighlight>,
     frame: Rc<RefCell<Frame>>,
     mono_font: SharedString,
+    code_options: crate::CodeBlockOptions,
 }
 impl NativeParagraph {
     #[allow(clippy::too_many_arguments)]
@@ -50,7 +51,15 @@ impl NativeParagraph {
             highlights,
             frame,
             mono_font,
+            code_options: crate::CodeBlockOptions::default(),
         }
+    }
+    pub(crate) fn code_options(
+        mut self,
+        options: crate::CodeBlockOptions,
+    ) -> Self {
+        self.code_options = options;
+        self
     }
     fn runs(
         &self,
@@ -94,8 +103,25 @@ impl NativeParagraph {
     ) -> (AnyElement, TextLayout) {
         let content: SharedString =
             self.paragraph.text[range.clone()].to_owned().into();
-        let text = StyledText::new(content.clone())
-            .with_runs(self.runs(range.clone(), typography));
+        let text = if self.code_options.highlights.is_empty() {
+            StyledText::new(content.clone())
+                .with_runs(self.runs(range.clone(), typography))
+        } else {
+            StyledText::new(content.clone()).with_highlights(
+                self.code_options.highlights.iter().filter_map(
+                    |(span, style)| {
+                        let start = span.start.max(range.start);
+                        let end = span.end.min(range.end);
+                        (start < end
+                            && self.paragraph.text.is_char_boundary(start)
+                            && self.paragraph.text.is_char_boundary(end))
+                        .then(|| {
+                            (start - range.start..end - range.start, *style)
+                        })
+                    },
+                ),
+            )
+        };
         let layout = text.layout().clone();
         let links: Vec<_> =
             self.paragraph
@@ -410,8 +436,47 @@ impl Element for NativeParagraph {
         let selected = self.frame.borrow().selected.clone();
         match layout {
             ParagraphLayout::Text { element, layout } => {
-                let _ = layout;
                 element.paint(window, cx);
+                if self.code_options.line_numbers
+                    && !self.paragraph.text.is_empty()
+                {
+                    let mut typography = window.text_style();
+                    typography.color = self.style.muted_foreground();
+                    let font_size =
+                        typography.font_size.to_pixels(window.rem_size());
+                    for (index, offset) in std::iter::once(0)
+                        .chain(
+                            self.paragraph
+                                .text
+                                .match_indices('\n')
+                                .map(|(offset, _)| offset + 1),
+                        )
+                        .enumerate()
+                    {
+                        let Some(position) = layout.position_for_index(offset)
+                        else {
+                            continue;
+                        };
+                        let text: SharedString = (index + 1).to_string().into();
+                        let shaped = window.text_system().shape_line(
+                            text.clone(),
+                            font_size,
+                            &[typography.to_run(text.len())],
+                            None,
+                        );
+                        let _ = shaped.paint(
+                            point(
+                                layout.bounds().left() - px(8.) - shaped.width,
+                                position.y,
+                            ),
+                            layout.line_height(),
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
+                }
             }
             ParagraphLayout::Mixed { .. } => {
                 for piece in pieces {

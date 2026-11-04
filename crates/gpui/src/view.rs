@@ -21,6 +21,18 @@ pub(crate) type ImageResolver =
 type Reveal = Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>;
 type CodeBlockDecorator =
     Rc<dyn Fn(Div, Range<usize>, &mut Window, &mut App) -> AnyElement>;
+
+/// Per-block presentation; offsets in `highlights` refer to the code text,
+/// excluding its Markdown fence. These options never change source mappings.
+#[derive(Clone, Default)]
+pub struct CodeBlockOptions {
+    pub soft_wrap: Option<bool>,
+    /// Paint logical line numbers in a separate gutter, outside selectable text.
+    pub line_numbers: bool,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+type CodeBlockOptionsProvider =
+    Rc<dyn Fn(Range<usize>, &mut Window, &mut App) -> CodeBlockOptions>;
 #[derive(Clone)]
 pub enum ViewStyle {
     Native(MarkdownStyle),
@@ -52,6 +64,7 @@ pub struct MarkdownView {
     image: Option<ImageResolver>,
     reveal: Option<Reveal>,
     code_block_decorator: Option<CodeBlockDecorator>,
+    code_block_options: Option<CodeBlockOptionsProvider>,
     max_lines: Option<usize>,
 }
 impl Styled for MarkdownView {
@@ -85,6 +98,7 @@ impl MarkdownView {
             image: None,
             reveal: None,
             code_block_decorator: None,
+            code_block_options: None,
             max_lines: None,
         }
     }
@@ -161,6 +175,18 @@ impl MarkdownView {
             + 'static,
     ) -> Self {
         self.code_block_decorator = Some(Rc::new(decorator));
+        self
+    }
+
+    /// Configure native code wrapping, line numbers and syntax colors while
+    /// retaining selection, copying, search and source navigation. The callback
+    /// receives the full block's Markdown source range, like the decorator.
+    pub fn code_block_options(
+        mut self,
+        options: impl Fn(Range<usize>, &mut Window, &mut App) -> CodeBlockOptions
+            + 'static,
+    ) -> Self {
+        self.code_block_options = Some(Rc::new(options));
         self
     }
     fn resolved_style(&self, cx: &App) -> MarkdownStyle {
@@ -308,6 +334,7 @@ impl Element for MarkdownView {
             highlights,
             frame,
             code_block_decorator: self.code_block_decorator.clone(),
+            code_block_options: self.code_block_options.clone(),
         };
         for block in blocks.iter() {
             root = root.child(renderer.block(block, window, cx));
@@ -515,6 +542,7 @@ struct Blocks {
     highlights: Vec<RangeHighlight>,
     frame: Rc<std::cell::RefCell<crate::state::Frame>>,
     code_block_decorator: Option<CodeBlockDecorator>,
+    code_block_options: Option<CodeBlockOptionsProvider>,
 }
 impl Blocks {
     fn paragraph(&self, paragraph: &Paragraph) -> NativeParagraph {
@@ -577,6 +605,11 @@ impl Blocks {
                 d.child(self.paragraph(p)).into_any_element()
             }
             Kind::Code(lang, p) => {
+                let options = self
+                    .code_block_options
+                    .as_ref()
+                    .map(|options| options(block.range.clone(), window, cx))
+                    .unwrap_or_default();
                 let mut d = div()
                     .w_full()
                     .min_w_0()
@@ -591,10 +624,45 @@ impl Blocks {
                     .line_height(relative(1.65));
                 d.style().text.font_style = Some(FontStyle::Normal);
                 d.style().refine(self.style.code_block());
+                if let Some(wrap) = options.soft_wrap {
+                    d = if wrap {
+                        d.whitespace_normal()
+                    } else {
+                        d.whitespace_nowrap()
+                    };
+                }
                 // Keep code text's first line at the configured padding;
                 // source-line navigation uses the same native geometry.
                 let _ = lang;
-                let code = d.child(self.paragraph(p));
+                let numbered = options.line_numbers;
+                let paragraph = self.paragraph(p).code_options(options);
+                let code = if numbered {
+                    let digits = p.text.split('\n').count().to_string().len();
+                    let mut typography = window.text_style();
+                    typography.font_family = self.mono_font.clone();
+                    typography.font_weight = FontWeight::NORMAL;
+                    let text: SharedString = "0".repeat(digits).into();
+                    let gutter = window
+                        .text_system()
+                        .shape_line(
+                            text.clone(),
+                            cx.theme().mono_font_size,
+                            &[typography.to_run(text.len())],
+                            None,
+                        )
+                        .width
+                        + px(16.);
+                    d.child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .min_w_0()
+                            .child(div().w(gutter).flex_none())
+                            .child(div().flex_1().min_w_0().child(paragraph)),
+                    )
+                } else {
+                    d.child(paragraph)
+                };
                 if let Some(decorator) = &self.code_block_decorator {
                     decorator(code, block.range.clone(), window, cx)
                 } else {

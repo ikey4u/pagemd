@@ -18,7 +18,7 @@ pub use pagemd_parser::{ParsedDocument, Renderer};
 pub use state::{
     MarkdownViewState, RangeHighlight, RangeHighlightError, SelectionFormat,
 };
-pub use view::MarkdownView;
+pub use view::{CodeBlockOptions, MarkdownView};
 
 #[derive(Default)]
 pub struct GpuiRenderer;

@@ -45,3 +45,19 @@ pagemd-gpui = { path = "../pagemd/crates/gpui" }
 
 Initialize GPUI Kit and use its Root/selection layer as usual. GPUI Kit retains
 its own Markdown dependency for its other widgets; PageMD does not use it.
+
+Code-block presentation can be configured independently without replacing the
+native selectable text. The provider receives the block's Markdown source range;
+highlight offsets refer to the code contents, excluding fences. Line numbers
+occupy a separate gutter and are excluded from copied text and source mappings.
+A host can supply syntax colors from its language highlighter and use
+`decorate_code_blocks` separately for actions or a horizontal scroll viewport.
+
+```rust,ignore
+MarkdownView::new(&state)
+    .code_block_options(|source_range, window, cx| CodeBlockOptions {
+        soft_wrap: Some(true),
+        line_numbers: true,
+        highlights: Vec::new(), // Host-provided (byte range, HighlightStyle) pairs.
+    });
+```

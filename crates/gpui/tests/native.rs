@@ -6,11 +6,97 @@ use std::sync::{
 
 use gpui_kit::{
     base::{TextSelection, TextSelectionLayer},
-    component::{Root, Theme, ThemeMode},
+    component::{ActiveTheme as _, Root, Theme, ThemeMode},
     test::TestWindowExt as _,
     *,
 };
 use pagemd_gpui::*;
+
+#[gpui_kit::test]
+fn code_presentation_preserves_source_selection_and_wrapped_geometry(
+    cx: &mut TestAppContext,
+) {
+    use std::{cell::Cell, rc::Rc};
+    struct CodeHost {
+        document: Entity<MarkdownViewState>,
+        wrap: Rc<Cell<bool>>,
+        numbers: Rc<Cell<bool>>,
+    }
+    impl Render for CodeHost {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            let wrap = self.wrap.clone();
+            let numbers = self.numbers.clone();
+            let color = cx.theme().primary;
+            div().w_full().child(
+                MarkdownView::new(&self.document)
+                    .selectable(true)
+                    .code_block_options(move |_, _, _| CodeBlockOptions {
+                        soft_wrap: Some(wrap.get()),
+                        line_numbers: numbers.get(),
+                        highlights: vec![
+                            (
+                                0..2,
+                                HighlightStyle {
+                                    color: Some(color),
+                                    ..Default::default()
+                                },
+                            ),
+                            (4..5, HighlightStyle::default()),
+                        ],
+                    })
+                    .decorate_code_blocks(|code, _, _, _| {
+                        code.id("configured-code")
+                            .test_support()
+                            .into_any_element()
+                    }),
+            )
+        }
+    }
+    cx.update(gpui_kit::init);
+    let source = "```rust\nfn 你好() { let message = \"a deliberately long line to check wrapping, selection, line numbers and source mapping remain consistent across presentation settings\"; }\n```";
+    let wrap = Rc::new(Cell::new(true));
+    let numbers = Rc::new(Cell::new(true));
+    let mut state = None;
+    let (host, cx) = cx.add_window_view(|window, cx| {
+        let document = cx.new(|cx| markdown_state(source, cx));
+        state = Some(document.clone());
+        let host = cx.new(|_| CodeHost {
+            document,
+            wrap: wrap.clone(),
+            numbers: numbers.clone(),
+        });
+        Root::new(host, window, cx)
+    });
+    let document = state.unwrap();
+    cx.simulate_resize(size(px(360.), px(500.)));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let wrapped = window.find("configured-code").bounds().size.height;
+        let text = document.read(cx).rendered_text();
+        let start = source.find("你好").unwrap();
+        let range = text.range_for_source(start..start + "你好".len()).unwrap();
+        assert_eq!(&text.as_str()[range], "你好");
+        document.update(cx, |document, cx| {
+            document.select_all(cx);
+            document.set_selection_format(SelectionFormat::Plain, cx);
+            assert_eq!(
+                document.selected_text(),
+                source.lines().nth(1).unwrap().to_owned() + "\n"
+            );
+        });
+        wrap.set(false);
+        numbers.set(false);
+        cx.notify(host.entity_id());
+        window.render_frame(cx);
+        assert!(window.find("configured-code").bounds().size.height < wrapped);
+        assert_eq!(document.read(cx).rendered_text().source(), source);
+    });
+}
 
 #[gpui_kit::test]
 fn shared_document_has_native_mapping_and_source_copy(cx: &mut TestAppContext) {
