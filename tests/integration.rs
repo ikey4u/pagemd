@@ -842,6 +842,29 @@ $$
 }
 
 #[test]
+fn mermaid_fence_captions_are_centered_and_distinct_from_diagram_titles() {
+    let html = render_html("```mermaid title=\"图 1 · 外部 <标题> & 说明\"\n---\ntitle: 图内请求流程\n---\nflowchart LR\nA[接收] --> B[返回]\n```\n");
+    assert_eq!(mermaid_count(&html), 1);
+    assert!(html.contains("图内请求流程"));
+    assert!(html.contains("<figure class=\"pagemd-figure\">"));
+    assert!(html.contains("<figcaption>图 1 · 外部 &lt;标题&gt; &amp; 说明</figcaption>"));
+    assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
+    assert!(!html.contains("Mermaid render failed"));
+}
+
+#[test]
+fn mermaid_frontmatter_titles_render_as_visible_centered_svg_text() {
+    for body in ["flowchart LR\nA[开始] --> B[完成]", "sequenceDiagram\nA->>B: 请求"] {
+        let svg = pagemd::mermaid::render(
+            &format!("---\ntitle: 请求处理流程\n---\n{body}"),
+            &pagemd::mermaid::Options::default(),
+            &pagemd::mermaid::Metrics,
+        ).unwrap().svg;
+        assert!(regex::Regex::new(r#"(?s)<text[^>]*text-anchor="middle"[^>]*>.*?请求处理流程.*?</text>"#).unwrap().is_match(&svg), "{svg}");
+    }
+}
+
+#[test]
 fn mermaid_code_block_renders_svg() {
     let html =
         render_html("```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n");

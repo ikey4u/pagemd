@@ -113,6 +113,7 @@ PageMD converts one or more Markdown files into a single HTML document, embeds t
 - Highlights code blocks with `syntect`.
 - Renders inline and display math as embedded SVG.
 - Renders `mermaid` / `mmd` diagrams as inline SVG with [bezel-mermaid](https://github.com/crabtalk/bezel/tree/main/crates/mermaid). Embedding applications can use the same engine through `pagemd::mermaid`.
+- Figure fences accept `title="图 1 · 请求处理流程"` after the language for a centered caption below the figure. Mermaid's `---` frontmatter `title:` remains a separate title inside the diagram. Images and diagram canvases are centered by default. Native hosts can share the caption parser through `pagemd_parser::figure::fence_title`.
 - Fetches `plantuml` / `puml` / `uml` diagrams during conversion and embeds the returned SVG.
 - Renders `diagram html` fenced blocks as styled HTML/SVG (Tailwind utilities supported; recommended for AI-generated diagrams).
 - Supports GitHub-style callouts, fenced admonitions, indented admonitions, and collapsible `:::details` / `[!NOTE]-` folds.

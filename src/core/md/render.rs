@@ -528,6 +528,19 @@ fn render_parsed_document(
                         .to_ascii_lowercase();
                     let buf_str = buf.clone();
                     ctx = Context::Normal;
+                    let figure = matches!(
+                        lang_str.as_str(),
+                        "mermaid" | "mmd" | "plantuml" | "puml" | "uml"
+                            | "math" | "latex"
+                    ) || is_diagram_html_info(&lang_info);
+                    let caption = figure.then(|| {
+                        let meta = lang_info.split_once(char::is_whitespace)
+                            .map_or("", |(_, meta)| meta);
+                        pagemd_parser::figure::fence_title(meta)
+                    }).flatten();
+                    if caption.is_some() {
+                        html.push_str("<figure class=\"pagemd-figure\">\n");
+                    }
                     match lang_str.as_str() {
                         "openapi" => {
                             let meta = lang_info
@@ -685,6 +698,12 @@ fn render_parsed_document(
                             };
                             html.push_str(&highlighted);
                         }
+                    }
+                    if let Some(caption) = caption {
+                        html.push_str(&format!(
+                            "<figcaption>{}</figcaption></figure>\n",
+                            html_escape(&caption),
+                        ));
                     }
                 }
                 _ => {}

@@ -5,6 +5,7 @@
 mod analysis;
 mod configuration;
 pub mod extensions;
+pub mod figure;
 pub mod mdast;
 pub mod message;
 pub mod unist;

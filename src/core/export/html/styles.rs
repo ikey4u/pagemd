@@ -1304,8 +1304,21 @@ img {
   height: auto;
   border-radius: var(--radius);
   display: block;
-  margin: 1rem 0;
+  margin: 1rem auto;
   cursor: zoom-in;
+}
+
+.pagemd-figure {
+  margin: 1.75rem 0;
+  min-width: 0;
+}
+
+.pagemd-figure figcaption {
+  margin-top: 0.5rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+  font-size: 0.875em;
+  color: var(--color-muted);
 }
 
 .math-inline {
