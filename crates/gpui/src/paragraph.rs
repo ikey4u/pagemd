@@ -619,6 +619,7 @@ impl Element for NativeTextLeaf {
         for highlight in &self.highlights {
             paint_range(
                 layout,
+                &self.content,
                 self.range.clone(),
                 highlight.range(),
                 highlight.background(),
@@ -628,6 +629,7 @@ impl Element for NativeTextLeaf {
         if let Some(range) = self.frame.borrow().selected.clone() {
             paint_range(
                 layout,
+                &self.content,
                 self.range.clone(),
                 range,
                 self.selection_color,
@@ -728,43 +730,7 @@ fn link_bounds(
     text: &str,
     range: Range<usize>,
 ) -> Vec<Bounds<Pixels>> {
-    let mut rows: Vec<Bounds<Pixels>> = Vec::new();
-    let Some(text) = text.get(range.clone()) else {
-        return rows;
-    };
-    let height = layout.line_height();
-    for (offset, ch) in text.char_indices() {
-        if ch == '\n' || ch == '\r' {
-            continue;
-        }
-        let index = range.start + offset;
-        let (Some(mut start), Some(end)) = (
-            layout.position_for_index(index),
-            layout.position_for_index(index + ch.len_utf8()),
-        ) else {
-            continue;
-        };
-        // Caret positions at soft wraps have upstream affinity; the tooltip
-        // starts on the next row when this character's glyph is there.
-        if layout.index_for_position(start + point(px(0.1), height / 2.))
-            != Ok(index)
-        {
-            start = point(layout.bounds().left(), start.y + height);
-        }
-        if start.y != end.y || end.x <= start.x {
-            continue;
-        }
-        match rows.last_mut() {
-            Some(last)
-                if last.top() == start.y
-                    && (last.right() - start.x).abs() < px(1.) =>
-            {
-                last.size.width = end.x - last.left();
-            }
-            _ => rows.push(Bounds::new(start, size(end.x - start.x, height))),
-        }
-    }
-    rows
+    crate::text_range_bounds(layout, text, range)
 }
 
 fn link_at_position(
@@ -782,6 +748,7 @@ mod tests;
 
 fn paint_range(
     layout: &TextLayout,
+    text: &str,
     span: Range<usize>,
     range: Range<usize>,
     color: Hsla,
@@ -791,45 +758,15 @@ fn paint_range(
     if range.is_empty() {
         return;
     }
-    let (Some(start), Some(end)) = (
-        layout.position_for_index(range.start - span.start),
-        layout.position_for_index(range.end - span.start),
-    ) else {
-        return;
-    };
-    let height = layout.line_height();
-    let bounds = layout.bounds();
-    if start.y == end.y {
-        window.paint_quad(fill(
-            Bounds::from_corners(start, point(end.x, end.y + height)),
-            color,
-        ));
-    } else {
-        window.paint_quad(fill(
-            Bounds::from_corners(
-                start,
-                point(bounds.right(), start.y + height),
-            ),
-            color,
-        ));
-        if end.y > start.y + height {
-            window.paint_quad(fill(
-                Bounds::from_corners(
-                    point(bounds.left(), start.y + height),
-                    point(bounds.right(), end.y),
-                ),
-                color,
-            ));
-        }
-        window.paint_quad(fill(
-            Bounds::from_corners(
-                point(bounds.left(), end.y),
-                point(end.x, end.y + height),
-            ),
-            color,
-        ));
+    for bounds in crate::text_range_bounds(
+        layout,
+        text,
+        range.start - span.start..range.end - span.start,
+    ) {
+        window.paint_quad(fill(bounds, color));
     }
 }
+
 fn subruns(runs: &[TextRun], range: Range<usize>) -> Vec<TextRun> {
     let mut offset = 0;
     runs.iter()

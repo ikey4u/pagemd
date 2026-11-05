@@ -246,3 +246,66 @@ fn wrapped_link_tooltips_show_destinations_without_changing_wrapping_or_clicks(
         original
     );
 }
+
+#[gpui_kit::test]
+fn selection_at_soft_wrap_starts_on_the_glyph_row(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut document = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let state = render("中文测试 alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron", cx);
+        document = Some(state.clone());
+        Root::new(cx.new(|_| LinkHost { document: state, renders: Rc::new(Cell::new(0)) }), window, cx)
+    });
+    let document = document.unwrap();
+    cx.simulate_resize(size(px(400.), px(500.)));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let cases = {
+            let state = document.read(cx);
+            let frame = state.frame.borrow();
+            let run = &frame.runs[0].1;
+            let layout = run.layout();
+            let text = run.text();
+            assert!(layout.line_layouts()[0].wrap_boundaries.len() >= 2);
+            let mut cases = Vec::new();
+            for (index, ch) in
+                text.char_indices().filter(|(_, ch)| !ch.is_whitespace())
+            {
+                let range = index..index + ch.len_utf8();
+                let rows =
+                    crate::text_range_bounds(layout, text, range.clone());
+                let bounds = rows[0];
+                cases.push((
+                    bounds.origin + point(px(0.1), bounds.size.height / 2.),
+                    bounds.top_right() + point(px(0.), bounds.size.height / 2.),
+                    range,
+                ));
+            }
+            // A span across several visual rows must also copy exactly.
+            let first = cases[2].clone();
+            let last = cases[cases.len() - 3].clone();
+            cases.push((first.0, last.1, first.2.start..last.2.end));
+            cases
+        };
+        for (start, end, range) in cases {
+            for (a, b) in [(start, end), (end, start)] {
+                gpui_kit::base::TextSelection::clear(window, cx);
+                window.render_frame(cx);
+                window.drag(a, b, cx);
+                window.render_frame(cx);
+                let state = document.read(cx);
+                let text = state.rendered_text();
+
+                assert_eq!(
+                    state.selected_text_with_format(
+                        crate::SelectionFormat::Plain
+                    ),
+                    &text.as_str()[range.clone()],
+                    "range {range:?}, drag {a:?} -> {b:?}"
+                );
+                assert_eq!(state.selected_source_range(), Some(range.clone()));
+            }
+        }
+    });
+}

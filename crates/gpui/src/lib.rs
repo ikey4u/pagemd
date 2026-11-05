@@ -1,8 +1,10 @@
 //! PageMD's independent native renderer. The shared PageMD document is converted
 //! directly into GPUI elements; GPUI Kit's Markdown TextView is never invoked.
 mod extensions;
+mod geometry;
+pub use geometry::{text_index_at_point, text_range_bounds};
 mod openapi;
-pub use openapi::{OpenApiPlugin, OpenApiReader, render_openapi_document};
+pub use openapi::{render_openapi_document, OpenApiPlugin, OpenApiReader};
 mod html;
 mod model;
 mod paragraph;

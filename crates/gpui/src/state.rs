@@ -346,7 +346,9 @@ impl MarkdownViewState {
             .iter()
             .map(|(_, run)| run.clone())
             .collect();
-        let projection = self.selection.update_runs(&runs, cx);
+        // Retain runs for the window's multi-click and copy coordination, but
+        // map endpoints through native shaping instead of the geometric band.
+        self.selection.update_runs(&runs, cx);
         // A passive selection remains anchored to rendered/source bytes during
         // reflow and streaming. A new gesture event clears it before projecting.
         if self.frame.borrow().selected.is_some()
@@ -359,11 +361,19 @@ impl MarkdownViewState {
         }
         let frame = self.frame.borrow();
         let mut result: Option<Range<usize>> = None;
-        for ((offset, _), range) in frame
-            .runs
-            .iter()
-            .zip(projection.ranges())
-            .filter_map(|(run, range)| range.as_ref().map(|r| (run, r)))
+        let points =
+            self.selection.snapshot(cx).and_then(|s| s.window_points());
+        for ((offset, _), range) in
+            frame.runs.iter().filter_map(|(offset, run)| {
+                let points = points?;
+                let range = crate::geometry::selection_range(
+                    run.layout(),
+                    run.text(),
+                    points.anchor(),
+                    points.cursor(),
+                )?;
+                Some(((offset, run), range))
+            })
         {
             let range = offset.start + range.start..offset.start + range.end;
             result = Some(match result {
