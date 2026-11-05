@@ -71,3 +71,5 @@ pub use pagemd_parser::{parse as analyze_markdown, ParsedDocument, Renderer};
 
 /// Headless Mermaid engine shared by static HTML and embedding applications.
 pub use bezel_mermaid as mermaid;
+/// Figure rendering with titles returned separately, outside the image.
+pub mod mermaid_figure;

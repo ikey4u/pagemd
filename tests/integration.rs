@@ -842,10 +842,10 @@ $$
 }
 
 #[test]
-fn mermaid_fence_captions_are_centered_and_distinct_from_diagram_titles() {
+fn mermaid_fence_caption_overrides_the_source_title_without_drawing_it() {
     let html = render_html("```mermaid title=\"图 1 · 外部 <标题> & 说明\"\n---\ntitle: 图内请求流程\n---\nflowchart LR\nA[接收] --> B[返回]\n```\n");
     assert_eq!(mermaid_count(&html), 1);
-    assert!(html.contains("图内请求流程"));
+    assert!(!html.contains("图内请求流程"));
     assert!(html.contains("<figure class=\"pagemd-figure\">"));
     assert!(html.contains("<figcaption>图 1 · 外部 &lt;标题&gt; &amp; 说明</figcaption>"));
     assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
@@ -853,15 +853,34 @@ fn mermaid_fence_captions_are_centered_and_distinct_from_diagram_titles() {
 }
 
 #[test]
-fn mermaid_frontmatter_titles_render_as_visible_centered_svg_text() {
-    for body in ["flowchart LR\nA[开始] --> B[完成]", "sequenceDiagram\nA->>B: 请求"] {
-        let svg = pagemd::mermaid::render(
-            &format!("---\ntitle: 请求处理流程\n---\n{body}"),
-            &pagemd::mermaid::Options::default(),
-            &pagemd::mermaid::Metrics,
-        ).unwrap().svg;
-        assert!(regex::Regex::new(r#"(?s)<text[^>]*text-anchor="middle"[^>]*>.*?请求处理流程.*?</text>"#).unwrap().is_match(&svg), "{svg}");
+fn mermaid_titles_are_captions_and_never_part_of_the_svg() {
+    for source in [
+        "---\ntitle: 请求处理流程\n---\nflowchart LR\nsubgraph Group[分组标题]\nA[开始]-->B[完成]\nend",
+        "sequenceDiagram\ntitle 请求处理流程\nA->>B: 请求",
+        "pie title 请求处理流程\n\"成功\": 10\n\"失败\": 2",
+        "---\ntitle: 请求处理流程\n---\nclassDiagram\nA --> B",
+    ] {
+        let figure = pagemd::mermaid_figure::render(source, &pagemd::mermaid::Options::default(), &pagemd::mermaid::Metrics).unwrap();
+        assert_eq!(figure.caption.as_deref(), Some("请求处理流程"));
+        assert!(!figure.drawing.svg.contains("请求处理流程"));
+        if source.contains("分组标题") {
+            assert!(figure.drawing.svg.contains("分组标题"));
+        }
+        let html = render_html(&format!("```mermaid\n{source}\n```"));
+        assert!(html.contains("<figcaption>请求处理流程</figcaption>"));
+        assert_eq!(html.matches("请求处理流程").count(), 1);
+        assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
     }
+}
+
+#[test]
+fn client_preview_also_keeps_mermaid_titles_outside_the_image() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let html = render_markdown("```mermaid\n---\ntitle: 图外标题\n---\nflowchart LR\nA-->B\n```", Path::new("."), 16., "", &ss, &ts, true, FootnoteDisplay::EndList).unwrap().html;
+    assert_eq!(html.matches("图外标题").count(), 1);
+    assert!(html.contains("<figcaption>图外标题</figcaption>"));
+    assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
 }
 
 #[test]

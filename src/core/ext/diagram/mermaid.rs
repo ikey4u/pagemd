@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use bezel_mermaid::{render, Metrics, Options};
+use bezel_mermaid::{Metrics, Options};
 
 use crate::core::util::html_escape;
 
@@ -23,11 +23,11 @@ pub fn render_mermaid(code: &str) -> Result<String> {
         }))?,
         ..Default::default()
     };
-    let drawing = render(code.trim(), &options, &Metrics)
+    let figure = crate::mermaid_figure::render(code.trim(), &options, &Metrics)
         .context("Failed to render Mermaid diagram")?;
     Ok(format!(
         "<div class=\"mermaid-display\"><div class=\"mermaid-canvas\">{}</div></div>\n",
-        drawing.svg
+        figure.drawing.svg
     ))
 }
 

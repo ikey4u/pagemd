@@ -533,11 +533,16 @@ fn render_parsed_document(
                         "mermaid" | "mmd" | "plantuml" | "puml" | "uml"
                             | "math" | "latex"
                     ) || is_diagram_html_info(&lang_info);
+                    let diagram_caption = if matches!(lang_str.as_str(), "mermaid" | "mmd") {
+                        crate::mermaid_figure::caption(&buf_str).ok().flatten()
+                    } else {
+                        None
+                    };
                     let caption = figure.then(|| {
                         let meta = lang_info.split_once(char::is_whitespace)
                             .map_or("", |(_, meta)| meta);
                         pagemd_parser::figure::fence_title(meta)
-                    }).flatten();
+                    }).flatten().or(diagram_caption.clone());
                     if caption.is_some() {
                         html.push_str("<figure class=\"pagemd-figure\">\n");
                     }
@@ -583,7 +588,10 @@ fn render_parsed_document(
                             }
                         }
                         "mermaid" | "mmd" => {
-                            if client_mermaid {
+                            // Titled diagrams share the semantic native figure
+                            // path so browser previews cannot reinsert a title
+                            // into the image. The caption is emitted below it.
+                            if client_mermaid && diagram_caption.is_none() {
                                 html.push_str(&mermaid_client_html(&buf_str));
                             } else {
                                 match render_mermaid(&buf_str) {
