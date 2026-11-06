@@ -460,7 +460,6 @@ impl Projection<'_> {
                 } else {
                     "header"
                 };
-                let mut description = text(&scheme, "description").to_owned();
                 let auth = match kind {
                     "http"
                         if text(&scheme, "scheme")
@@ -479,10 +478,11 @@ impl Projection<'_> {
                     "mutualTLS" => "Client certificate",
                     _ => name,
                 };
-                if !description.is_empty() {
-                    description.push(' ');
+                let mut description =
+                    text(&scheme, "description").trim().to_owned();
+                if description.is_empty() {
+                    description = auth.to_owned();
                 }
-                description.push_str(auth);
                 let scopes: Vec<_> = values(scopes).map(display).collect();
                 if !scopes.is_empty() {
                     description

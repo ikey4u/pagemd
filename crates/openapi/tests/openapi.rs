@@ -91,6 +91,36 @@ fn projects_inherited_parameters_security_body_and_response_fields() {
 }
 
 #[test]
+fn security_description_replaces_generic_bearer_label() {
+    let spec = r#"
+openapi: 3.1.0
+info: {title: Example, version: '1'}
+components:
+  securitySchemes:
+    vendorKey:
+      type: http
+      scheme: bearer
+      description: Order access key for submissions.
+security: [{vendorKey: []}]
+paths:
+  /submissions:
+    post:
+      responses: {'200': {description: Accepted}}
+"#;
+    let document = parse(spec).unwrap();
+    let authorization = document.operations[0]
+        .request
+        .iter()
+        .find(|item| item.name == "Authorization")
+        .unwrap();
+    assert_eq!(
+        authorization.description,
+        "Order access key for submissions."
+    );
+    assert!(!render_html(&document).contains("Bearer token"));
+}
+
+#[test]
 fn json_and_yaml_share_the_same_model_and_html_is_inert() {
     let value: serde_json::Value = serde_yaml::from_str(SPEC).unwrap();
     let document = parse(SPEC).unwrap();
