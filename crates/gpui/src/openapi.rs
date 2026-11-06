@@ -253,6 +253,7 @@ mod native_tests {
     use super::*;
     use core::prelude::v1::test;
     use gpui_kit::component::{Root, Theme, ThemeMode};
+    use gpui_kit::{base::TextSelection, test::TestWindowExt as _};
     struct Host(Entity<crate::MarkdownViewState>);
     impl Render for Host {
         fn render(
@@ -288,6 +289,80 @@ mod native_tests {
                 .unwrap();
             assert_eq!(document.operations[0].method, "GET");
             assert_eq!(document.operations[0].path, "/pets");
+        });
+    }
+
+    #[gpui_kit::test]
+    fn native_openapi_text_can_be_drag_selected(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            Theme::change(ThemeMode::Light, Some(window), cx);
+            let document = crate::render(
+                r#"```openapi
+openapi: 3.1.0
+info: {title: Example, version: '1'}
+components:
+  securitySchemes:
+    token: {type: http, scheme: bearer, description: Order access key}
+security: [{token: []}]
+paths:
+  /submissions:
+    post:
+      responses: {'200': {description: Accepted}}
+```"#,
+                cx,
+            );
+            Root::new(cx.new(|_| Host(document)), window, cx)
+        });
+        cx.run_until_parked();
+        let (start, end) = cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let name =
+                window.find("openapi-operation-0-request-0-name").bounds();
+            (
+                point(name.left() + px(1.), name.center().y),
+                point(name.right() - px(1.), name.center().y),
+            )
+        });
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            end,
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                TextSelection::selected_text(window, cx),
+                "Authorization"
+            );
+            window.press("cmd-c", cx);
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().unwrap(),
+                "Authorization"
+            );
+        });
+        let (start, end) = cx.update(|window, _| {
+            let method = window.find("openapi-operation-0-method").bounds();
+            let path = window.find("openapi-operation-0-path").bounds();
+            (
+                point(method.left() + px(1.), method.center().y),
+                point(path.right() - px(1.), path.center().y),
+            )
+        });
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            end,
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let selected = TextSelection::selected_text(window, cx);
+            assert!(selected.contains("POST"), "{selected}");
+            assert!(selected.contains("/submissions"), "{selected}");
         });
     }
 }
