@@ -1,10 +1,10 @@
 .pagemd-openapi{--oa-fg:var(--foreground,var(--color-text,inherit));--oa-muted:var(--muted-foreground,var(--color-muted-foreground,var(--color-muted,#68717c)));--oa-border:var(--border,var(--color-border,#e5e7eb));color:var(--oa-fg);font-size:13px;line-height:1.55;max-width:100%;overflow-wrap:anywhere}
 .pagemd-openapi .pagemd-openapi-operation{margin:12px 0;padding:18px 20px;border:1px solid var(--oa-border);border-radius:7px;background:var(--background,var(--color-bg,transparent))}
-.pagemd-openapi h3{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px;font-weight:500;line-height:1.6;border:0;padding:0}
+.pagemd-openapi .pagemd-openapi-operation>h3{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 10px;margin:0;font-size:13px;font-weight:500;line-height:1.6;border:0;padding:0}
 .pagemd-openapi .pagemd-openapi-method{color:var(--primary,var(--color-link,#7651a5));font-size:12px;font-weight:600}
 .pagemd-openapi code{background:transparent;border:0;padding:0;color:inherit;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .pagemd-openapi section{margin-top:20px}
-.pagemd-openapi h4{font-size:13px;font-weight:600;line-height:1.6;margin:0;padding:0;border:0}
+.pagemd-openapi section>h4{font-size:13px;font-weight:600;line-height:1.6;margin:0;padding:0;border:0}
 .pagemd-openapi .pagemd-openapi-items{margin:9px 0 0;padding:0 0 0 18px;list-style:disc outside}
 .pagemd-openapi .pagemd-openapi-items .pagemd-openapi-items{list-style:circle outside;margin-top:7px}
 .pagemd-openapi .pagemd-openapi-items>li{margin:0 0 10px;padding:0 0 0 2px}
@@ -14,10 +14,12 @@
 .pagemd-openapi .pagemd-openapi-comment{margin-top:9px;color:var(--oa-muted);font-size:12px}
 .pagemd-openapi .pagemd-openapi-comment>:first-child{margin-top:0}
 .pagemd-openapi .pagemd-openapi-comment>:last-child{margin-bottom:0}
+.pagemd-openapi .pagemd-openapi-comment h1,.pagemd-openapi .pagemd-openapi-comment h2,.pagemd-openapi .pagemd-openapi-comment h3,.pagemd-openapi .pagemd-openapi-comment h4,.pagemd-openapi .pagemd-openapi-comment h5,.pagemd-openapi .pagemd-openapi-comment h6{margin:9px 0 3px;font-size:12px;font-weight:600;line-height:1.5}
 .pagemd-openapi .pagemd-openapi-comment ul,.pagemd-openapi .pagemd-openapi-comment ol{margin:7px 0;padding-left:20px}
 .pagemd-openapi .pagemd-openapi-comment li{margin:3px 0}
 .pagemd-openapi .pagemd-openapi-comment a{color:var(--primary,var(--color-link,#7651a5))}
 .pagemd-openapi .pagemd-openapi-comment pre{max-width:100%;overflow-x:auto;margin:8px 0;padding:8px;border:1px solid var(--oa-border);border-radius:5px}
+.pagemd-openapi .pagemd-openapi-comment pre code{white-space:pre}
 .pagemd-openapi .pagemd-openapi-comment blockquote{margin:8px 0;padding-left:10px;border-left:2px solid var(--oa-border)}
 .pagemd-openapi-warning{font-size:12px;color:var(--oa-muted)}
 @media(prefers-color-scheme:dark){.pagemd-openapi{--oa-muted:var(--muted-foreground,var(--color-muted-foreground,var(--color-muted,#a8afba)));--oa-border:var(--border,var(--color-border,#383b42))}}
