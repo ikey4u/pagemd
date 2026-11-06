@@ -153,7 +153,28 @@ pub fn render_document(document: &Document, cx: &App) -> AnyElement {
                             .whitespace_normal()
                             .child(selectable(format!("{id}-path"), op.path.clone())),
                     ),
-            )
+            );
+        if !op.comment.is_empty() {
+            card = card.child(
+                div()
+                    .id(format!("{id}-comment"))
+                    .test_support()
+                    .w_full()
+                    .min_w_0()
+                    .mt_2()
+                    .text_size(px(12.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        crate::MarkdownView::markdown(
+                            format!("{id}-comment-markdown"),
+                            op.comment.clone(),
+                        )
+                        .selectable(true)
+                        .openapi_blocks(false),
+                    ),
+            );
+        }
+        card = card
             .child(request)
             .child(
                 div()
@@ -176,35 +197,6 @@ pub fn render_document(document: &Document, cx: &App) -> AnyElement {
                         cx,
                     )),
             );
-        if !op.comment.is_empty() {
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .min_w_0()
-                    .mt_4()
-                    .child(
-                        div()
-                            .font_semibold()
-                            .child(selectable(
-                                format!("{id}-comment-heading"),
-                                "Comment",
-                            )),
-                    )
-                    .child(
-                        div()
-                            .mt_2()
-                            .text_size(px(12.))
-                            .text_color(cx.theme().muted_foreground)
-                            .whitespace_normal()
-                            .child(selectable(
-                                format!("{id}-comment"),
-                                op.comment.clone(),
-                            )),
-                    ),
-            );
-        }
         root = root.child(card);
     }
     for (index, warning) in document.warnings.iter().enumerate() {

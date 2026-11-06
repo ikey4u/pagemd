@@ -13,6 +13,7 @@ io = ["dep:reqwest", "dep:futures-lite"]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml = "0.9"
+pagemd-parser = { path = "../parser" }
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 futures-lite = { version = "2", optional = true }

@@ -38,7 +38,20 @@ pub fn render_html(document: &Document) -> String {
         );
     }
     for operation in &document.operations {
-        output.push_str(&format!("<article class=\"pagemd-openapi-operation\" aria-label=\"{} {}\"><h3><span class=\"pagemd-openapi-method\">{}</span> <code>{}</code></h3><section><h4>Request</h4>", escape(&operation.method), escape(&operation.path), escape(&operation.method), escape(&operation.path)));
+        output.push_str(&format!("<article class=\"pagemd-openapi-operation\" aria-label=\"{} {}\"><h3><span class=\"pagemd-openapi-method\">{}</span> <code>{}</code></h3>", escape(&operation.method), escape(&operation.path), escape(&operation.method), escape(&operation.path)));
+        if !operation.comment.is_empty() {
+            let comment = pagemd_parser::to_html_with_options(
+                &operation.comment,
+                &pagemd_parser::Options::gfm(),
+            )
+            .unwrap_or_else(|_| {
+                format!("<p>{}</p>", escape(&operation.comment))
+            });
+            output.push_str("<div class=\"pagemd-openapi-comment\">");
+            output.push_str(&comment);
+            output.push_str("</div>");
+        }
+        output.push_str("<section><h4>Request</h4>");
         if operation.request.is_empty() {
             output.push_str("<p>No request parameters.</p>");
         } else {
@@ -47,9 +60,6 @@ pub fn render_html(document: &Document) -> String {
         output.push_str("</section><section><h4>Response</h4>");
         items(&mut output, &operation.responses);
         output.push_str("</section>");
-        if !operation.comment.is_empty() {
-            output.push_str(&format!("<section><h4>Comment</h4><p class=\"pagemd-openapi-comment\">{}</p></section>", escape(&operation.comment)));
-        }
         output.push_str("</article>");
     }
     for warning in &document.warnings {

@@ -308,6 +308,8 @@ security: [{token: []}]
 paths:
   /submissions:
     post:
+      summary: '**Submit** a request'
+      description: 'Use a `token` to authorize it.'
       responses: {'200': {description: Accepted}}
 ```"#,
                 cx,
@@ -315,6 +317,15 @@ paths:
             Root::new(cx.new(|_| Host(document)), window, cx)
         });
         cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let method = window.find("openapi-operation-0-method").bounds();
+            let comment = window.find("openapi-operation-0-comment").bounds();
+            let request =
+                window.find("openapi-operation-0-request-heading").bounds();
+            assert!(method.bottom() <= comment.top());
+            assert!(comment.bottom() <= request.top());
+        });
         let (start, end) = cx.update(|window, cx| {
             window.draw(cx).clear(cx);
             let name =

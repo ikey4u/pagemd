@@ -135,9 +135,47 @@ fn json_and_yaml_share_the_same_model_and_html_is_inert() {
             < html.find("Response</h4>").unwrap()
     );
     assert!(
-        html.find("Response</h4>").unwrap()
-            < html.find("Comment</h4>").unwrap()
+        html.find("</h3>").unwrap()
+            < html.find("<div class=\"pagemd-openapi-comment\">").unwrap()
     );
+    assert!(
+        html.find("<div class=\"pagemd-openapi-comment\">").unwrap()
+            < html.find("Request</h4>").unwrap()
+    );
+    assert!(!html.contains("Comment</h4>"));
+}
+
+#[test]
+fn operation_description_renders_safe_markdown_below_route() {
+    let spec = r#"
+openapi: 3.1.0
+info: {title: Example, version: '1'}
+paths:
+  /submissions:
+    post:
+      summary: '**Create** a submission'
+      description: |
+        See the [guide](https://example.test/guide) for details.
+        [Unsafe link](javascript:alert(1)) must not keep its protocol.
+
+        - Include a `token`.
+        - Use ~~legacy~~ current fields.
+
+        <script>bad()</script>
+      responses: {'200': {description: Accepted}}
+"#;
+    let html = render_html(&parse(spec).unwrap());
+    let description =
+        html.find("<div class=\"pagemd-openapi-comment\">").unwrap();
+    assert!(html.find("</h3>").unwrap() < description);
+    assert!(description < html.find("Request</h4>").unwrap());
+    assert!(html.contains("<strong>Create</strong> a submission"));
+    assert!(html.contains("<a href=\"https://example.test/guide\">guide</a>"));
+    assert!(!html.contains("href=\"javascript:"));
+    assert!(html.contains("<li>Include a <code>token</code>.</li>"));
+    assert!(html.contains("<del>legacy</del>"));
+    assert!(html.contains("&lt;script&gt;bad()&lt;/script&gt;"));
+    assert!(!html.contains("<script>"));
 }
 
 #[test]

@@ -60,6 +60,7 @@ pub struct MarkdownView {
     format: Option<SelectionFormat>,
     scrollable: bool,
     extensions: MarkdownExtensions,
+    openapi_blocks: bool,
     link: Option<LinkClick>,
     image: Option<ImageResolver>,
     reveal: Option<Reveal>,
@@ -94,6 +95,7 @@ impl MarkdownView {
             format: None,
             scrollable: false,
             extensions: MarkdownExtensions::default(),
+            openapi_blocks: true,
             link: None,
             image: None,
             reveal: None,
@@ -142,6 +144,10 @@ impl MarkdownView {
     }
     pub fn plugin<P: MarkdownPlugin>(mut self, plugin: P) -> Self {
         self.extensions = self.extensions.plugin(plugin);
+        self
+    }
+    pub(crate) fn openapi_blocks(mut self, enabled: bool) -> Self {
+        self.openapi_blocks = enabled;
         self
     }
     pub fn on_link_click(
@@ -329,6 +335,7 @@ impl Element for MarkdownView {
             source,
             style,
             extensions: self.extensions.clone(),
+            openapi_blocks: self.openapi_blocks,
             link: self.link.clone(),
             image: self.image.clone(),
             highlights,
@@ -537,6 +544,7 @@ struct Blocks {
     source: Arc<str>,
     style: MarkdownStyle,
     extensions: MarkdownExtensions,
+    openapi_blocks: bool,
     link: Option<LinkClick>,
     image: Option<ImageResolver>,
     highlights: Vec<RangeHighlight>,
@@ -575,7 +583,7 @@ impl Blocks {
             .into_any_element();
         }
         // Built-in support remains active when a host supplies unrelated plugins.
-        {
+        if self.openapi_blocks {
             use crate::MarkdownPlugin as _;
             let plugin = crate::OpenApiPlugin::default();
             let context = crate::MarkdownParseContext {

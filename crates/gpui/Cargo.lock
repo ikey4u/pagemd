@@ -5020,6 +5020,7 @@ name = "pagemd-openapi"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
+ "pagemd-parser",
  "reqwest",
  "serde",
  "serde_json",
