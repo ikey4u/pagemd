@@ -126,6 +126,14 @@ impl RenderedText {
         &self,
         range: Range<usize>,
     ) -> Option<Range<usize>> {
+        self.index.text.get(range.clone())?;
+        let mut covered = range.start;
+        for span in self.index.mapping.iter().filter(|span| overlaps(&span.rendered, &range)) {
+            let start = span.rendered.start.max(range.start);
+            if start > covered && !self.index.text[covered..start].trim().is_empty() { return None; }
+            covered = covered.max(span.rendered.end.min(range.end));
+        }
+        if covered < range.end && !self.index.text[covered..range.end].trim().is_empty() { return None; }
         hull(
             self.index
                 .mapping

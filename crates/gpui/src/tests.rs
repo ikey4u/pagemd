@@ -660,3 +660,16 @@ fn labelled_serialization_fence_keeps_code_and_comment_mapping(cx: &mut TestAppC
         assert_eq!(&text.as_str()[range], "comment");
     });
 }
+
+#[gpui_kit::test]
+fn ambiguous_metadata_selection_never_returns_only_the_following_body(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let source = "---\nfirst: repeated\nsecond: repeated\n---\n\nBody";
+    let state = cx.update(|cx| render(source, cx));
+    cx.update(|cx| {
+        let text = state.read(cx).rendered_text();
+        assert!(text.source_for_range(0..text.len()).is_none());
+        let start = text.as_str().find("Body").unwrap();
+        assert_eq!(&source[text.source_for_range(start..start + 4).unwrap()], "Body");
+    });
+}
