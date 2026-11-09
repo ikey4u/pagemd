@@ -107,3 +107,14 @@ fn every_streaming_prefix_can_be_replaced_by_a_complete_document() {
         Node::Code(_)
     ));
 }
+
+#[test]
+fn field_layout_preserves_empty_containers_and_escapes_values() {
+    use pagemd_parser::frontmatter::render_html;
+    let html = render_html("yaml", "object: {}\nlist: []\ntext: '<script>alert(1)</script>'").unwrap();
+    assert!(html.contains("<span>{}</span>"));
+    assert!(html.contains("<span>[]</span>"));
+    assert!(html.contains("&lt;script&gt;"));
+    assert!(!html.contains("<script>"));
+    assert!(!render_html("yaml", "").unwrap().contains("null"));
+}

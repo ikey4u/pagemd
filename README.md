@@ -191,7 +191,7 @@ hosts; `render_html` and `render_openapi_document` render the shared model.
 
 ### Document metadata
 
-Leading YAML (`---` … `---` or `...`), TOML (`+++` … `+++`), and JSON objects are displayed as language code blocks in HTML and native GPUI views. Nested mappings, lists, booleans, numbers, nulls, multiline strings, comments, and author formatting remain literal; metadata is never interpreted as Markdown or executable configuration. Ordinary fenced `yaml`/`yml`, `toml`, and `json` code continues to work.
+Leading YAML (`---` … `---` or `...`), TOML (`+++` … `+++`), and JSON objects are displayed as recursive field/value layouts in HTML and native GPUI views. Nested mappings, lists, booleans, numbers, nulls, multiline strings, comments, and author formatting remain literal; metadata is never interpreted as Markdown or executable configuration. Ordinary fenced `yaml`/`yml`, `toml`, and `json` code continues to work.
 
 Recognition requires a complete valid mapping/object at the start of the document (an optional UTF-8 BOM is accepted). Invalid or unfinished input remains ordinary Markdown, so thematic breaks and streaming updates cannot silently hide content. The shared GFM options enable this behavior; set `constructs.frontmatter = false` to disable it. The AST exposes these blocks as `Code` with the serialization language and `meta = "frontmatter"`; `frontmatter::detect` provides the original block and value byte ranges. Selection, search and source editing use the original document. The explicit `strip_yaml_frontmatter` helper remains available for consumers that intentionally omit metadata; normal rendering no longer calls it.
 

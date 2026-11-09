@@ -370,6 +370,8 @@ impl Builder<'_> {
     ) {
         use pagemd_parser::frontmatter::Value;
         match value {
+            Value::Object(fields) if fields.is_empty() => self.metadata(&Value::Scalar("{}".into()), node, depth, rows),
+            Value::List(items) if items.is_empty() => self.metadata(&Value::Scalar("[]".into()), node, depth, rows),
             Value::Object(fields) => {
                 for (key, value) in fields {
                     let paragraph = self.literal(key, node, true);
@@ -536,7 +538,12 @@ impl Builder<'_> {
         let raw = &self.source[range.clone()];
         if matches!(node, Node::Code(code) if code.meta.as_deref() == Some("frontmatter"))
         {
-            let candidates: Vec<_> = raw.match_indices(value).collect();
+            let candidates: Vec<_> = raw.match_indices(value).filter(|(offset, _)| {
+                let line_start = raw[..*offset].rfind('\n').map_or(0, |at| at + 1);
+                let prefix = &raw[line_start..*offset];
+                let line = raw[line_start..].split('\n').next().unwrap_or_default();
+                !line.trim_start().starts_with('#') && !prefix.contains('#')
+            }).collect();
             if !value.is_empty() && candidates.len() == 1 {
                 let source_start = range.start + candidates[0].0;
                 for (offset, ch) in value.char_indices() {

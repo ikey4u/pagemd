@@ -1,4 +1,4 @@
-//! Validated document metadata, displayed through the ordinary code renderer.
+//! Validated document metadata with a renderer-independent field tree.
 //! Only a complete mapping/object at byte zero (optionally after a BOM) qualifies.
 //! Invalid or incomplete input remains ordinary Markdown, including thematic breaks.
 use std::ops::Range;
@@ -117,6 +117,7 @@ pub fn presentation(language: &str, source: &str) -> Option<Value> {
             ),
         }
     }
+    if source.trim().is_empty() { return Some(Value::Object(vec![])); }
     let value = match language {
         "yaml" => serde_yaml::from_str(source).ok()?,
         "json" => serde_yaml::to_value(
@@ -142,6 +143,8 @@ pub fn render_html(language: &str, source: &str) -> Option<String> {
     fn render(value: &Value) -> String {
         match value {
             Value::Scalar(s) => format!("<span style=\"white-space:pre-wrap;overflow-wrap:anywhere\">{}</span>", escape(s)),
+            Value::Object(fields) if fields.is_empty() => "<span>{}</span>".to_owned(),
+            Value::List(items) if items.is_empty() => "<span>[]</span>".to_owned(),
             Value::Object(fields) => format!("<dl style=\"margin:0\">{}</dl>", fields.iter().map(|(key,value)| format!("<dt style=\"font-weight:600;margin-top:.65em\">{}</dt><dd style=\"margin:0 0 0 1em\">{}</dd>",escape(key),render(value))).collect::<String>()),
             Value::List(items) => format!("<ul>{}</ul>",items.iter().map(|item|format!("<li>{}</li>",render(item))).collect::<String>()),
         }
