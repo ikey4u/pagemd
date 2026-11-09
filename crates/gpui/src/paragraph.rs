@@ -558,49 +558,13 @@ impl Element for NativeTextLeaf {
         // Register tooltip targets before the first mouse move. One transparent
         // target per wrapped glyph row keeps tooltips off paragraph gutters and
         // leaves native text shaping, selection and link clicks untouched.
-        let mut tooltips = Vec::new();
-        for (index, (range, url)) in self.links.iter().enumerate() {
-            for (row, bounds) in
-                link_bounds(self.text.layout(), &self.content, range.clone())
-                    .into_iter()
-                    .enumerate()
-            {
-                let url = url.clone();
-                let mut tooltip = div()
-                    .id(SharedString::from(format!(
-                        "link-tooltip-{index}-{row}:{url}"
-                    )))
-                    .w(bounds.size.width)
-                    .h(bounds.size.height)
-                    .tooltip(move |window, cx| {
-                        let url = url.clone();
-                        gpui_kit::component::tooltip::Tooltip::element(
-                            move |_, _| {
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "markdown-link-destination:{url}"
-                                    )))
-                                    .test_support()
-                                    .max_w(px(480.))
-                                    .whitespace_normal()
-                                    .child(url.clone())
-                            },
-                        )
-                        .build(window, cx)
-                    })
-                    .into_any_element();
-                tooltip.layout_as_root(
-                    size(
-                        AvailableSpace::Definite(bounds.size.width),
-                        AvailableSpace::Definite(bounds.size.height),
-                    ),
-                    window,
-                    cx,
-                );
-                tooltip.prepaint_at(bounds.origin, window, cx);
-                tooltips.push(tooltip);
-            }
-        }
+        let tooltips = prepaint_link_tooltips(
+            self.text.layout(),
+            &self.content,
+            &self.links,
+            window,
+            cx,
+        );
         (hitbox, tooltips)
     }
     fn paint(
@@ -725,6 +689,60 @@ impl Element for NativeTextLeaf {
         }
     }
 }
+/// Register destination tooltips over linked glyphs in a prepainted text layout.
+/// Paint the returned elements in the same frame after painting the text.
+pub fn prepaint_link_tooltips(
+    layout: &TextLayout,
+    text: &str,
+    links: &[(Range<usize>, SharedString)],
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<AnyElement> {
+    let mut tooltips = Vec::new();
+    for (index, (range, url)) in links.iter().enumerate() {
+        for (row, bounds) in link_bounds(layout, text, range.clone())
+            .into_iter()
+            .enumerate()
+        {
+            let url = url.clone();
+            let mut tooltip = div()
+                .id(SharedString::from(format!(
+                    "link-tooltip-{index}-{row}:{url}"
+                )))
+                .w(bounds.size.width)
+                .h(bounds.size.height)
+                .tooltip(move |window, cx| {
+                    let url = url.clone();
+                    gpui_kit::component::tooltip::Tooltip::element(
+                        move |_, _| {
+                            div()
+                                .id(SharedString::from(format!(
+                                    "markdown-link-destination:{url}"
+                                )))
+                                .test_support()
+                                .max_w(px(480.))
+                                .whitespace_normal()
+                                .child(url.clone())
+                        },
+                    )
+                    .build(window, cx)
+                })
+                .into_any_element();
+            tooltip.layout_as_root(
+                size(
+                    AvailableSpace::Definite(bounds.size.width),
+                    AvailableSpace::Definite(bounds.size.height),
+                ),
+                window,
+                cx,
+            );
+            tooltip.prepaint_at(bounds.origin, window, cx);
+            tooltips.push(tooltip);
+        }
+    }
+    tooltips
+}
+
 fn link_bounds(
     layout: &TextLayout,
     text: &str,

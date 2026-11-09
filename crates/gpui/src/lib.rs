@@ -8,6 +8,7 @@ pub use openapi::{render_openapi_document, OpenApiPlugin, OpenApiReader};
 mod html;
 mod model;
 mod paragraph;
+pub use paragraph::prepaint_link_tooltips;
 mod state;
 mod view;
 pub use extensions::*;

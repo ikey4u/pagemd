@@ -248,6 +248,145 @@ fn wrapped_link_tooltips_show_destinations_without_changing_wrapping_or_clicks(
 }
 
 #[gpui_kit::test]
+fn table_link_tooltips_show_destinations(cx: &mut TestAppContext) {
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    struct Host {
+        list: ListState,
+        document: Entity<MarkdownViewState>,
+        revealed: Rc<RefCell<Option<Bounds<Pixels>>>>,
+        clicked: Arc<Mutex<Vec<String>>>,
+    }
+    impl Render for Host {
+        fn render(
+            &mut self,
+            _: &mut Window,
+            _: &mut Context<Self>,
+        ) -> impl IntoElement {
+            let revealed = self.revealed.clone();
+            let clicked = self.clicked.clone();
+            let document = self.document.clone();
+            div()
+                .id("sloud-markdown-scroll")
+                .w(px(220.))
+                .h(px(600.))
+                .overflow_y_scroll()
+                .p_2()
+                .text_size(px(16.))
+                .line_height(relative(1.6))
+                .child(
+                    list(self.list.clone(), move |_, _, _| {
+                        let revealed = revealed.clone();
+                        let clicked = clicked.clone();
+                        MarkdownView::new(&document)
+                            .selectable(true)
+                            .style(
+                                gpui_kit::base::text::TextViewStyle::default()
+                                    .with_table_cell(
+                                        StyleRefinement::default()
+                                            .border_r_0()
+                                            .px_1()
+                                            .py_3(),
+                                    ),
+                            )
+                            .on_reveal(move |bounds, _, _| {
+                                *revealed.borrow_mut() = Some(bounds)
+                            })
+                            .on_link_click(move |url, _, _, _| {
+                                clicked.lock().unwrap().push(url.to_string())
+                            })
+                            .into_any_element()
+                    })
+                    .size_full(),
+                )
+        }
+    }
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+    });
+    let revealed = Rc::new(RefCell::new(None));
+    let clicked = Arc::new(Mutex::new(Vec::new()));
+    let mut saved_document = None;
+    let (_, cx) = cx.add_window_view(|window, cx| {
+        let document = crate::render(r"| Link | Other |
+| --- | --- |
+| [**A long clickable link wrapping across several lines of text**](https://example.com/docs) 普通文字 | [Second](</tmp/报告.md:42>) |", cx);
+        saved_document = Some(document.clone());
+        Root::new(cx.new(|_| Host { list: ListState::new(1, ListAlignment::Top, px(200.)), document, revealed:revealed.clone(), clicked:clicked.clone() }), window, cx)
+    });
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find(SharedString::from("pagemd-table-cell-0-1-0"))
+                .is_some(),
+            "must render actual table cells"
+        );
+    });
+    let document = saved_document.unwrap();
+    let original = document
+        .read_with(cx, |state, _| state.rendered_text().as_str().to_owned());
+    let mut points = Vec::new();
+    for word in ["long", "several", "普通", "Second"] {
+        let index =
+            original.find(word).unwrap() + if word.is_ascii() { 1 } else { 0 };
+        cx.update(|window, cx| {
+            document.update(cx, |document, cx| {
+                document.reveal_range(index..index, cx).unwrap()
+            });
+            window.render_frame(cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+        let bounds = revealed.borrow_mut().take().unwrap();
+        points.push(bounds.center());
+    }
+    assert!(points[1].y > points[0].y, "the link must wrap across lines");
+    for (position, url) in [
+        (points[0], Some("https://example.com/docs")),
+        (points[1], Some("https://example.com/docs")),
+        (points[2], None),
+        (points[3], Some("/tmp/报告.md:42")),
+    ] {
+        cx.simulate_mouse_move(position, None, Modifiers::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            for candidate in ["https://example.com/docs", "/tmp/报告.md:42"] {
+                assert_eq!(
+                    window
+                        .try_find(SharedString::from(format!(
+                            "markdown-link-destination:{candidate}"
+                        )))
+                        .is_some(),
+                    url == Some(candidate)
+                );
+            }
+        });
+    }
+    cx.simulate_mouse_down(points[3], MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(points[3], MouseButton::Left, Modifiers::default());
+    cx.run_until_parked();
+    assert_eq!(*clicked.lock().unwrap(), vec!["/tmp/报告.md:42"]);
+    assert_eq!(
+        document.read_with(cx, |state, _| state
+            .rendered_text()
+            .as_str()
+            .to_owned()),
+        original
+    );
+}
+
+#[gpui_kit::test]
 fn selection_at_soft_wrap_starts_on_the_glyph_row(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let mut document = None;
