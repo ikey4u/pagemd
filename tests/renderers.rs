@@ -78,7 +78,8 @@ fn complete_html_renderer_displays_frontmatter_without_consuming_body() {
             .unwrap();
         assert_eq!(section.title, "Body");
         assert!(section.html.contains("reviewdoc"));
-        assert!(section.html.contains(&format!("language-{language}")));
+        assert!(section.html.contains("pagemd-metadata"), "{language}");
+        assert!(!section.html.contains("<pre"));
         assert!(section.html.contains("Visible."));
     }
 }

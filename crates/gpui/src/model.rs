@@ -38,6 +38,7 @@ pub(crate) enum Kind {
     Heading(u8, Paragraph),
     Code(Option<String>, Paragraph),
     Math(Paragraph),
+    Metadata(Vec<(usize, bool, Paragraph)>),
     Group(Vec<Block>),
     Quote(Vec<Block>),
     List {
@@ -167,7 +168,7 @@ pub(crate) fn selection_has_one_style(
             .iter()
             .flatten()
             .any(|p| paragraph_has_one_style(p, range)),
-        Kind::Math(_) | Kind::Rule => false,
+        Kind::Math(_) | Kind::Rule | Kind::Metadata(_) => false,
     })
 }
 fn paragraph_has_one_style(p: &Paragraph, range: &Range<usize>) -> bool {
@@ -249,6 +250,30 @@ impl Builder<'_> {
             Node::Paragraph(n) => Kind::Paragraph(self.paragraph(&n.children)),
             Node::Heading(n) => {
                 Kind::Heading(n.depth, self.paragraph(&n.children))
+            }
+            Node::Code(n)
+                if n.meta.as_deref() == Some("frontmatter")
+                    && node
+                        .position()
+                        .and_then(|p| {
+                            pagemd_parser::frontmatter::detect(
+                                &self.source[p.start.offset..p.end.offset],
+                            )
+                        })
+                        .is_some() =>
+            {
+                let value = pagemd_parser::frontmatter::presentation(
+                    n.lang.as_deref().unwrap_or(""),
+                    &n.value,
+                )?;
+                let mut rows = vec![];
+                let mapping_start = self.mapping.len();
+                self.metadata(&value, node, 0, &mut rows);
+                // A decoded or ambiguous field must never enable a partial source edit.
+                if rows.iter().any(|(_, _, p)| !p.text.is_empty() && !self.mapping[mapping_start..].iter().any(|span| span.rendered.start == p.range.start && span.rendered.end <= p.range.end)) {
+                    self.mapping.truncate(mapping_start);
+                }
+                Kind::Metadata(rows)
             }
             Node::Code(n) => {
                 Kind::Code(n.lang.clone(), self.literal(&n.value, node, true))
@@ -335,6 +360,35 @@ impl Builder<'_> {
             range: start..self.text.len(),
             kind,
         })
+    }
+    fn metadata(
+        &mut self,
+        value: &pagemd_parser::frontmatter::Value,
+        node: &Node,
+        depth: usize,
+        rows: &mut Vec<(usize, bool, Paragraph)>,
+    ) {
+        use pagemd_parser::frontmatter::Value;
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    let paragraph = self.literal(key, node, true);
+                    rows.push((depth, true, paragraph));
+                    self.text.push('\n');
+                    self.metadata(value, node, depth + 1, rows);
+                }
+            }
+            Value::List(items) => {
+                for value in items {
+                    self.metadata(value, node, depth + 1, rows);
+                }
+            }
+            Value::Scalar(value) => {
+                let paragraph = self.literal(value, node, true);
+                rows.push((depth, false, paragraph));
+                self.text.push('\n');
+            }
+        }
     }
     fn literal(
         &mut self,
@@ -480,6 +534,23 @@ impl Builder<'_> {
         };
         let range = p.start.offset..p.end.offset;
         let raw = &self.source[range.clone()];
+        if matches!(node, Node::Code(code) if code.meta.as_deref() == Some("frontmatter"))
+        {
+            let candidates: Vec<_> = raw.match_indices(value).collect();
+            if !value.is_empty() && candidates.len() == 1 {
+                let source_start = range.start + candidates[0].0;
+                for (offset, ch) in value.char_indices() {
+                    self.mapping.push(SourceSpan {
+                        rendered: start + offset
+                            ..start + offset + ch.len_utf8(),
+                        source: source_start + offset
+                            ..source_start + offset + ch.len_utf8(),
+                    });
+                }
+            }
+            return;
+        }
+
         let metadata = matches!(node, Node::Code(code) if code.meta.as_deref() == Some("frontmatter"))
             .then(|| pagemd_parser::frontmatter::detect(raw))
             .flatten();

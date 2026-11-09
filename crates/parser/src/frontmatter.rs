@@ -73,3 +73,81 @@ pub fn detect(source: &str) -> Option<FrontMatter> {
         value_range: start..end,
     })
 }
+
+/// A presentation tree independent of serialization syntax.
+#[derive(Clone, Debug)]
+pub enum Value {
+    Scalar(String),
+    Object(Vec<(String, Value)>),
+    List(Vec<Value>),
+}
+
+pub fn presentation(language: &str, source: &str) -> Option<Value> {
+    fn yaml(value: serde_yaml::Value) -> Value {
+        use serde_yaml::Value as Y;
+        match value {
+            Y::Mapping(items) => Value::Object(
+                items
+                    .into_iter()
+                    .map(|(key, value)| {
+                        (
+                            match key {
+                                Y::String(s) => s,
+                                other => serde_yaml::to_string(&other)
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_owned(),
+                            },
+                            yaml(value),
+                        )
+                    })
+                    .collect(),
+            ),
+            Y::Sequence(items) => {
+                Value::List(items.into_iter().map(yaml).collect())
+            }
+            Y::String(s) => Value::Scalar(s),
+            Y::Tagged(tag) => yaml(tag.value),
+            other => Value::Scalar(
+                serde_yaml::to_string(&other)
+                    .ok()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+            ),
+        }
+    }
+    let value = match language {
+        "yaml" => serde_yaml::from_str(source).ok()?,
+        "json" => serde_yaml::to_value(
+            serde_json::from_str::<serde_json::Value>(source).ok()?,
+        )
+        .ok()?,
+        "toml" => {
+            serde_yaml::to_value(toml::from_str::<toml::Table>(source).ok()?)
+                .ok()?
+        }
+        _ => return None,
+    };
+    Some(yaml(value))
+}
+
+pub fn render_html(language: &str, source: &str) -> Option<String> {
+    fn escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    }
+    fn render(value: &Value) -> String {
+        match value {
+            Value::Scalar(s) => format!("<span style=\"white-space:pre-wrap;overflow-wrap:anywhere\">{}</span>", escape(s)),
+            Value::Object(fields) => format!("<dl style=\"margin:0\">{}</dl>", fields.iter().map(|(key,value)| format!("<dt style=\"font-weight:600;margin-top:.65em\">{}</dt><dd style=\"margin:0 0 0 1em\">{}</dd>",escape(key),render(value))).collect::<String>()),
+            Value::List(items) => format!("<ul>{}</ul>",items.iter().map(|item|format!("<li>{}</li>",render(item))).collect::<String>()),
+        }
+    }
+    Some(format!(
+        "<section class=\"pagemd-metadata\">{}</section>",
+        render(&presentation(language, source)?)
+    ))
+}

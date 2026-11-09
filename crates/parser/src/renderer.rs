@@ -73,6 +73,18 @@ impl Renderer for HtmlFragmentRenderer {
                 event => event,
             })
             .collect();
+        if document.options().constructs.frontmatter {
+            if let Some(metadata) =
+                crate::frontmatter::detect(document.source())
+            {
+                if let Some(html) = crate::frontmatter::render_html(
+                    metadata.language,
+                    &document.source()[metadata.value_range],
+                ) {
+                    events.splice(0..3, [Event::Html(html.into())]);
+                }
+            }
+        }
         for index in 1..events.len() {
             if matches!(events[index], Event::End(TagEnd::CodeBlock)) {
                 if let Event::Text(text) = &mut events[index - 1] {

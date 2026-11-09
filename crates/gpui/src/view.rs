@@ -1,4 +1,5 @@
 //! Render PageMD blocks with ordinary native GPUI elements.
+use gpui_kit::prelude::FluentBuilder as _;
 use std::{ops::Range, rc::Rc, sync::Arc};
 
 use gpui_kit::{
@@ -605,6 +606,23 @@ impl Blocks {
                 .w_full()
                 .min_w_0()
                 .child(self.paragraph(p))
+                .into_any_element(),
+            Kind::Metadata(rows) => div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(rows.iter().map(|(depth, key, paragraph)| {
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .pl(px((*depth).min(8) as f32 * 12.))
+                        .when(*key, |view| {
+                            view.font_weight(FontWeight::SEMIBOLD)
+                        })
+                        .child(self.paragraph(paragraph))
+                }))
                 .into_any_element(),
             Kind::Heading(level, p) => {
                 let mut d =

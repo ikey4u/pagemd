@@ -502,7 +502,7 @@ fn render_parsed_document(
     let mut blockquote_depth = 0usize;
     let mut skip_footnote_definition_depth = 0usize;
 
-    for event in &events {
+    for (event_index, event) in events.iter().enumerate() {
         if skip_footnote_definition_depth > 0 {
             match event {
                 Event::Start(Tag::FootnoteDefinition(_)) => {
@@ -528,21 +528,46 @@ fn render_parsed_document(
                         .to_ascii_lowercase();
                     let buf_str = buf.clone();
                     ctx = Context::Normal;
+                    if event_index == 2 && document.options().constructs.frontmatter
+                        && pagemd_parser::frontmatter::detect(document.source()).is_some()
+                        && lang_info.split_whitespace().nth(1) == Some("frontmatter")
+                    {
+                        if let Some(metadata) =
+                            pagemd_parser::frontmatter::render_html(
+                                &lang_str, &buf_str,
+                            )
+                        {
+                            html.push_str(&metadata);
+                            continue;
+                        }
+                    }
                     let figure = matches!(
                         lang_str.as_str(),
-                        "mermaid" | "mmd" | "plantuml" | "puml" | "uml"
-                            | "math" | "latex"
+                        "mermaid"
+                            | "mmd"
+                            | "plantuml"
+                            | "puml"
+                            | "uml"
+                            | "math"
+                            | "latex"
                     ) || is_diagram_html_info(&lang_info);
-                    let diagram_caption = if matches!(lang_str.as_str(), "mermaid" | "mmd") {
-                        crate::mermaid_figure::caption(&buf_str).ok().flatten()
-                    } else {
-                        None
-                    };
-                    let caption = figure.then(|| {
-                        let meta = lang_info.split_once(char::is_whitespace)
-                            .map_or("", |(_, meta)| meta);
-                        pagemd_parser::figure::fence_title(meta)
-                    }).flatten().or(diagram_caption.clone());
+                    let diagram_caption =
+                        if matches!(lang_str.as_str(), "mermaid" | "mmd") {
+                            crate::mermaid_figure::caption(&buf_str)
+                                .ok()
+                                .flatten()
+                        } else {
+                            None
+                        };
+                    let caption = figure
+                        .then(|| {
+                            let meta = lang_info
+                                .split_once(char::is_whitespace)
+                                .map_or("", |(_, meta)| meta);
+                            pagemd_parser::figure::fence_title(meta)
+                        })
+                        .flatten()
+                        .or(diagram_caption.clone());
                     if caption.is_some() {
                         html.push_str("<figure class=\"pagemd-figure\">\n");
                     }

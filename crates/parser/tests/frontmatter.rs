@@ -25,7 +25,7 @@ fn common_metadata_formats_share_lossless_code_rendering() {
         let Node::Heading(heading) = &children[1] else { panic!("{children:?}"); };
         assert_eq!(heading.position.as_ref().unwrap().start.offset, source.find("# Body").unwrap());
         let html = to_html_with_options(source, &Options::gfm()).unwrap();
-        assert!(html.contains(&format!("language-{language}")), "{html}");
+        assert!(html.contains("pagemd-metadata"), "{html}");
         assert!(html.contains("<h1>Body</h1>"));
         assert!(!html.contains("<strong>literal</strong>"));
     }
