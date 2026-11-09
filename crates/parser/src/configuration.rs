@@ -45,6 +45,7 @@ pub struct ParseOptions {
 impl ParseOptions {
     pub fn gfm() -> Self {
         let mut options = Self::default();
+        options.constructs.frontmatter = true;
         options.constructs.gfm_table = true;
         options.constructs.gfm_strikethrough = true;
         options.constructs.gfm_task_list_item = true;
@@ -69,8 +70,8 @@ impl ParseOptions {
         flags.set(P::ENABLE_TASKLISTS, c.gfm_task_list_item);
         flags.set(P::ENABLE_FOOTNOTES, c.gfm_footnote_definition);
         flags.set(P::ENABLE_MATH, c.math_text || c.math_flow);
-        flags.set(P::ENABLE_YAML_STYLE_METADATA_BLOCKS, c.frontmatter);
-        flags.set(P::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS, c.frontmatter);
+        // Validated front matter is emitted as lossless language code blocks
+        // by analysis; pulldown metadata would swallow incomplete input.
         flags
     }
     pub(crate) fn validate(&self) -> Result<(), crate::message::Message> {

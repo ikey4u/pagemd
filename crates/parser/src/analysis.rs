@@ -322,9 +322,24 @@ pub(crate) fn parse(
     options: &ParseOptions,
 ) -> (Node, Vec<crate::SourceEvent>) {
     let location = Location::new(source.as_bytes());
-    let (masked, mut math) = display_math(source, options, &location);
+    let frontmatter = options
+        .constructs
+        .frontmatter
+        .then(|| crate::frontmatter::detect(source))
+        .flatten();
+    let metadata_mask = frontmatter.as_ref().map(|metadata| {
+        let mut bytes = source.as_bytes().to_vec();
+        for byte in &mut bytes[metadata.range.clone()] {
+            if !matches!(*byte, b'\r' | b'\n') {
+                *byte = b' ';
+            }
+        }
+        String::from_utf8(bytes).unwrap()
+    });
+    let analysis_source = metadata_mask.as_deref().unwrap_or(source);
+    let (masked, mut math) = display_math(analysis_source, options, &location);
     let masked_math_count = math.len();
-    let parser_source = masked.as_deref().unwrap_or(source);
+    let parser_source = masked.as_deref().unwrap_or(analysis_source);
     let parser = Parser::new_ext(parser_source, options.pulldown());
     let definitions = parser
         .reference_definitions()
@@ -356,6 +371,33 @@ pub(crate) fn parse(
             range,
         })
         .collect();
+    if let Some(metadata) = frontmatter {
+        let range = metadata.range;
+        let value_range = metadata.value_range;
+        events.splice(
+            0..0,
+            [
+                crate::SourceEvent {
+                    event: Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
+                        format!("{} frontmatter", metadata.language).into(),
+                    ))),
+                    range: range.clone(),
+                },
+                crate::SourceEvent {
+                    event: Event::Text(
+                        source[value_range.clone()]
+                            .replace("\r\n", "\n")
+                            .into(),
+                    ),
+                    range: value_range,
+                },
+                crate::SourceEvent {
+                    event: Event::End(pulldown_cmark::TagEnd::CodeBlock),
+                    range,
+                },
+            ],
+        );
+    }
     let mut stack = vec![Frame::root(source.len())];
     for crate::SourceEvent { event, range } in events.iter().cloned() {
         match event {

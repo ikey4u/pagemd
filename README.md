@@ -188,3 +188,11 @@ are bounded to 2 MiB per document, 32 external reference documents and 8 MiB tot
 file readers stay within the configured folder and HTTPS reads omit credentials.
 The `pagemd-openapi` crate exposes the same serializable projection to web/WASM
 hosts; `render_html` and `render_openapi_document` render the shared model.
+
+### Document metadata
+
+Leading YAML (`---` … `---` or `...`), TOML (`+++` … `+++`), and JSON objects are displayed as language code blocks in HTML and native GPUI views. Nested mappings, lists, booleans, numbers, nulls, multiline strings, comments, and author formatting remain literal; metadata is never interpreted as Markdown or executable configuration. Ordinary fenced `yaml`/`yml`, `toml`, and `json` code continues to work.
+
+Recognition requires a complete valid mapping/object at the start of the document (an optional UTF-8 BOM is accepted). Invalid or unfinished input remains ordinary Markdown, so thematic breaks and streaming updates cannot silently hide content. The shared GFM options enable this behavior; set `constructs.frontmatter = false` to disable it. The AST exposes these blocks as `Code` with the serialization language and `meta = "frontmatter"`; `frontmatter::detect` provides the original block and value byte ranges. Selection, search and source editing use the original document. The explicit `strip_yaml_frontmatter` helper remains available for consumers that intentionally omit metadata; normal rendering no longer calls it.
+
+Format references: [Hugo front matter](https://gohugo.io/content-management/front-matter/), [Jekyll front matter](https://jekyllrb.com/docs/front-matter/).

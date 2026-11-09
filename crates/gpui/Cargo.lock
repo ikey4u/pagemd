@@ -5033,7 +5033,9 @@ name = "pagemd-parser"
 version = "0.1.0"
 dependencies = [
  "pulldown-cmark",
+ "serde_json",
  "serde_yaml",
+ "toml 0.8.23",
  "unicode-general-category",
 ]
 

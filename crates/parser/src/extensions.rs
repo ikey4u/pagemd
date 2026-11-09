@@ -450,12 +450,48 @@ pub fn strip_yaml_frontmatter(source: &str) -> String {
 }
 
 pub fn preprocess_markdown_extensions(source: &str) -> String {
-    let source = strip_yaml_frontmatter(source);
+    if let Some(metadata) = crate::frontmatter::detect(source) {
+        let mut out = source[metadata.range.clone()].to_owned();
+        out.push_str(&preprocess_body(&source[metadata.range.end..]));
+        return out;
+    }
+    preprocess_body(source)
+}
+
+fn preprocess_body(source: &str) -> String {
+    // Extension-looking text inside code is literal (YAML block scalars too).
+    let (_, events) =
+        crate::analysis::parse(source, &crate::ParseOptions::gfm());
+    let code: Vec<_> = events
+        .iter()
+        .filter_map(|event| {
+            matches!(
+                event.event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+            )
+            .then_some(event.range.clone())
+        })
+        .collect();
+    let mut offset = 0;
+    let offsets: Vec<_> = source
+        .split_inclusive('\n')
+        .map(|line| {
+            let start = offset;
+            offset += line.len();
+            start
+        })
+        .collect();
     let lines: Vec<&str> = source.lines().collect();
     let mut out = String::new();
     let mut i = 0usize;
 
     while i < lines.len() {
+        if code.iter().any(|range| range.contains(&offsets[i])) {
+            out.push_str(lines[i]);
+            out.push('\n');
+            i += 1;
+            continue;
+        }
         if let Some(first) = strip_blockquote_marker(lines[i]) {
             if let Some((kind, title, fold)) = parse_callout_marker(first) {
                 i += 1;
@@ -587,7 +623,7 @@ mod tests {
     use super::{preprocess_markdown_extensions, strip_yaml_frontmatter};
 
     #[test]
-    fn yaml_frontmatter_is_stripped_before_render() {
+    fn explicit_stripping_is_opt_in_and_preprocessing_keeps_frontmatter() {
         let input = "---\nposition: 2\npath: /docs/intro\ntitle: Hello\n---\n\n# Body\n";
         let out = strip_yaml_frontmatter(input);
         assert!(!out.contains("position:"));
@@ -595,7 +631,7 @@ mod tests {
         assert!(out.contains("# Body"));
 
         let pre = preprocess_markdown_extensions(input);
-        assert!(!pre.contains("position:"));
+        assert!(pre.contains("position:"));
         assert!(pre.contains("# Body"));
     }
 

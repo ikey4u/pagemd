@@ -609,3 +609,34 @@ fn native_table_currency_copy_and_mapping_remain_literal(
         });
     });
 }
+
+#[gpui_kit::test]
+fn frontmatter_keeps_literal_text_and_exact_value_source_mapping(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    for source in [
+        "\u{feff}---\r\nname: reviewdoc\r\ndescription: 中文 **literal** $5 &amp; \\(x\\)\r\n...\r\n# Body",
+        "+++\nname = 'reviewdoc'\n[metadata]\nenabled = true\n+++\n# Body",
+        "{\"name\":\"reviewdoc\",\"nested\":{\"active\":true}}\n# Body",
+    ] {
+        let metadata = pagemd_parser::frontmatter::detect(source).unwrap();
+        let value = source[metadata.value_range].replace("\r\n", "\n");
+        let state = cx.update(|cx| render(source, cx));
+        cx.update(|cx| state.update(cx, |state, cx| {
+            let text = state.rendered_text();
+            assert!(text.as_str().starts_with(value.trim_end_matches('\n')));
+            for word in ["name", "reviewdoc", "中文", "**literal**", "$5", "&amp;", "Body"] {
+                if let Some(start) = source.find(word) {
+                    let rendered = text.range_for_source(start..start + word.len()).unwrap();
+                    assert_eq!(&text.as_str()[rendered.clone()], word);
+                    assert_eq!(text.source_for_range(rendered).unwrap(), start..start + word.len());
+                }
+            }
+            state.select_all(cx);
+            assert_eq!(state.selected_text(), source);
+            state.set_selection_format(SelectionFormat::Plain, cx);
+            assert!(state.selected_text().contains("reviewdoc"));
+        }));
+    }
+}

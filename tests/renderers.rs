@@ -42,3 +42,43 @@ fn built_in_backends_share_the_renderer_contract() {
     implements_renderer::<HtmlRenderer>();
     implements_renderer::<pagemd::gpui::GpuiRenderer>();
 }
+
+#[test]
+fn complete_html_renderer_displays_frontmatter_without_consuming_body() {
+    let syntax = SyntaxSet::load_defaults_newlines();
+    let themes = ThemeSet::load_defaults();
+    for (metadata, language) in [
+        ("---\nname: reviewdoc\ndescription: 中文\n---\n", "yaml"),
+        ("+++\nname = 'reviewdoc'\n+++\n", "toml"),
+        ("{\"name\":\"reviewdoc\",\"enabled\":true}\n", "json"),
+    ] {
+        let source = format!("{metadata}# Body\n\nVisible.");
+        let source =
+            parser::extensions::preprocess_markdown_extensions(&source);
+        let document =
+            parser::parse(&source, &parser::ParseOptions::gfm()).unwrap();
+        let registry = FootnoteRegistry::from_markdown(document.source());
+        let mut extracted = vec![];
+        let section = HtmlRenderer
+            .render(
+                &document,
+                HtmlRenderContext {
+                    base_dir: std::path::Path::new("."),
+                    math_font_size: 16.,
+                    font_dir: "",
+                    ss: &syntax,
+                    ts: &themes,
+                    footnotes: &registry,
+                    depth: 0,
+                    client_mermaid: false,
+                    footnote_display: FootnoteDisplay::default(),
+                    extracted_footnotes: &mut extracted,
+                },
+            )
+            .unwrap();
+        assert_eq!(section.title, "Body");
+        assert!(section.html.contains("reviewdoc"));
+        assert!(section.html.contains(&format!("language-{language}")));
+        assert!(section.html.contains("Visible."));
+    }
+}

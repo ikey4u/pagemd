@@ -480,19 +480,23 @@ impl Builder<'_> {
         };
         let range = p.start.offset..p.end.offset;
         let raw = &self.source[range.clone()];
-        let mut cursor =
-            if matches!(node, Node::InlineCode(_) | Node::InlineMath(_)) {
-                raw.chars()
-                    .take_while(|c| *c == '`' || *c == '$')
-                    .map(char::len_utf8)
-                    .sum()
-            } else if matches!(node, Node::Code(_))
-                && (raw.starts_with("```") || raw.starts_with("~~~"))
-            {
-                raw.find('\n').map_or(0, |i| i + 1)
-            } else {
-                0
-            };
+        let metadata = matches!(node, Node::Code(code) if code.meta.as_deref() == Some("frontmatter"))
+            .then(|| pagemd_parser::frontmatter::detect(raw))
+            .flatten();
+        let mut cursor = if let Some(metadata) = metadata {
+            metadata.value_range.start
+        } else if matches!(node, Node::InlineCode(_) | Node::InlineMath(_)) {
+            raw.chars()
+                .take_while(|c| *c == '`' || *c == '$')
+                .map(char::len_utf8)
+                .sum()
+        } else if matches!(node, Node::Code(_))
+            && (raw.starts_with("```") || raw.starts_with("~~~"))
+        {
+            raw.find('\n').map_or(0, |i| i + 1)
+        } else {
+            0
+        };
         let mut tokens = Vec::new();
         while cursor < raw.len() {
             let from = cursor;
