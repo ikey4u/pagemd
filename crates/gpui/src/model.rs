@@ -122,7 +122,7 @@ impl RenderedText {
                 .map(|s| s.rendered.clone()),
         )
     }
-    pub(crate) fn source_for_range(
+    pub fn source_for_range(
         &self,
         range: Range<usize>,
     ) -> Option<Range<usize>> {
