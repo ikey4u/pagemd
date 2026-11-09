@@ -646,3 +646,17 @@ fn frontmatter_keeps_literal_text_and_exact_value_source_mapping(
         }));
     }
 }
+
+#[gpui_kit::test]
+fn labelled_serialization_fence_keeps_code_and_comment_mapping(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let source = "```yaml frontmatter\n# comment\nname: example\n```";
+    let state = cx.update(|cx| render(source, cx));
+    cx.update(|cx| {
+        let text = state.read(cx).rendered_text();
+        assert!(text.as_str().starts_with("# comment\nname: example"));
+        let start = source.find("comment").unwrap();
+        let range = text.range_for_source(start..start + 7).unwrap();
+        assert_eq!(&text.as_str()[range], "comment");
+    });
+}

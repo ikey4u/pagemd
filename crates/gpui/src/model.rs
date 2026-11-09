@@ -537,6 +537,7 @@ impl Builder<'_> {
         let range = p.start.offset..p.end.offset;
         let raw = &self.source[range.clone()];
         if matches!(node, Node::Code(code) if code.meta.as_deref() == Some("frontmatter"))
+            && pagemd_parser::frontmatter::detect(raw).is_some()
         {
             let candidates: Vec<_> = raw.match_indices(value).filter(|(offset, _)| {
                 let line_start = raw[..*offset].rfind('\n').map_or(0, |at| at + 1);
