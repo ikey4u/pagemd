@@ -257,7 +257,7 @@ impl MarkdownViewState {
             SelectionFormat::Source | SelectionFormat::SourceAcrossStyles => {
                 self.selected_source_range()
                     .and_then(|r| self.document.source().get(r))
-                    .unwrap_or_default()
+                    .unwrap_or_else(|| rendered.as_str().get(range).unwrap_or_default())
                     .to_owned()
             }
         }

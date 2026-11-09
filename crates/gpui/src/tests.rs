@@ -672,4 +672,9 @@ fn ambiguous_metadata_selection_never_returns_only_the_following_body(cx: &mut T
         let start = text.as_str().find("Body").unwrap();
         assert_eq!(&source[text.source_for_range(start..start + 4).unwrap()], "Body");
     });
+    cx.update(|cx| state.update(cx, |state, _| {
+        let text = state.rendered_text().as_str().to_owned();
+        state.frame.borrow_mut().selected = Some(0..text.len());
+        assert_eq!(state.selected_text_with_format(SelectionFormat::Source), text);
+    }));
 }
