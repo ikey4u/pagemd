@@ -726,6 +726,36 @@ impl Blocks {
                 start,
                 items,
             } => {
+                let markers = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (checked, _))| match checked {
+                        Some(true) => "☑".to_owned(),
+                        Some(false) => "☐".to_owned(),
+                        None if *ordered => {
+                            format!("{}.", start.saturating_add(i as u32))
+                        }
+                        _ => "•".to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                let typography = window.text_style();
+                let font_size =
+                    typography.font_size.to_pixels(window.rem_size());
+                let marker_width = markers
+                    .iter()
+                    .map(|marker| {
+                        let text: SharedString = marker.clone().into();
+                        window
+                            .text_system()
+                            .shape_line(
+                                text.clone(),
+                                font_size,
+                                &[typography.to_run(text.len())],
+                                None,
+                            )
+                            .width
+                    })
+                    .fold(px(0.), |width, next| width.max(next));
                 div()
                     .w_full()
                     .min_w_0()
@@ -733,23 +763,30 @@ impl Blocks {
                     .flex_col()
                     .gap_1()
                     .children(items.iter().enumerate().map(
-                        |(i, (checked, blocks))| {
+                        |(i, (_, blocks))| {
                             div()
                                 .flex()
                                 .items_start()
-                                .gap_2()
-                                .child(div().w(px(24.)).flex_none().child(
-                                    match checked {
-                                        Some(true) => "☑".to_owned(),
-                                        Some(false) => "☐".to_owned(),
-                                        None if *ordered => {
-                                            format!("{}.", start + i as u32)
-                                        }
-                                        _ => "•".to_owned(),
-                                    },
-                                ))
+                                .gap(font_size * 0.4)
                                 .child(
                                     div()
+                                        .id(SharedString::from(format!(
+                                            "pagemd-list-marker-{}-{i}",
+                                            block.range.start
+                                        )))
+                                        .test_support()
+                                        .w(marker_width)
+                                        .flex_none()
+                                        .text_align(TextAlign::Right)
+                                        .child(markers[i].clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "pagemd-list-body-{}-{i}",
+                                            block.range.start
+                                        )))
+                                        .test_support()
                                         .flex_1()
                                         .min_w_0()
                                         .flex()

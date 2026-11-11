@@ -678,3 +678,44 @@ fn ambiguous_metadata_selection_never_returns_only_the_following_body(cx: &mut T
         assert_eq!(state.selected_text_with_format(SelectionFormat::Source), text);
     }));
 }
+
+#[gpui_kit::test]
+fn list_markers_use_measured_columns_and_compact_body_gaps(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(gpui_kit::init);
+    for source in [
+        "- Alpha\n- Beta",
+        "9. Alpha\n10. Beta",
+        "- [x] Alpha\n- [ ] Beta",
+    ] {
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let document = render(source, cx);
+            Root::new(
+                cx.new(|_| TableHost {
+                    document,
+                    width: 360.,
+                }),
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(size(px(400.), px(240.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            let first = window.find("pagemd-list-marker-0-0").bounds();
+            let second = window.find("pagemd-list-marker-0-1").bounds();
+            let body = window.find("pagemd-list-body-0-0").bounds();
+            let next = window.find("pagemd-list-body-0-1").bounds();
+            let gap = f32::from(body.left() - first.right());
+            assert!((4.0..=8.0).contains(&gap), "{source:?}: gap={gap}");
+            assert_eq!(first.right(), second.right());
+            assert_eq!(body.left(), next.left());
+            if source.starts_with("- Alpha") {
+                assert!(first.size.width < px(24.), "excessive bullet column");
+            }
+        });
+    }
+}
