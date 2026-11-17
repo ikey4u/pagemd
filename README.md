@@ -4,10 +4,10 @@
 
 PageMD converts Markdown into a SingleFile-style HTML document. It is designed for readable, portable documents with embedded styling, resources, syntax highlighting, diagrams, math rendering, and callout blocks.
 
-Use it as a **Rust library** or via the `pagemd` CLI — both share the same rendering engine.
+Use it as a **Rust library** ([`pagemd-core`](crates/pagemd-core)) or via the `pagemd` CLI ([`client/cli`](client/cli)) — both share the same rendering engine.
 
 ```rust
-use pagemd::{render_to_html, RenderOptions};
+use pagemd_core::{render_to_html, RenderOptions};
 
 let html = render_to_html("# Hello", &RenderOptions::default())?;
 ```
@@ -17,24 +17,41 @@ highlighted source code. Use Mermaid or `diagram html` for embedded figures;
 Markdown, math, PlantUML, and resource embedding remain available. Builds no longer
 include the Typst compiler, fonts, or bundled packages.
 
-Browser extension documentation is available at `extension/README.md`.
+Browser extension documentation is available at `client/chrome/README.md`.
+
+## Repository layout
+
+| Path | Package | What it is |
+| --- | --- | --- |
+| `crates/pagemd-core` | `pagemd-core` | The rendering library: Markdown to self-contained HTML |
+| `crates/pagemd-parser` | `pagemd-parser` | Shared Markdown parsing and the `Renderer` trait |
+| `crates/pagemd-openapi` | `pagemd-openapi` | Display-only OpenAPI model shared by renderers |
+| `crates/pagemd-gpui` | `pagemd-gpui` | Native GPUI renderer |
+| `client/cli` | `pagemd` | The `pagemd` command-line client (convert, `view`, `browser`) |
+| `client/chrome` | — | The Chrome extension (TypeScript + a wasm crate) |
+| `bindings/` | `pagemd-bindings`, `pagemd-ios`, `pagemd-android` | iOS and Android bindings |
+
+Everything except the extension's wasm crate is one Cargo workspace with one
+`Cargo.lock`. `cargo build` and `cargo test` at the root cover the library, the
+parser, the OpenAPI crate and the CLI. Use `--workspace` or `-p <package>` for the
+GPUI renderer and the mobile bindings.
 
 ## Parsing and renderers
 
-PageMD uses the shared [pagemd-parser](crates/parser/README.md) library for
+PageMD uses the shared [pagemd-parser](crates/pagemd-parser/README.md) library for
 Markdown analysis and dialect preprocessing. Its immutable `ParsedDocument`
 contains the AST, source-aware events and original source coordinates.
 
 The `Renderer` trait separates parsing from output. Built-in backends are
-`pagemd::HtmlRenderer` for the complete HTML pipeline and
-[pagemd-gpui](crates/gpui/README.md)'s `GpuiRenderer` for native text views.
+`pagemd_core::HtmlRenderer` for the complete HTML pipeline and
+[pagemd-gpui](crates/pagemd-gpui/README.md)'s `GpuiRenderer` for native text views.
 PageMD's CLI and HTML export use the shared parser and HTML implementation.
 Native applications depend directly on `pagemd-gpui`, so they
 can retain native selection, editing and streaming without the HTML/browser
-stack. The full PageMD library also exports `pagemd::gpui` with its `gpui` feature.
+stack. `pagemd-core` also exports `pagemd_core::gpui` with its `gpui` feature.
 
 Additional renderers implement `Renderer` and consume the same parsed document.
-`pagemd::analyze_markdown` exposes the parsing entry point; `pagemd::parser`
+`pagemd_core::analyze_markdown` exposes the parsing entry point; `pagemd_core::parser`
 exports the shared types and options.
 
 ## Fixture data
@@ -46,7 +63,7 @@ Tests and examples use synthetic text, identifiers, paths and reserved example d
 Install the CLI from git. Pass `--locked` so Cargo uses the repository `Cargo.lock` instead of re-resolving crates:
 
 ```bash
-cargo install --git https://github.com/ikey4u/pagemd --locked
+cargo install --git https://github.com/ikey4u/pagemd --locked pagemd
 ```
 
 Use `--locked` to build the tested parser and renderer dependency set. The HTML and GPUI backends share the stable Mermaid stack pinned in `Cargo.toml`.
@@ -54,7 +71,7 @@ Use `--locked` to build the tested parser and renderer dependency set. The HTML 
 From a local clone:
 
 ```bash
-cargo install --path . --locked
+cargo install --path client/cli --locked
 ```
 
 ## Browser
@@ -100,9 +117,9 @@ pagemd browser script site.pagemd.js --url https://example.com/a --headless
 ```
 
 Pages are written as `001-….md`, `002-….md`, … under the output directory (default `<script-stem>-run/`). Pass `-o out.md` only if you want one combined Markdown file.
-See `extension/README.md` for the `.pagemd.js` contract and a full worked example.
+See `client/chrome/README.md` for the `.pagemd.js` contract and a full worked example.
 
-For day-to-day page extraction in the browser UI (Clean / Extract / Navigate / Stop tabs), use the Chrome extension documented in `extension/README.md`. The `dev` REPL is the authoring and tuning environment; `script` and the extension are the portable runtimes for saved `.pagemd.js` scripts.
+For day-to-day page extraction in the browser UI (Clean / Extract / Navigate / Stop tabs), use the Chrome extension documented in `client/chrome/README.md`. The `dev` REPL is the authoring and tuning environment; `script` and the extension are the portable runtimes for saved `.pagemd.js` scripts.
 
 ## Features
 
@@ -112,17 +129,17 @@ PageMD converts one or more Markdown files into a single HTML document, embeds t
 - Supports common Markdown syntax, including headings, tables, task lists, footnotes, blockquotes, links, images, and fenced code blocks.
 - Highlights code blocks with `syntect`.
 - Renders inline and display math as embedded SVG.
-- Renders `mermaid` / `mmd` diagrams as inline SVG with [bezel-mermaid](https://github.com/crabtalk/bezel/tree/main/crates/mermaid). Embedding applications can use the same engine through `pagemd::mermaid`.
-- Figure fences accept `title="图 1 · 请求处理流程"` after the language for a centered caption below the figure. Mermaid frontmatter and diagram-specific titles also become captions below the image; an explicit fence title takes precedence. Titles are never drawn into the figure image. Images and diagram canvases are centered by default. Native hosts can use `pagemd::mermaid_figure::render` for title-free SVG plus a separate caption, and `pagemd_parser::figure::fence_title` for fence metadata.
+- Renders `mermaid` / `mmd` diagrams as inline SVG with [bezel-mermaid](https://github.com/crabtalk/bezel/tree/main/crates/mermaid). Embedding applications can use the same engine through `pagemd_core::mermaid`.
+- Figure fences accept `title="图 1 · 请求处理流程"` after the language for a centered caption below the figure. Mermaid frontmatter and diagram-specific titles also become captions below the image; an explicit fence title takes precedence. Titles are never drawn into the figure image. Images and diagram canvases are centered by default. Native hosts can use `pagemd_core::mermaid_figure::render` for title-free SVG plus a separate caption, and `pagemd_parser::figure::fence_title` for fence metadata.
 - Fetches `plantuml` / `puml` / `uml` diagrams during conversion and embeds the returned SVG.
 - Renders `diagram html` fenced blocks as styled HTML/SVG (Tailwind utilities supported; recommended for AI-generated diagrams).
 - Supports GitHub-style callouts, fenced admonitions, indented admonitions, and collapsible `:::details` / `[!NOTE]-` folds.
 - Live-preview Markdown in the browser with hot reload (`pagemd view`).
-- Provides a full conversion fixture at `examples/BASIC.md`.
+- Provides a full conversion fixture at `crates/pagemd-core/examples/BASIC.md`.
 
 ## Mobile bindings
 
-`bindings/` builds pagemd for apps: `PageMD.xcframework` for iOS (C and
+`bindings/` builds `pagemd-core` for apps: `PageMD.xcframework` for iOS (C and
 Swift) and `libpagemd.so` with a Kotlin `PageMD` class for Android. See
 [bindings/README.md](bindings/README.md).
 
@@ -137,7 +154,7 @@ cargo run -- --input input.md --output output.html
 Convert a whole directory of Markdown files into one SingleFile HTML document:
 
 ```bash
-cargo run -- --input examples --output examples.html
+cargo run -- --input crates/pagemd-core/examples --output examples.html
 # or
 cargo run -- --dir docs -o docs.html
 ```
@@ -145,31 +162,34 @@ cargo run -- --dir docs -o docs.html
 Convert the basic example into a demo HTML file:
 
 ```bash
-cargo run -- --input examples/BASIC.md --output pagemd-basic.html
+cargo run -- --input crates/pagemd-core/examples/BASIC.md --output pagemd-basic.html
 ```
 
 Preview the basic example in the default browser:
 
 ```bash
-cargo run -- view --input examples/BASIC.md
+cargo run -- view --input crates/pagemd-core/examples/BASIC.md
 ```
 
 Cross-compile release binaries (Linux glibc 2.17+, Windows, macOS). Linux links glibc 2.17 via Zig. The host OS builds natively. Release builds use an isolated cargo directory and strip personal paths out of the binary:
 
 ```bash
-mise run release
-# one target: mise run release:linux:x64
+mise run release                  # every OS
+mise run release:client:linux     # Linux x64 + arm64
+mise run release:client:windows   # Windows x64 + arm64
+mise run release:client:macos     # macOS x64 + arm64 + universal (on a Mac)
 ```
 
 Artifacts are written under `dist/` as `pagemd-{os}-{arch}-{version}.zip`
-(for example `pagemd-linux-x64-0.9.1.zip`).
+(for example `pagemd-linux-x64-0.10.0.zip`).
 
-`pagemd --version` prints the package version plus the git short hash (`0.9.1-abc1234`, or `…+dirty` when the tree is dirty).
+`pagemd --version` prints the package version plus the git short hash (`0.10.0-abc1234`, or `…+dirty` when the tree is dirty).
 
 Run validation checks:
 
 ```bash
-cargo test
+cargo test               # library, parser, OpenAPI and CLI
+cargo test --workspace   # also the GPUI renderer and the mobile bindings
 cargo check
 cargo +nightly fmt --all -- --check
 ```
@@ -181,7 +201,8 @@ or an empty fence with `src="./api.yaml"` (public HTTPS sources are supported to
 The closing fence belongs on its own line. A source attribute and an inline body
 are mutually exclusive.
 
-Cards show **Method → Request → Response → Comment**. Headers, parameters,
+Cards show **Method → Description → Request → Response**: the operation's
+summary and description render as Markdown right below the route. Headers, parameters,
 request fields and response fields are item lists. The cards contain no controls,
 API execution, links, title/version banner or source footer. Empty operations,
 unsupported versions, invalid input and unresolved references have visible states.

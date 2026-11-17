@@ -1,0 +1,1081 @@
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fs, io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
+
+use anyhow::{Context, Result};
+use axum::{
+    extract::{Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{
+        sse::{Event, Sse},
+        Html, IntoResponse, Response,
+    },
+    routing::get,
+    Router,
+};
+use futures::stream::Stream;
+use notify::{
+    event::{AccessKind, AccessMode, EventKind, ModifyKind},
+    EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
+};
+use notify_debouncer_mini::{new_debouncer_opt, DebounceEventResult};
+use pagemd_core::scripts::{
+    DIAGRAM_HTML_TAILWIND_BROWSER_JS, MERMAID_BROWSER_JS as MERMAID_JS,
+};
+use tokio::{
+    sync::{broadcast, oneshot},
+    task::JoinHandle as TokioJoinHandle,
+};
+
+use super::{
+    library::SharedPreviewLibrary, live, resources::WatchPlan, ViewOptions,
+};
+
+pub struct RenderRequest {
+    pub inputs: Vec<PathBuf>,
+    /// Paths reported by the file watcher. Empty means unknown / full refresh.
+    pub changed_paths: Vec<PathBuf>,
+}
+
+pub enum RenderResult {
+    Ok { html: String, watch_plan: WatchPlan },
+    Err { html: String },
+}
+
+#[derive(Clone)]
+pub struct HostedPreviewOptions {
+    pub host: String,
+    pub port: u16,
+    pub inputs: Vec<PathBuf>,
+    pub watch_plan: WatchPlan,
+    pub export_path: Option<PathBuf>,
+    pub library: Option<SharedPreviewLibrary>,
+}
+
+impl From<ViewOptions> for HostedPreviewOptions {
+    fn from(options: ViewOptions) -> Self {
+        Self {
+            host: options.host,
+            port: options.port,
+            inputs: options.inputs,
+            watch_plan: options.watch_plan,
+            export_path: options.export_path,
+            library: options.library,
+        }
+    }
+}
+
+struct AppState {
+    /// Clean HTML without the live-reload script (safe to export).
+    html: RwLock<String>,
+    version: AtomicU64,
+    notify_tx: broadcast::Sender<u64>,
+    export_path: Option<PathBuf>,
+    library: Option<SharedPreviewLibrary>,
+}
+
+struct WatchState {
+    debouncer: notify_debouncer_mini::Debouncer<ContentChangeWatcher>,
+    /// Canonical path → whether the active watch is recursive.
+    watched: HashMap<PathBuf, bool>,
+}
+
+/// Drops Linux inotify OPEN/ATTRIB noise before debounce.
+///
+/// `notify`'s inotify backend watches `OPEN` and `ATTRIB`. Reading Markdown
+/// during render (and NFS atime updates) therefore looks like a change,
+/// which retriggers render → another OPEN → `Reloaded (vN)` forever.
+/// Keep CLOSE_WRITE, data/name modifies, create, and remove.
+struct ContentChangeWatcher {
+    inner: RecommendedWatcher,
+}
+
+impl Watcher for ContentChangeWatcher {
+    fn new<F: EventHandler>(
+        mut event_handler: F,
+        config: notify::Config,
+    ) -> notify::Result<Self> {
+        let inner = RecommendedWatcher::new(
+            move |event: notify::Result<notify::Event>| match event {
+                Ok(event) if is_content_change_event(&event) => {
+                    event_handler.handle_event(Ok(event));
+                }
+                Ok(_) => {}
+                Err(err) => event_handler.handle_event(Err(err)),
+            },
+            config,
+        )?;
+        Ok(Self { inner })
+    }
+
+    fn watch(
+        &mut self,
+        path: &Path,
+        recursive_mode: RecursiveMode,
+    ) -> notify::Result<()> {
+        self.inner.watch(path, recursive_mode)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        self.inner.unwatch(path)
+    }
+
+    fn configure(&mut self, option: notify::Config) -> notify::Result<bool> {
+        self.inner.configure(option)
+    }
+
+    fn kind() -> notify::WatcherKind {
+        RecommendedWatcher::kind()
+    }
+}
+
+fn is_content_change_event(event: &notify::Event) -> bool {
+    match event.kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        EventKind::Modify(ModifyKind::Metadata(_)) => false,
+        EventKind::Create(_)
+        | EventKind::Remove(_)
+        | EventKind::Modify(_)
+        | EventKind::Any
+        | EventKind::Other => true,
+    }
+}
+
+struct PreviewEngineOptions {
+    inputs: Vec<PathBuf>,
+    watch_plan: WatchPlan,
+    export_path: Option<PathBuf>,
+    library: Option<SharedPreviewLibrary>,
+}
+
+impl From<HostedPreviewOptions> for PreviewEngineOptions {
+    fn from(options: HostedPreviewOptions) -> Self {
+        Self {
+            inputs: options.inputs,
+            watch_plan: options.watch_plan,
+            export_path: options.export_path,
+            library: options.library,
+        }
+    }
+}
+
+impl From<ViewOptions> for PreviewEngineOptions {
+    fn from(options: ViewOptions) -> Self {
+        HostedPreviewOptions::from(options).into()
+    }
+}
+
+struct PreviewEngine {
+    state: Arc<AppState>,
+    shutdown: Arc<AtomicBool>,
+    render_tx: Option<std::sync::mpsc::Sender<Vec<PathBuf>>>,
+    render_worker: Option<JoinHandle<()>>,
+    watch_state: Arc<Mutex<WatchState>>,
+}
+
+impl PreviewEngine {
+    fn start(
+        options: PreviewEngineOptions,
+        render: Arc<dyn Fn(RenderRequest) -> RenderResult + Send + Sync>,
+    ) -> Result<Self> {
+        let (notify_tx, _) = broadcast::channel(64);
+
+        let first = render(RenderRequest {
+            inputs: options.inputs.clone(),
+            changed_paths: Vec::new(),
+        });
+        let (initial_html, watch_plan, export_initial) = match first {
+            RenderResult::Ok { html, watch_plan } => (html, watch_plan, true),
+            RenderResult::Err { html } => (html, options.watch_plan, false),
+        };
+
+        let state = Arc::new(AppState {
+            html: RwLock::new(initial_html),
+            version: AtomicU64::new(0),
+            notify_tx: notify_tx.clone(),
+            export_path: options.export_path.clone(),
+            library: options.library.clone(),
+        });
+
+        if export_initial {
+            if let Ok(guard) = state.html.read() {
+                if let Err(err) = write_export_if_configured(
+                    state.export_path.as_deref(),
+                    &guard,
+                ) {
+                    eprintln!("Export error: {err:#}");
+                }
+            }
+        }
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (render_tx, render_rx) = std::sync::mpsc::channel::<Vec<PathBuf>>();
+
+        let watch_state =
+            Arc::new(Mutex::new(setup_watcher(watch_plan, render_tx.clone())?));
+        let watch_weak = Arc::downgrade(&watch_state);
+
+        let render_worker = spawn_render_worker(
+            render_rx,
+            state.clone(),
+            watch_weak,
+            options.inputs.clone(),
+            render,
+            shutdown.clone(),
+        );
+
+        Ok(Self {
+            state,
+            shutdown,
+            render_tx: Some(render_tx),
+            render_worker: Some(render_worker),
+            watch_state,
+        })
+    }
+
+    fn start_in_current_thread(
+        options: PreviewEngineOptions,
+        render: Arc<dyn Fn(RenderRequest) -> RenderResult + Send + Sync>,
+    ) -> Result<Self> {
+        Self::start(options, render)
+    }
+
+    fn router(&self) -> Router {
+        Router::new()
+            .route("/", get(index_handler))
+            .route("/__events", get(events_handler))
+            .route("/__assets/mermaid.min.js", get(mermaid_asset_handler))
+            .route(
+                "/__assets/diagram-html-tailwind-browser.js",
+                get(diagram_html_tailwind_asset_handler),
+            )
+            .route("/__section/{id}", get(section_handler))
+            .route("/__export", get(export_handler))
+            .with_state(Arc::clone(&self.state))
+    }
+
+    fn trigger_render(&self) {
+        if let Some(tx) = &self.render_tx {
+            let _ = tx.send(Vec::new());
+        }
+    }
+
+    fn stop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.render_tx.take();
+    }
+}
+
+fn join_worker_off_runtime(worker: JoinHandle<()>) {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(move || {
+            let _ = worker.join();
+        });
+    } else {
+        let _ = worker.join();
+    }
+}
+
+impl Drop for PreviewEngine {
+    fn drop(&mut self) {
+        self.stop();
+        if let Some(worker) = self.render_worker.take() {
+            join_worker_off_runtime(worker);
+        }
+    }
+}
+
+pub struct HostedPreview {
+    engine: PreviewEngine,
+    preview_url: String,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    _server: TokioJoinHandle<Result<()>>,
+}
+
+impl HostedPreview {
+    pub async fn start(
+        options: HostedPreviewOptions,
+        render: impl Fn(RenderRequest) -> RenderResult + Send + Sync + 'static,
+    ) -> Result<Self> {
+        let render = Arc::new(render);
+        let engine = tokio::task::spawn_blocking({
+            let options = options.clone();
+            let render = Arc::clone(&render);
+            move || {
+                PreviewEngine::start_in_current_thread(options.into(), render)
+            }
+        })
+        .await
+        .context("preview engine task")??;
+
+        let router = engine.router();
+
+        let (listener, bound_addr) =
+            bind_preview_listener(&options.host, options.port).await?;
+        let preview_url = format!("http://{bound_addr}/");
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .context("hosted preview server")
+        });
+
+        Ok(Self {
+            engine,
+            preview_url,
+            shutdown_tx: Some(shutdown_tx),
+            _server: server,
+        })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.preview_url
+    }
+
+    pub fn open_browser(&self) -> Result<()> {
+        open_url(&self.preview_url)
+    }
+
+    pub fn trigger_render(&self) {
+        self.engine.trigger_render();
+    }
+
+    pub async fn shutdown(self) {
+        let _ = tokio::task::spawn_blocking(move || drop(self)).await;
+    }
+}
+
+impl Drop for HostedPreview {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+async fn bind_preview_listener(
+    host: &str,
+    preferred_port: u16,
+) -> Result<(tokio::net::TcpListener, SocketAddr)> {
+    let preferred: SocketAddr = format!("{host}:{preferred_port}")
+        .parse()
+        .with_context(|| {
+            format!("Invalid host/port: {host}:{preferred_port}")
+        })?;
+
+    match tokio::net::TcpListener::bind(preferred).await {
+        Ok(listener) => {
+            let bound = listener
+                .local_addr()
+                .context("Read bound preview server address")?;
+            return Ok((listener, bound));
+        }
+        Err(err) if err.kind() == io::ErrorKind::AddrInUse => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("Cannot bind preview server to {preferred}")
+            });
+        }
+    }
+
+    let ephemeral: SocketAddr = format!("{host}:0")
+        .parse()
+        .with_context(|| format!("Invalid host: {host}"))?;
+    let listener = tokio::net::TcpListener::bind(ephemeral)
+        .await
+        .context("Cannot bind preview server to an available port")?;
+    let bound = listener
+        .local_addr()
+        .context("Read bound preview server address")?;
+    if preferred_port != 0 {
+        eprintln!(
+            "Port {preferred_port} in use, using port {} instead",
+            bound.port()
+        );
+    }
+    Ok((listener, bound))
+}
+
+pub fn run(
+    options: ViewOptions,
+    render: impl Fn(RenderRequest) -> RenderResult + Send + Sync + 'static,
+) -> Result<()> {
+    let render = Arc::new(render);
+    let mut engine = PreviewEngine::start(options.clone().into(), render)?;
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to start async runtime")?;
+
+    let host = options.host.clone();
+    let start_port = options.port;
+    let open_browser = options.open_browser;
+    let router = engine.router();
+
+    rt.block_on(async {
+        let (listener, bound_addr) =
+            bind_preview_listener(&host, start_port).await?;
+        let serve_url = format!("http://{bound_addr}/");
+
+        eprintln!("Preview server listening at {serve_url}");
+        let watch_count = engine
+            .watch_state
+            .lock()
+            .map(|guard| guard.watched.len())
+            .unwrap_or(0);
+        eprintln!("Watching {watch_count} path(s) for changes");
+
+        if open_browser {
+            open_url(&serve_url)?;
+        }
+
+        let server = axum::serve(listener, router);
+        tokio::select! {
+            result = server => {
+                result.context("HTTP server error")?;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("\nShutting down preview server...");
+            }
+        }
+
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    engine.stop();
+    eprintln!("Preview server stopped.");
+    Ok(())
+}
+
+fn setup_watcher(
+    plan: WatchPlan,
+    render_tx: std::sync::mpsc::Sender<Vec<PathBuf>>,
+) -> Result<WatchState> {
+    let config = notify_debouncer_mini::Config::default()
+        .with_timeout(Duration::from_millis(300));
+    let debouncer = new_debouncer_opt::<_, ContentChangeWatcher>(
+        config,
+        move |result: DebounceEventResult| {
+            let Ok(events) = result else {
+                return;
+            };
+            if events.is_empty() {
+                return;
+            }
+            let mut paths: Vec<PathBuf> =
+                events.into_iter().map(|event| event.path).collect();
+            paths.sort();
+            paths.dedup();
+            let _ = render_tx.send(paths);
+        },
+    )
+    .context("Failed to create file watcher")?;
+
+    let mut state = WatchState {
+        debouncer,
+        watched: HashMap::new(),
+    };
+    sync_watches(&mut state, &plan)?;
+    Ok(state)
+}
+
+fn recursive_watch_covers(state: &WatchState, path: &Path) -> bool {
+    path.ancestors().skip(1).any(|ancestor| {
+        !ancestor.as_os_str().is_empty()
+            && state.watched.get(ancestor) == Some(&true)
+    })
+}
+
+fn register_watch(
+    state: &mut WatchState,
+    path: &Path,
+    recursive: bool,
+) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !canonical.exists() {
+        return Ok(());
+    }
+
+    let want_recursive = recursive && canonical.is_dir();
+    if recursive_watch_covers(state, &canonical) {
+        return Ok(());
+    }
+
+    if let Some(&already_recursive) = state.watched.get(&canonical) {
+        if already_recursive || !want_recursive {
+            return Ok(());
+        }
+        if let Err(err) = state.debouncer.watcher().unwatch(&canonical) {
+            eprintln!(
+                "  watch upgrade unwatch warning for {}: {err}",
+                canonical.display()
+            );
+        }
+        state.watched.remove(&canonical);
+    }
+
+    let mode = if want_recursive {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
+
+    state
+        .debouncer
+        .watcher()
+        .watch(&canonical, mode)
+        .with_context(|| format!("Cannot watch {}", canonical.display()))?;
+    state.watched.insert(canonical.clone(), want_recursive);
+
+    let mode_label = if want_recursive { "recursive" } else { "path" };
+    eprintln!("  watch [{mode_label}] {}", canonical.display());
+    Ok(())
+}
+
+fn sync_watches(state: &mut WatchState, plan: &WatchPlan) -> Result<()> {
+    let mut desired: HashMap<PathBuf, bool> = HashMap::new();
+    let mut recursive = plan.recursive.clone();
+    recursive.sort_by_key(|path| path.components().count());
+    for root in recursive {
+        let root = root.canonicalize().unwrap_or(root);
+        if root.exists() {
+            desired.insert(root, true);
+        }
+    }
+    for path in &plan.paths {
+        let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !path.exists() {
+            continue;
+        }
+        if desired.iter().any(|(root, recursive)| {
+            *recursive && path != *root && path.starts_with(root)
+        }) {
+            continue;
+        }
+        desired.entry(path).or_insert(false);
+    }
+
+    let mut to_register: Vec<(PathBuf, bool)> =
+        desired.iter().map(|(p, r)| (p.clone(), *r)).collect();
+    to_register.sort_by_key(|(path, recursive)| {
+        (!*recursive, path.components().count())
+    });
+    for (path, recursive) in &to_register {
+        register_watch(state, path, *recursive)?;
+    }
+
+    let stale: Vec<PathBuf> = state
+        .watched
+        .keys()
+        .filter(|path| !desired.contains_key(*path) || !path.exists())
+        .cloned()
+        .collect();
+    for path in stale {
+        let _ = state.debouncer.watcher().unwatch(&path);
+        state.watched.remove(&path);
+    }
+    Ok(())
+}
+
+fn drain_render_triggers(
+    render_rx: &std::sync::mpsc::Receiver<Vec<PathBuf>>,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    while let Ok(batch) = render_rx.try_recv() {
+        paths.extend(batch);
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn spawn_render_worker(
+    render_rx: std::sync::mpsc::Receiver<Vec<PathBuf>>,
+    state: Arc<AppState>,
+    watch_state: std::sync::Weak<Mutex<WatchState>>,
+    inputs: Vec<PathBuf>,
+    render: Arc<dyn Fn(RenderRequest) -> RenderResult + Send + Sync>,
+    shutdown: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        while !shutdown.load(Ordering::Relaxed) {
+            let first = match render_rx.recv_timeout(Duration::from_millis(100))
+            {
+                Ok(paths) => paths,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            };
+            let mut changed = first;
+            changed.extend(drain_render_triggers(&render_rx));
+            changed.sort();
+            changed.dedup();
+
+            if shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let result = render(RenderRequest {
+                inputs: inputs.clone(),
+                changed_paths: changed,
+            });
+
+            if shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+
+            match result {
+                RenderResult::Ok { html, watch_plan } => {
+                    commit_html(&state, html, true);
+                    if let Some(watch_state) = watch_state.upgrade() {
+                        if let Ok(mut guard) = watch_state.lock() {
+                            if let Err(err) =
+                                sync_watches(&mut guard, &watch_plan)
+                            {
+                                eprintln!("Watch registration error: {err:#}");
+                            }
+                        }
+                    }
+                }
+                RenderResult::Err { html } => {
+                    commit_html(&state, html, false);
+                }
+            }
+        }
+    })
+}
+
+fn commit_html(state: &Arc<AppState>, html: String, export: bool) {
+    let changed = match state.html.write() {
+        Ok(mut guard) => {
+            if guard.as_str() == html.as_str() {
+                false
+            } else {
+                *guard = html;
+                true
+            }
+        }
+        Err(_) => false,
+    };
+
+    if changed && export {
+        if let Ok(guard) = state.html.read() {
+            if let Err(err) =
+                write_export_if_configured(state.export_path.as_deref(), &guard)
+            {
+                eprintln!("Export error: {err:#}");
+            }
+        }
+    }
+
+    // Always tick SSE. Lazy shells only embed the first section, so a later
+    // file can change without altering the stored HTML; the browser still has
+    // to refetch `/__section/N`.
+    let version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = state.notify_tx.send(version);
+    eprintln!("Reloaded (v{version})");
+}
+
+fn write_export_if_configured(
+    path: Option<&std::path::Path>,
+    html: &str,
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Cannot create {}", parent.display())
+            })?;
+        }
+    }
+    let html = live::ensure_export_html(html.to_string());
+    fs::write(path, html.as_bytes())
+        .with_context(|| format!("Cannot export {}", path.display()))?;
+    eprintln!("Exported -> {}", path.display());
+    Ok(())
+}
+
+async fn index_handler(State(state): State<Arc<AppState>>) -> Html<String> {
+    let html = state
+        .html
+        .read()
+        .map(|guard| live::wrap_for_preview(guard.clone()))
+        .unwrap_or_else(|_| {
+            live::wrap_for_preview("<p>Preview unavailable</p>".to_string())
+        });
+    Html(html)
+}
+
+async fn section_handler(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(library) = state.library.as_ref() else {
+        return (StatusCode::NOT_FOUND, "lazy sections unavailable")
+            .into_response();
+    };
+    let one_based =
+        id.strip_prefix("doc-").unwrap_or(&id).parse::<usize>().ok();
+    let Some(one_based) = one_based else {
+        return (StatusCode::BAD_REQUEST, "invalid section id").into_response();
+    };
+
+    let payload = match library.lock() {
+        Ok(mut guard) => guard.section_payload(one_based),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "library lock poisoned",
+            )
+                .into_response();
+        }
+    };
+
+    match payload {
+        Ok(payload) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json; charset=utf-8"),
+            );
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
+            );
+            match serde_json::to_vec(&payload) {
+                Ok(body) => (StatusCode::OK, headers, body).into_response(),
+                Err(err) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("serialize section: {err}"),
+                )
+                    .into_response(),
+            }
+        }
+        Err(err) => (StatusCode::NOT_FOUND, format!("{err:#}")).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ExportQuery {
+    /// Comma-separated 1-based section ids (`doc-1` → `1`). Omitted means every page.
+    docs: Option<String>,
+}
+
+fn parse_export_docs(
+    raw: Option<&str>,
+) -> std::result::Result<Option<Vec<usize>>, String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.eq_ignore_ascii_case("all") {
+        return Ok(None);
+    }
+    let mut ids = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let id: usize = part
+            .parse()
+            .map_err(|_| format!("invalid section id: {part}"))?;
+        ids.push(id);
+    }
+    if ids.is_empty() {
+        return Err("no sections selected".to_string());
+    }
+    Ok(Some(ids))
+}
+
+async fn export_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ExportQuery>,
+) -> Response {
+    let docs = match parse_export_docs(query.docs.as_deref()) {
+        Ok(docs) => docs,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
+    let Some(library) = state.library.as_ref() else {
+        // Fall back to current shell HTML when no library is attached.
+        let html = state
+            .html
+            .read()
+            .map(|guard| live::ensure_export_html(guard.clone()))
+            .unwrap_or_else(|_| "<p>Export unavailable</p>".to_string());
+        return Html(html).into_response();
+    };
+
+    let html = match library.lock() {
+        Ok(mut guard) => guard.export_html(docs.as_deref()),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "library lock poisoned",
+            )
+                .into_response();
+        }
+    };
+    match html {
+        Ok(html) => Html(live::ensure_export_html(html)).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
+            .into_response(),
+    }
+}
+
+async fn mermaid_asset_handler() -> Response {
+    preview_js_asset(MERMAID_JS)
+}
+
+async fn diagram_html_tailwind_asset_handler() -> Response {
+    preview_js_asset(DIAGRAM_HTML_TAILWIND_BROWSER_JS)
+}
+
+fn preview_js_asset(body: &'static [u8]) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/javascript; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    (StatusCode::OK, headers, body).into_response()
+}
+
+async fn events_handler(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let version = state.version.load(Ordering::SeqCst);
+    let mut rx = state.notify_tx.subscribe();
+
+    let stream = async_stream::stream! {
+        yield Ok(Event::default().data(version.to_string()));
+        loop {
+            match rx.recv().await {
+                Ok(v) => yield Ok(Event::default().data(v.to_string())),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    Sse::new(stream)
+}
+
+pub fn open_url(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+
+    let status = command
+        .status()
+        .with_context(|| format!("Cannot open {url}"))?;
+    if !status.success() {
+        anyhow::bail!("Failed to open {url}");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod watch_tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pagemd-{name}-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn content_watch_ignores_open_and_metadata_noise() {
+        use notify::{
+            event::{CreateKind, DataChange, MetadataKind, RemoveKind},
+            Event,
+        };
+
+        let open =
+            Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)));
+        let attrib = Event::new(EventKind::Modify(ModifyKind::Metadata(
+            MetadataKind::Any,
+        )));
+        let close_read =
+            Event::new(EventKind::Access(AccessKind::Close(AccessMode::Read)));
+        assert!(!is_content_change_event(&open));
+        assert!(!is_content_change_event(&attrib));
+        assert!(!is_content_change_event(&close_read));
+
+        let close_write =
+            Event::new(EventKind::Access(AccessKind::Close(AccessMode::Write)));
+        let data = Event::new(EventKind::Modify(ModifyKind::Data(
+            DataChange::Content,
+        )));
+        let create = Event::new(EventKind::Create(CreateKind::File));
+        let remove = Event::new(EventKind::Remove(RemoveKind::File));
+        assert!(is_content_change_event(&close_write));
+        assert!(is_content_change_event(&data));
+        assert!(is_content_change_event(&create));
+        assert!(is_content_change_event(&remove));
+    }
+
+    #[test]
+    fn scan_root_replaces_loose_file_watches() {
+        let root = temp_dir("watch-upgrade");
+        let file = root.join("a.md");
+        fs::write(&file, "# A\n").unwrap();
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut state = setup_watcher(
+            WatchPlan {
+                recursive: Vec::new(),
+                paths: vec![file.clone()],
+            },
+            tx,
+        )
+        .unwrap();
+        let file = file.canonicalize().unwrap();
+        let root = root.canonicalize().unwrap();
+        assert_eq!(state.watched.get(&file), Some(&false));
+        assert!(
+            !state.watched.contains_key(&root),
+            "file preview must not attach the parent directory"
+        );
+
+        sync_watches(
+            &mut state,
+            &WatchPlan {
+                recursive: vec![root.clone()],
+                paths: vec![file.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(state.watched.get(&root), Some(&true));
+        assert!(
+            !state.watched.contains_key(&file),
+            "files under a recursive scan root must not keep a separate watch"
+        );
+        assert_eq!(state.watched.len(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registrar_drops_nested_paths_and_asset_parents() {
+        let root = temp_dir("watch-covered");
+        let nested = root.join("guide");
+        fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("a.md");
+        fs::write(&file, "# A\n").unwrap();
+        let asset = nested.join("pic.png");
+        fs::write(&asset, b"png").unwrap();
+
+        let outside = temp_dir("watch-outside");
+        let outside_asset = outside.join("logo.png");
+        fs::write(&outside_asset, b"png").unwrap();
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state = setup_watcher(
+            WatchPlan {
+                recursive: vec![root.clone()],
+                paths: vec![
+                    file.clone(),
+                    nested.clone(),
+                    asset.clone(),
+                    outside_asset.clone(),
+                ],
+            },
+            tx,
+        )
+        .unwrap();
+
+        let root = root.canonicalize().unwrap();
+        let nested = nested.canonicalize().unwrap();
+        let file = file.canonicalize().unwrap();
+        let asset = asset.canonicalize().unwrap();
+        let outside = outside.canonicalize().unwrap();
+        let outside_asset = outside_asset.canonicalize().unwrap();
+
+        assert_eq!(state.watched.get(&root), Some(&true));
+        assert!(!state.watched.contains_key(&nested));
+        assert!(!state.watched.contains_key(&file));
+        assert!(!state.watched.contains_key(&asset));
+        assert_eq!(state.watched.get(&outside_asset), Some(&false));
+        assert!(
+            !state.watched.contains_key(&outside),
+            "external embed parent directories must not be attached"
+        );
+        assert_eq!(state.watched.len(), 2);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn commit_html_notifies_even_when_shell_html_is_unchanged() {
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        };
+
+        use tokio::sync::broadcast;
+
+        let (notify_tx, mut rx) = broadcast::channel(8);
+        let state = Arc::new(AppState {
+            html: RwLock::new("<p>shell</p>".to_string()),
+            version: AtomicU64::new(0),
+            notify_tx,
+            export_path: None,
+            library: None,
+        });
+
+        commit_html(&state, "<p>shell</p>".to_string(), false);
+        assert_eq!(state.version.load(Ordering::SeqCst), 1);
+        assert_eq!(rx.try_recv().unwrap(), 1);
+
+        commit_html(&state, "<p>shell</p>".to_string(), false);
+        assert_eq!(state.version.load(Ordering::SeqCst), 2);
+        assert_eq!(rx.try_recv().unwrap(), 2);
+        assert_eq!(*state.html.read().unwrap(), "<p>shell</p>");
+    }
+}

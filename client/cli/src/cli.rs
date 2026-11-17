@@ -1,0 +1,291 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, Result};
+use clap::{Args, Parser, Subcommand};
+use pagemd_core::{
+    self as core, prepare_resources, resolve_inputs, ConvertOptions,
+};
+
+use crate::{
+    browser,
+    convert::run_convert,
+    preview,
+    preview::error::{build_preview_error_html, preview_html_opts},
+};
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "pagemd",
+    version = crate::PAGEMD_VERSION,
+    about = "Convert Markdown to a self-contained single HTML file",
+    long_about = core::PAGEMD_LONG_ABOUT,
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[command(flatten)]
+    args: CliArgs,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    #[command(
+        about = "Live-preview Markdown in the browser",
+        long_about = "Start a local HTTP server and open the rendered page in your browser.\n\
+                      The page hot-reloads when you save the input Markdown or referenced local assets.\n\
+                      Press Ctrl+C to stop.\n\n\
+                      Usage:\n  \
+                      pagemd view -i INPUT.md\n  \
+                      pagemd view -i doc.md --port 8080 --no-open\n\n\
+                      Export clean SingleFile HTML (no live-reload script) on each successful render:\n  \
+                      pagemd view -i doc.md --export out.html\n  \
+                      pagemd view -i doc.md -o out.html\n\n\
+                      One-shot export without preview:\n  \
+                      pagemd -i doc.md -o out.html"
+    )]
+    View(ViewArgs),
+    #[command(
+        about = "Chrome workflows: interactive REPL (dev) or one-shot .pagemd.js runner (script)",
+        long_about = "Two modes:\n\n\
+                      Interactive authoring REPL:\n  \
+                      pagemd browser dev --url https://example.com\n  \
+                      pagemd browser dev --connect --port 9222\n  \
+                      pagemd browser dev --clean --url https://example.com\n\n\
+                      One-shot script run (no REPL):\n  \
+                      pagemd browser script site.pagemd.js --url https://example.com/docs\n  \
+                      pagemd browser script site.pagemd.js --url https://example.com/a -o out.md"
+    )]
+    #[command(subcommand)]
+    Browser(browser::cli::BrowserCommand),
+    #[command(
+        name = "browser-mcp",
+        hide = true,
+        about = "MCP stdio bridge for pagemd browser"
+    )]
+    BrowserMcp(browser::mcp_cli::BrowserMcpArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct ViewArgs {
+    #[command(flatten)]
+    convert: CliArgs,
+
+    #[arg(
+        long,
+        default_value = "127.0.0.1",
+        help = "Preview server bind address"
+    )]
+    host: String,
+
+    #[arg(
+        long,
+        default_value_t = 3847,
+        help = "Preview server port (if busy, picks a random available port)"
+    )]
+    port: u16,
+
+    #[arg(long = "no-open", help = "Do not open the default browser")]
+    no_open: bool,
+
+    #[arg(
+        long = "export",
+        value_name = "FILE",
+        help = "Write clean SingleFile HTML on each successful render (same as -o/--output)"
+    )]
+    export: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct CliArgs {
+    #[arg(
+        short = 'i',
+        long = "input",
+        value_name = "PATH",
+        num_args = 1..,
+        help = "Markdown file(s) and/or directory(ies) to convert into one HTML document"
+    )]
+    pub inputs: Vec<PathBuf>,
+
+    #[arg(
+        short = 'd',
+        long = "dir",
+        value_name = "DIR",
+        num_args = 1..,
+        help = "Directory/directories to scan recursively for Markdown files (same as passing dirs to -i)"
+    )]
+    pub directories: Vec<PathBuf>,
+
+    #[arg(
+        short = 'o',
+        long = "output",
+        value_name = "FILE",
+        help = "Output HTML path (defaults to <name>.html for a single file/dir input)"
+    )]
+    pub output: Option<PathBuf>,
+
+    #[arg(
+        short = 'x',
+        long = "exclude",
+        value_name = "PATTERN",
+        num_args = 1..,
+        help = "Exclude files or directories while scanning (name, path, or glob such as drafts/**)"
+    )]
+    pub excludes: Vec<String>,
+
+    #[arg(long = "title", value_name = "TITLE", help = "Document title")]
+    pub title: Option<String>,
+
+    #[arg(
+        long = "icon",
+        value_name = "XX",
+        value_parser = parse_icon_arg,
+        help = "Two-character favicon label (a-z, A-Z, 0-9); shown uppercase in the tab icon"
+    )]
+    pub icon: Option<String>,
+
+    #[arg(long = "font-size", default_value = "16", help = "Math font size")]
+    pub math_font_size: f64,
+
+    #[arg(
+        long = "katex-fonts",
+        value_name = "DIR",
+        help = "Directory containing KaTeX .ttf font files for glyph embedding"
+    )]
+    pub katex_fonts: Option<PathBuf>,
+}
+
+pub fn parse_icon_arg(s: &str) -> Result<String, String> {
+    if s.chars().count() != 2 {
+        return Err("icon must be exactly 2 characters".into());
+    }
+    if !s.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("icon must use only a-z, A-Z, and 0-9".into());
+    }
+    Ok(s.to_ascii_uppercase())
+}
+
+fn run_view(args: &ViewArgs) -> Result<()> {
+    let export_path =
+        args.export.clone().or_else(|| args.convert.output.clone());
+
+    let mut convert_opts = ConvertOptions::from(&args.convert);
+    convert_opts.client_mermaid = true;
+    let mut native_export_opts = convert_opts.clone();
+    native_export_opts.client_mermaid = false;
+
+    let resolved = resolve_inputs(&convert_opts)?;
+    preview::validate_inputs(&resolved.files)?;
+
+    let resources = prepare_resources(&convert_opts)?;
+    let title_hint = resolved.files.first().cloned();
+    let html_opts = preview_html_opts();
+    let watch_plan =
+        preview::collect_watch_plan(&resolved.files, &resolved.directories);
+
+    let library = std::sync::Arc::new(std::sync::Mutex::new(
+        preview::PreviewLibrary::new(
+            convert_opts.clone(),
+            html_opts,
+            resources,
+            title_hint.clone(),
+        ),
+    ));
+
+    let file_export = export_path.clone();
+    preview::run(
+        preview::ViewOptions {
+            host: args.host.clone(),
+            port: args.port,
+            inputs: resolved.files.clone(),
+            watch_plan,
+            open_browser: !args.no_open,
+            export_path: None,
+            library: Some(std::sync::Arc::clone(&library)),
+        },
+        move |request: preview::RenderRequest| {
+            let result = (|| -> Result<String> {
+                let mut lib = preview::lock_library(&library)?;
+                if !request.changed_paths.is_empty() {
+                    lib.invalidate(&request.changed_paths);
+                }
+                // Cold start / watch: shell embeds only the first section; others load on demand.
+                lib.shell_html(&[0])
+            })();
+
+            match result {
+                Ok(html) => {
+                    if let Some(path) = file_export.as_ref() {
+                        match preview::lock_library(&library).and_then(
+                            |mut lib| {
+                                lib.set_client_mermaid(false);
+                                lib.invalidate(&[]);
+                                let out = lib.full_html();
+                                lib.set_client_mermaid(true);
+                                lib.invalidate(&[]);
+                                out
+                            },
+                        ) {
+                            Ok(native) => {
+                                if let Err(err) =
+                                    write_view_export(path, &native)
+                                {
+                                    eprintln!("Export error: {err:#}");
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!("Export render error: {err:#}")
+                            }
+                        }
+                    }
+                    let watch_plan = match resolve_inputs(&convert_opts) {
+                        Ok(resolved) => preview::collect_watch_plan(
+                            &resolved.files,
+                            &resolved.directories,
+                        ),
+                        Err(err) => {
+                            eprintln!("Watch path refresh warning: {err:#}");
+                            preview::WatchPlan::default()
+                        }
+                    };
+                    preview::RenderResult::Ok { html, watch_plan }
+                }
+                Err(err) => {
+                    eprintln!("Render error: {err:#}");
+                    preview::RenderResult::Err {
+                        html: build_preview_error_html(&err),
+                    }
+                }
+            }
+        },
+    )
+}
+
+fn write_view_export(path: &Path, html: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Cannot create {}", parent.display())
+            })?;
+        }
+    }
+    let html = preview::ensure_export_html(html.to_string());
+    fs::write(path, html.as_bytes())
+        .with_context(|| format!("Cannot export {}", path.display()))?;
+    eprintln!("Exported -> {}", path.display());
+    Ok(())
+}
+
+pub fn run() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::View(args)) => run_view(&args),
+        Some(Commands::Browser(args)) => browser::run(args),
+        Some(Commands::BrowserMcp(args)) => browser::mcp_cli::run(args),
+        None => run_convert(&cli.args),
+    }
+}

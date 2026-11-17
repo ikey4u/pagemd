@@ -1,0 +1,801 @@
+//! Incremental section cache for `pagemd view` (parallel render + lazy shell).
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::SystemTime,
+};
+
+use anyhow::{Context, Result};
+use pagemd_core::{
+    export::{
+        export_document,
+        html::{outline_list_inner, resolve_icon_label, section_label},
+        HtmlExportOptions, OutputFormat,
+    },
+    model::{Document, Section},
+    pipeline::{render_file_section, RenderResources},
+    resolve_inputs, ConvertOptions,
+};
+use rayon::prelude::*;
+use serde::Serialize;
+
+#[derive(Clone)]
+struct CachedSection {
+    mtime: Option<SystemTime>,
+    section: Section,
+    label: String,
+}
+
+/// Shared view library: file list + per-file render cache.
+pub struct PreviewLibrary {
+    convert_opts: ConvertOptions,
+    html_opts: HtmlExportOptions,
+    resources: RenderResources,
+    files: Vec<PathBuf>,
+    cache: Vec<Option<CachedSection>>,
+    title_hint: Option<PathBuf>,
+}
+
+#[derive(Serialize)]
+pub struct SectionPayload {
+    pub index: usize,
+    pub id: String,
+    pub title: String,
+    pub html: String,
+    pub outline_html: String,
+}
+
+impl PreviewLibrary {
+    pub fn new(
+        convert_opts: ConvertOptions,
+        mut html_opts: HtmlExportOptions,
+        resources: RenderResources,
+        title_hint: Option<PathBuf>,
+    ) -> Self {
+        // Multi-file view uses lazy placeholders; single-file keeps eager body.
+        html_opts.lazy_sections = true;
+        html_opts.preview_runtime_assets = true;
+        Self {
+            convert_opts,
+            html_opts,
+            resources,
+            files: Vec::new(),
+            cache: Vec::new(),
+            title_hint,
+        }
+    }
+
+    pub fn file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn files(&self) -> &[PathBuf] {
+        &self.files
+    }
+
+    pub fn set_client_mermaid(&mut self, enabled: bool) {
+        self.convert_opts.client_mermaid = enabled;
+    }
+
+    /// Refresh the resolved Markdown file list; drop cache entries for removed/reordered paths.
+    pub fn sync_files(&mut self) -> Result<()> {
+        let resolved = resolve_inputs(&self.convert_opts)?;
+        let new_files = resolved.files;
+        if new_files == self.files {
+            return Ok(());
+        }
+
+        let old = std::mem::take(&mut self.cache);
+        let old_files = std::mem::take(&mut self.files);
+        let mut new_cache = Vec::with_capacity(new_files.len());
+        for path in &new_files {
+            let reused = old_files
+                .iter()
+                .position(|old_path| same_path(old_path, path))
+                .and_then(|idx| old.get(idx).cloned().flatten())
+                .and_then(|entry| {
+                    let mtime = file_mtime(path);
+                    if entry.mtime == mtime {
+                        Some(entry)
+                    } else {
+                        None
+                    }
+                });
+            new_cache.push(reused);
+        }
+        self.files = new_files;
+        self.cache = new_cache;
+        self.html_opts.lazy_sections = self.files.len() > 1;
+        Ok(())
+    }
+
+    /// Invalidate cache entries whose paths match (or are under) `changed`.
+    pub fn invalidate(&mut self, changed: &[PathBuf]) {
+        if changed.is_empty() {
+            self.cache.fill(None);
+            return;
+        }
+        for (idx, path) in self.files.iter().enumerate() {
+            if changed.iter().any(|c| path_matches(path, c)) {
+                self.cache[idx] = None;
+            }
+        }
+    }
+
+    /// Ensure the given 0-based indices are rendered (in parallel for misses).
+    pub fn ensure_indices(&mut self, indices: &[usize]) -> Result<()> {
+        self.sync_files()?;
+        let mut pending: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| i < self.files.len())
+            .filter(|&i| match &self.cache[i] {
+                None => true,
+                Some(entry) => entry.mtime != file_mtime(&self.files[i]),
+            })
+            .collect();
+        pending.sort_unstable();
+        pending.dedup();
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        let opts = &self.convert_opts;
+        let resources = &self.resources;
+        let footnotes = self.html_opts.footnotes;
+        let rendered: Vec<(usize, CachedSection)> = pending
+            .par_iter()
+            .map(|&index| {
+                let path = &self.files[index];
+                let section =
+                    render_file_section(opts, resources, path, footnotes)?;
+                Ok((
+                    index,
+                    CachedSection {
+                        mtime: file_mtime(path),
+                        label: section_label(path),
+                        section,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (index, entry) in rendered {
+            self.cache[index] = Some(entry);
+        }
+        Ok(())
+    }
+
+    pub fn ensure_all(&mut self) -> Result<()> {
+        self.sync_files()?;
+        let indices: Vec<usize> = (0..self.files.len()).collect();
+        self.ensure_indices(&indices)
+    }
+
+    /// Build shell HTML. In lazy multi-file mode only `embed` indices include bodies.
+    pub fn shell_html(&mut self, embed: &[usize]) -> Result<String> {
+        self.sync_files()?;
+        if self.files.is_empty() {
+            anyhow::bail!("No Markdown files found.");
+        }
+
+        let embed: Vec<usize> = if self.files.len() == 1 || embed.is_empty() {
+            vec![0]
+        } else {
+            embed.to_vec()
+        };
+        self.ensure_indices(&embed)?;
+
+        let doc = self.document_for_shell(&embed);
+        Ok(export_document(&doc, OutputFormat::Html, &self.html_opts)?.html)
+    }
+
+    /// Full SingleFile-style HTML (all sections embedded).
+    pub fn full_html(&mut self) -> Result<String> {
+        self.export_html(None)
+    }
+
+    /// Self-contained HTML for every file, or for the given 1-based section ids.
+    ///
+    /// `None` exports the whole library. A subset contains only those pages, in
+    /// file order, with no lazy placeholders for the rest.
+    pub fn export_html(
+        &mut self,
+        one_based: Option<&[usize]>,
+    ) -> Result<String> {
+        self.sync_files()?;
+        if self.files.is_empty() {
+            anyhow::bail!("No Markdown files found.");
+        }
+        let indices = match one_based {
+            None => (0..self.files.len()).collect::<Vec<_>>(),
+            Some(ids) => normalize_export_ids(ids, self.files.len())?,
+        };
+        self.ensure_indices(&indices)?;
+        let mut opts = self.html_opts.clone();
+        opts.lazy_sections = false;
+        opts.preview_runtime_assets = false;
+        let doc = self.document_for_indices(&indices)?;
+        Ok(export_document(&doc, OutputFormat::Html, &opts)?.html)
+    }
+
+    pub fn section_payload(
+        &mut self,
+        one_based: usize,
+    ) -> Result<SectionPayload> {
+        if one_based == 0 || one_based > self.files.len() {
+            anyhow::bail!("section {one_based} out of range");
+        }
+        let index = one_based - 1;
+        self.ensure_indices(&[index])?;
+        let entry = self.cache[index]
+            .as_ref()
+            .context("section cache miss after ensure")?;
+        let title = panel_title(&entry.section, index, &entry.label);
+        Ok(SectionPayload {
+            index: one_based,
+            id: format!("doc-{one_based}"),
+            title,
+            html: entry.section.html.clone(),
+            outline_html: outline_list_inner(&entry.section),
+        })
+    }
+
+    fn document_for_shell(&self, embed: &[usize]) -> Document {
+        let mut sections = Vec::with_capacity(self.files.len());
+        let mut nav_labels = Vec::with_capacity(self.files.len());
+        let mut doc_title = self.convert_opts.title.clone().unwrap_or_default();
+
+        for (index, path) in self.files.iter().enumerate() {
+            let label = self
+                .cache
+                .get(index)
+                .and_then(|c| c.as_ref())
+                .map(|c| c.label.clone())
+                .unwrap_or_else(|| section_label(path));
+            nav_labels.push(label.clone());
+
+            let section = if embed.contains(&index) {
+                if let Some(cached) =
+                    self.cache.get(index).and_then(|c| c.as_ref())
+                {
+                    if doc_title.is_empty() && !cached.section.title.is_empty()
+                    {
+                        doc_title = cached.section.title.clone();
+                    }
+                    cached.section.clone()
+                } else {
+                    stub_section(&label)
+                }
+            } else {
+                // Lazy placeholder: empty html triggers data-lazy-section in page builder.
+                stub_section(&label)
+            };
+            sections.push(section);
+        }
+
+        if doc_title.is_empty() {
+            doc_title = self
+                .title_hint
+                .as_ref()
+                .and_then(|p| p.file_stem())
+                .and_then(|s| s.to_str())
+                .or_else(|| {
+                    self.files
+                        .first()
+                        .and_then(|p| p.file_stem())
+                        .and_then(|s| s.to_str())
+                })
+                .unwrap_or("Document")
+                .to_string();
+        }
+
+        let icon_label = resolve_icon_label(&self.convert_opts, &self.files);
+        Document {
+            title: doc_title,
+            icon_label,
+            sections,
+            nav_labels,
+            input_paths: self.files.clone(),
+        }
+    }
+
+    fn document_for_indices(&self, indices: &[usize]) -> Result<Document> {
+        let mut sections = Vec::with_capacity(indices.len());
+        let mut nav_labels = Vec::with_capacity(indices.len());
+        let mut input_paths = Vec::with_capacity(indices.len());
+        let mut doc_title = if indices.len() == 1 {
+            String::new()
+        } else {
+            self.convert_opts.title.clone().unwrap_or_default()
+        };
+
+        for &index in indices {
+            let path = self
+                .files
+                .get(index)
+                .context("section index out of range")?;
+            let cached = self
+                .cache
+                .get(index)
+                .and_then(|entry| entry.as_ref())
+                .context("section cache miss after ensure")?;
+            if doc_title.is_empty() && !cached.section.title.is_empty() {
+                doc_title = cached.section.title.clone();
+            }
+            nav_labels.push(cached.label.clone());
+            sections.push(cached.section.clone());
+            input_paths.push(path.clone());
+        }
+
+        if doc_title.is_empty() {
+            doc_title = input_paths
+                .first()
+                .and_then(|path| path.file_stem())
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("Document")
+                .to_string();
+        }
+
+        let icon_label = resolve_icon_label(&self.convert_opts, &input_paths);
+        Ok(Document {
+            title: doc_title,
+            icon_label,
+            sections,
+            nav_labels,
+            input_paths,
+        })
+    }
+}
+
+fn normalize_export_ids(ids: &[usize], len: usize) -> Result<Vec<usize>> {
+    if ids.is_empty() {
+        anyhow::bail!("no sections selected");
+    }
+    let mut indices = Vec::with_capacity(ids.len());
+    for id in ids {
+        if *id == 0 || *id > len {
+            anyhow::bail!("section {id} out of range");
+        }
+        let index = id - 1;
+        if !indices.contains(&index) {
+            indices.push(index);
+        }
+    }
+    indices.sort_unstable();
+    Ok(indices)
+}
+
+fn stub_section(label: &str) -> Section {
+    Section {
+        title: label.to_string(),
+        html: String::new(),
+        outline: Vec::new(),
+        footnotes: Vec::new(),
+    }
+}
+
+fn panel_title(section: &Section, index: usize, label: &str) -> String {
+    if !label.trim().is_empty() {
+        return label.to_string();
+    }
+    let title = section.title.trim();
+    if title.is_empty() {
+        format!("Document {}", index + 1)
+    } else {
+        section.title.clone()
+    }
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
+fn path_matches(file: &Path, changed: &Path) -> bool {
+    if same_path(file, changed) {
+        return true;
+    }
+    if changed.is_dir() {
+        let file_c = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+        let dir_c = changed
+            .canonicalize()
+            .unwrap_or_else(|_| changed.to_path_buf());
+        return file_c.starts_with(&dir_c);
+    }
+    false
+}
+
+/// Thread-safe wrapper used by the preview server.
+pub type SharedPreviewLibrary = std::sync::Arc<Mutex<PreviewLibrary>>;
+
+pub fn lock_library(
+    library: &SharedPreviewLibrary,
+) -> Result<std::sync::MutexGuard<'_, PreviewLibrary>> {
+    library
+        .lock()
+        .map_err(|_| anyhow::anyhow!("preview library lock poisoned"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use pagemd_core::{ConvertOptions, HtmlExportOptions, OutputFormat};
+
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("pagemd-lib-{name}-{nanos}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn lazy_shell_embeds_only_requested_sections() {
+        let dir = temp_dir("lazy");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nbody-a\n").unwrap();
+        fs::write(&b, "# Beta\n\nbody-b\n").unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let shell = lib.shell_html(&[0]).unwrap();
+        assert!(shell.contains("body-a"), "{shell}");
+        assert!(!shell.contains("body-b"), "second section must stay lazy");
+        assert!(shell.contains("data-lazy-section=\"2\""), "{shell}");
+
+        let payload = lib.section_payload(2).unwrap();
+        assert!(payload.html.contains("body-b"));
+        assert!(
+            payload.outline_html.contains("Beta")
+                || payload.title.contains("b.md")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lazy_shell_keeps_mermaid_runtime_when_diagram_is_in_a_lazy_section() {
+        let dir = temp_dir("lazy-mermaid");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nno diagram\n").unwrap();
+        fs::write(
+            &b,
+            "# Beta\n\n```mermaid\nflowchart TB\n  src[LazyNodeSrc] --> dst[LazyNodeDst]\n```\n",
+        )
+        .unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let shell = lib.shell_html(&[0]).unwrap();
+        assert!(shell.contains("no diagram"), "{shell}");
+        assert!(shell.contains("data-lazy-section=\"2\""), "{shell}");
+        assert!(
+            !shell.contains("LazyNodeDst"),
+            "lazy shell must not embed the second file's diagram source"
+        );
+
+        let payload = lib.section_payload(2).unwrap();
+        assert!(
+            payload.html.contains("data-mermaid-client"),
+            "lazy section body still emits the client placeholder: {}",
+            payload.html
+        );
+        assert!(payload.html.contains("flowchart TB"), "{}", payload.html);
+        assert!(
+            payload.html.contains("class=\"mermaid\""),
+            "{}",
+            payload.html
+        );
+
+        let has_runtime = shell.contains("/__assets/mermaid.min.js");
+        let has_init = shell.contains("data-pagemd-mermaid-init");
+        assert!(
+            has_runtime && has_init,
+            "lazy shell cannot see later sections, so it must still ship mermaid.js; otherwise PageMDInitMermaid no-ops and the placeholder stays as source. runtime={has_runtime} init={has_init}"
+        );
+
+        let workspace = pagemd_core::scripts::WORKSPACE_SCRIPT;
+        assert!(
+            !workspace.contains("mermaid.min.js"),
+            "lazy section fetch does not inject mermaid.js; the shell must already have it"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn full_html_inlines_mermaid_instead_of_preview_asset_url() {
+        let dir = temp_dir("export-mermaid");
+        let a = dir.join("a.md");
+        fs::write(
+            &a,
+            "# Alpha\n\n```mermaid\nflowchart TB\n  src[ExportNodeSrc] --> dst[ExportNodeDst]\n```\n",
+        )
+        .unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let html = lib.full_html().unwrap();
+        assert!(html.contains("data-mermaid-client"), "{html}");
+        assert!(html.contains("ExportNodeDst"));
+        assert!(
+            !html.contains("/__assets/mermaid.min.js"),
+            "exported HTML cannot depend on the preview server"
+        );
+        assert!(html.contains("<script data-pagemd-mermaid>"));
+        assert!(html.contains("__esbuild_esm_mermaid_nm"));
+        assert!(html.contains("data-pagemd-mermaid-init"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lazy_shell_keeps_diagram_html_runtime_when_fence_is_in_a_lazy_section() {
+        let dir = temp_dir("lazy-diagram-html");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nno diagram\n").unwrap();
+        fs::write(
+            &b,
+            "# Beta\n\n```diagram html\n<div class=\"rounded-xl bg-sky-50 p-4\">LazyHtmlNode</div>\n```\n",
+        )
+        .unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let shell = lib.shell_html(&[0]).unwrap();
+        assert!(shell.contains("no diagram"), "{shell}");
+        assert!(shell.contains("data-lazy-section=\"2\""));
+        assert!(
+            !shell.contains("LazyHtmlNode"),
+            "lazy shell must not embed the second file's diagram html"
+        );
+        assert!(
+            shell.contains("/__assets/diagram-html-tailwind-browser.js"),
+            "lazy shell cannot see later sections, so it must still ship the Tailwind runtime: {shell}"
+        );
+        assert!(shell.contains("type=\"text/tailwindcss\""));
+
+        let payload = lib.section_payload(2).unwrap();
+        assert!(
+            payload.html.contains("class=\"diagram-html-display\""),
+            "{}",
+            payload.html
+        );
+        assert!(payload.html.contains("LazyHtmlNode"), "{}", payload.html);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn export_html_can_emit_one_page_or_several() {
+        let dir = temp_dir("export-pages");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        let c = dir.join("c.md");
+        fs::write(&a, "# Alpha\n\nbody-a\n").unwrap();
+        fs::write(&b, "# Beta\n\nbody-b\n").unwrap();
+        fs::write(&c, "# Gamma\n\nbody-c\n").unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            ..ConvertOptions::default()
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions::default(),
+            resources,
+            None,
+        );
+
+        let one = lib.export_html(Some(&[2])).unwrap();
+        assert!(one.contains("body-b"), "{one}");
+        assert!(!one.contains("body-a"));
+        assert!(!one.contains("body-c"));
+        assert!(!one.contains("data-lazy-section=\""));
+        assert!(one.contains("<title>Beta</title>") || one.contains(">Beta<"));
+
+        let some = lib.export_html(Some(&[3, 1])).unwrap();
+        assert!(some.contains("body-a") && some.contains("body-c"));
+        assert!(!some.contains("body-b"));
+        assert!(some.find("body-a") < some.find("body-c"));
+
+        let all = lib.export_html(None).unwrap();
+        assert!(
+            all.contains("body-a")
+                && all.contains("body-b")
+                && all.contains("body-c")
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn incremental_skips_unchanged_files() {
+        let dir = temp_dir("incr");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# A\n").unwrap();
+        fs::write(&b, "# B\n").unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            ..ConvertOptions::default()
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions::default(),
+            resources,
+            None,
+        );
+        lib.ensure_all().unwrap();
+        assert!(lib.cache.iter().all(|c| c.is_some()));
+
+        // Touch only B and invalidate it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&b, "# B2\n").unwrap();
+        lib.invalidate(std::slice::from_ref(&b));
+        assert!(lib.cache[0].is_some());
+        assert!(lib.cache[1].is_none());
+        lib.ensure_indices(&[1]).unwrap();
+        assert!(lib.cache[1].as_ref().unwrap().section.html.contains("B2"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lazy_shell_html_does_not_change_when_a_lazy_file_is_edited() {
+        let dir = temp_dir("lazy-reload");
+        let a = dir.join("a.md");
+        let b = dir.join("b.md");
+        fs::write(&a, "# Alpha\n\nbody-a\n").unwrap();
+        fs::write(&b, "# Beta\n\nbody-b\n").unwrap();
+
+        let convert_opts = ConvertOptions {
+            inputs: vec![dir.clone()],
+            directories: Vec::new(),
+            excludes: Vec::new(),
+            title: Some("Lib".into()),
+            icon: None,
+            math_font_size: 16.0,
+            katex_fonts: None,
+            output_format: OutputFormat::Html,
+            client_mermaid: true,
+        };
+        let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+        let mut lib = PreviewLibrary::new(
+            convert_opts,
+            HtmlExportOptions {
+                client_mermaid_runtime: true,
+                embed_workspace_script: false,
+                ..Default::default()
+            },
+            resources,
+            None,
+        );
+
+        let first = lib.shell_html(&[0]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&b, "# Beta\n\nbody-b-changed\n").unwrap();
+        lib.invalidate(std::slice::from_ref(&b));
+        let second = lib.shell_html(&[0]).unwrap();
+        assert_eq!(
+            first, second,
+            "lazy shell only embeds file 0, so editing file 1 must not change stored HTML"
+        );
+        assert!(!second.contains("body-b-changed"));
+        assert!(lib
+            .section_payload(2)
+            .unwrap()
+            .html
+            .contains("body-b-changed"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

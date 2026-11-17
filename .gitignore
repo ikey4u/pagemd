@@ -9,7 +9,7 @@ build/
 target/
 **/target/
 
-extension/chrome/wasm/pkg/
+client/chrome/wasm/pkg/
 
 .vscode/
 .idea/

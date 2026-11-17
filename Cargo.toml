@@ -1,66 +1,28 @@
-[package]
-name = "pagemd"
-version = "0.9.1"
+[workspace]
+resolver = "2"
+members = [
+    "crates/pagemd-core",
+    "crates/pagemd-parser",
+    "crates/pagemd-openapi",
+    "crates/pagemd-gpui",
+    "client/cli",
+    "bindings/shared",
+    "bindings/ios",
+    "bindings/android",
+]
+# `cargo build` / `cargo test` at the root cover the library and the CLI.
+# The GPUI renderer and the mobile bindings build with `-p <crate>` or
+# `--workspace`.
+default-members = [
+    "crates/pagemd-core",
+    "crates/pagemd-parser",
+    "crates/pagemd-openapi",
+    "client/cli",
+]
+# The Chrome extension's wasm crate targets wasm32 and has its own lockfile.
+exclude = ["client/chrome/wasm"]
+
+[workspace.package]
+version = "0.10.0"
 edition = "2021"
-build = "build.rs"
-description = "Convert Markdown into a self-contained, styled HTML document"
-readme = "README.md"
-keywords = ["markdown", "html", "singlefile", "renderer"]
-categories = ["command-line-utilities", "text-processing"]
-# The mobile bindings are their own crates, built separately.
-exclude = ["bindings/"]
-
-[lib]
-name = "pagemd"
-path = "src/lib.rs"
-
-[[bin]]
-name = "pagemd"
-path = "src/main.rs"
-
-[build-dependencies]
-anyhow = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-
-[features]
-default = []
-gpui = ["dep:pagemd-gpui"]
-
-[dependencies]
-pagemd-openapi = { path = "crates/openapi", features = ["io"] }
-pagemd-parser = { path = "crates/parser" }
-pagemd-gpui = { path = "crates/gpui", optional = true }
-clap = { version = "4.6", features = ["derive"] }
-syntect = "5.3"
-base64 = "0.22"
-bezel_mermaid = { package = "bezel-mermaid", git = "https://github.com/crabtalk/bezel.git", rev = "556c045372074c5cf76426626f19fb376fdfb2c0" }
-plantuml_encoding = "2.0.3"
-regex = "1.12"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-ratex-svg = { version = "0.0.15", features = ["standalone", "cli"] }
-ratex-parser = "0.0.15"
-ratex-layout = "0.0.15"
-ratex-types = "0.0.15"
-ratex-font = "0.0.15"
-anyhow = "1"
-ratex-katex-fonts = "0.1.8"
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util", "sync"] }
-notify = "8"
-notify-debouncer-mini = "0.6"
-async-stream = "0.3"
-futures = "0.3"
-futures-util = "0.3"
-tokio-tungstenite = "0.26"
-serde_json = "1"
-uuid = { version = "1", features = ["v4", "v5"] }
-rustyline = "15"
-html-to-markdown-rs = "2.26"
-rayon = "1.10"
-which = "7"
-serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
-dirs = "6"
-
-# GPUI's existing dependency API delegates to the shared PageMD parser.
+repository = "https://github.com/ikey4u/pagemd"

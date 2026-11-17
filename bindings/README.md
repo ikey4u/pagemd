@@ -1,6 +1,6 @@
 # Mobile bindings
 
-pagemd for apps: Markdown in, a self-contained HTML document out, ready for
+pagemd-core for apps: Markdown in, a self-contained HTML document out, ready for
 a web view. Both bindings share `shared/` (rendering for embedding, and a
 writable cache directory inside an app sandbox).
 
@@ -34,6 +34,20 @@ val html = PageMD.renderHtml("# Hello")
 
 Failures throw `IllegalStateException`.
 
+## Workspace
+
+The bindings are members of the repository's root Cargo workspace, so they
+build against `crates/pagemd-core` with the same `Cargo.lock` (and dependency
+versions) as the CLI. Build with `--locked`. They are not default members:
+`cargo build` at the root skips them; use `-p pagemd-ios`, `-p pagemd-android`
+or `--workspace`.
+
+The cache directory is passed to pagemd through `RenderOptions`. The
+bindings never set environment variables, because `setenv` can race with
+other threads of the app reading the environment.
+
 ## Tests
 
-`cargo test` in `shared/` and `ios/` (the C interface runs on any host).
+`cargo test --locked -p pagemd-bindings -p pagemd-ios -p pagemd-android` from
+the repository root (the C interface runs on any host; the JNI crate builds on
+the host too, without an NDK).

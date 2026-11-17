@@ -1,0 +1,40 @@
+[package]
+name = "pagemd-core"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+build = "build.rs"
+description = "Convert Markdown into a self-contained, styled HTML document"
+readme = "../../README.md"
+keywords = ["markdown", "html", "singlefile", "renderer"]
+categories = ["text-processing"]
+
+[build-dependencies]
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+
+[features]
+default = []
+gpui = ["dep:pagemd-gpui"]
+
+[dependencies]
+pagemd-openapi = { path = "../pagemd-openapi", features = ["io"] }
+pagemd-parser = { path = "../pagemd-parser" }
+pagemd-gpui = { path = "../pagemd-gpui", optional = true }
+syntect = "5.3"
+base64 = "0.22"
+bezel_mermaid = { package = "bezel-mermaid", git = "https://github.com/crabtalk/bezel.git", rev = "556c045372074c5cf76426626f19fb376fdfb2c0" }
+plantuml_encoding = "2.0.3"
+regex = "1.12"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+ratex-svg = { version = "0.0.15", features = ["standalone", "cli"] }
+ratex-parser = "0.0.15"
+ratex-layout = "0.0.15"
+ratex-types = "0.0.15"
+ratex-font = "0.0.15"
+ratex-katex-fonts = "0.1.8"
+anyhow = "1"
+serde_json = "1"
+serde_yaml = "0.9"
+rayon = "1.10"

@@ -1,0 +1,1500 @@
+use std::{
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use pagemd_cli::cli::{parse_icon_arg, CliArgs};
+use pagemd_core::{
+    export::html::{
+        build_html,
+        favicon::{
+            contrast_ratio, default_icon_label_from_path, icon_background_rgb,
+            icon_colors, relative_luminance,
+        },
+        page::build_html_with_nav,
+    },
+    md::{render_markdown, FootnoteDisplay},
+    model::{HeadingOutline, RenderedSection},
+    render, render_to_html, resolve_inputs, HtmlExportOptions, RenderOptions,
+};
+use syntect::{highlighting::ThemeSet, parsing::SyntaxSet};
+
+fn render_html_at(source: &str, base_dir: &Path) -> String {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    render_markdown(
+        source,
+        base_dir,
+        16.0,
+        "",
+        &ss,
+        &ts,
+        false,
+        FootnoteDisplay::EndList,
+    )
+    .unwrap()
+    .html
+}
+
+fn render_html(source: &str) -> String {
+    render_html_at(source, Path::new("."))
+}
+
+fn temp_test_dir(name: &str) -> PathBuf {
+    let id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("pagemd-{name}-{id}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn math_inline_count(html: &str) -> usize {
+    html.matches("class=\"math-inline\"").count()
+}
+
+fn mermaid_count(html: &str) -> usize {
+    html.matches("class=\"mermaid-display\"").count()
+}
+
+fn plantuml_count(html: &str) -> usize {
+    html.matches("plantuml-display").count()
+}
+
+fn diagram_html_count(html: &str) -> usize {
+    html.matches("class=\"diagram-html-display\"").count()
+}
+
+fn callout_count(html: &str) -> usize {
+    html.matches("class=\"callout callout-").count()
+}
+
+fn test_args(inputs: Vec<PathBuf>, directories: Vec<PathBuf>) -> CliArgs {
+    CliArgs {
+        inputs,
+        directories,
+        excludes: Vec::new(),
+        output: None,
+        title: None,
+        icon: None,
+        math_font_size: 16.0,
+        katex_fonts: None,
+    }
+}
+#[test]
+fn parse_icon_arg_validates_and_uppercases() {
+    assert_eq!(parse_icon_arg("ab").unwrap(), "AB");
+    assert_eq!(parse_icon_arg("x9").unwrap(), "X9");
+    assert!(parse_icon_arg("a").is_err());
+    assert!(parse_icon_arg("abc").is_err());
+    assert!(parse_icon_arg("a!").is_err());
+    assert!(parse_icon_arg("中文").is_err());
+}
+
+#[test]
+fn default_icon_label_from_path_rules() {
+    assert_eq!(default_icon_label_from_path(Path::new("readme.md")), "RE");
+    assert_eq!(default_icon_label_from_path(Path::new("a.md")), "AA");
+    assert_eq!(default_icon_label_from_path(Path::new("my-doc.md")), "MY");
+    assert_eq!(default_icon_label_from_path(Path::new("笔记.md")), "PG");
+}
+
+#[test]
+fn build_html_embeds_two_char_favicon() {
+    let html = build_html(
+        "Title",
+        &[RenderedSection {
+            title: String::new(),
+            html: "<p>x</p>".to_string(),
+            outline: Vec::new(),
+            footnotes: Vec::new(),
+        }],
+        "ab",
+    );
+    assert!(html.contains("rel=\"icon\""));
+    assert!(html.contains("data:image/svg+xml,"));
+    assert!(html.contains("AB</text>") || html.contains("AB%3C/text"));
+    assert!(html.contains("rx='7'") || html.contains("rx=%277%27"));
+}
+
+#[test]
+fn directory_inputs_collect_markdown_and_dedup_files() {
+    let dir = temp_test_dir("dir-inputs");
+    let nested = dir.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let first = dir.join("a.md");
+    let second = nested.join("b.markdown");
+    let ignored = nested.join("c.txt");
+    std::fs::write(&first, "# A").unwrap();
+    std::fs::write(&second, "# B").unwrap();
+    std::fs::write(&ignored, "# C").unwrap();
+
+    let args = test_args(vec![first.clone()], vec![dir.clone(), dir.clone()]);
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+
+    assert_eq!(resolved.files.len(), 2);
+    assert!(resolved.files.iter().any(|path| path.ends_with("a.md")));
+    assert!(resolved
+        .files
+        .iter()
+        .any(|path| path.ends_with("b.markdown")));
+    assert!(!resolved.files.iter().any(|path| path.ends_with("c.txt")));
+    assert_eq!(resolved.directories.len(), 1);
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn input_flag_accepts_directory_as_monolithic_html_source() {
+    let dir = temp_test_dir("input-dir");
+    let nested = dir.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(dir.join("a.md"), "# A").unwrap();
+    std::fs::write(nested.join("b.md"), "# B").unwrap();
+
+    let args = test_args(vec![dir.clone()], Vec::new());
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+    assert_eq!(resolved.files.len(), 2);
+    assert_eq!(resolved.directories.len(), 1);
+
+    let out = dir.join("out.html");
+    let html_opts = pagemd_core::HtmlExportOptions {
+        embed_workspace_script: true,
+        client_mermaid_runtime: false,
+        ..Default::default()
+    };
+    let result =
+        pagemd_core::export_to_file(&(&args).into(), &html_opts, &out).unwrap();
+    assert_eq!(result.section_count, 2);
+    let html = std::fs::read_to_string(&out).unwrap();
+    assert!(html.contains("<html"));
+    assert!(html.contains(">A<") || html.contains("A"));
+    assert!(html.contains(">B<") || html.contains("B"));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn exclude_patterns_skip_directories_and_files() {
+    let dir = temp_test_dir("exclude-inputs");
+    let skipped_dir = dir.join("drafts");
+    let nested = dir.join("guide");
+    std::fs::create_dir_all(skipped_dir.join("nested")).unwrap();
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(dir.join("keep.md"), "# Keep").unwrap();
+    std::fs::write(skipped_dir.join("skip.md"), "# Skip").unwrap();
+    std::fs::write(nested.join("topic.md"), "# Topic").unwrap();
+    std::fs::write(dir.join("notes.tmp.md"), "# Tmp").unwrap();
+
+    let mut args = test_args(Vec::new(), vec![dir.clone()]);
+    args.excludes = vec!["drafts".to_string(), "*.tmp.md".to_string()];
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+
+    assert_eq!(resolved.files.len(), 2);
+    assert!(resolved.files.iter().any(|path| path.ends_with("keep.md")));
+    assert!(resolved
+        .files
+        .iter()
+        .any(|path| path.ends_with("guide/topic.md")
+            || path.ends_with("guide\\topic.md")));
+    assert!(!resolved.files.iter().any(|path| path.ends_with("skip.md")));
+    assert!(!resolved
+        .files
+        .iter()
+        .any(|path| path.ends_with("notes.tmp.md")));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn exclude_skips_explicit_input_files_in_excluded_directories() {
+    let dir = temp_test_dir("exclude-input-file");
+    let guide = dir.join("guide");
+    std::fs::create_dir_all(&guide).unwrap();
+    let guide_file = guide.join("topic.md");
+    std::fs::write(&guide_file, "# Topic").unwrap();
+
+    let mut args = test_args(vec![guide_file.clone()], Vec::new());
+    args.excludes = vec!["guide".to_string()];
+    let resolved = resolve_inputs(&(&args).into());
+
+    assert!(resolved.is_err() || resolved.unwrap().files.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn tree_nav_uses_directory_structure_with_tmp_paths() {
+    let dir = temp_test_dir("tree-nav");
+    let guide = dir.join("guide");
+    std::fs::create_dir_all(&guide).unwrap();
+    std::fs::write(dir.join("keep.md"), "# Keep").unwrap();
+    std::fs::write(guide.join("topic.md"), "# Topic").unwrap();
+
+    let args = test_args(Vec::new(), vec![dir.clone()]);
+    let resolved = resolve_inputs(&(&args).into()).unwrap();
+    let html_opts = pagemd_core::HtmlExportOptions {
+        embed_workspace_script: true,
+        client_mermaid_runtime: false,
+        ..Default::default()
+    };
+    let convert_opts = (&args).into();
+    let resources = pagemd_core::prepare_resources(&convert_opts).unwrap();
+    let output = pagemd_core::export_with_resources(
+        &convert_opts,
+        &html_opts,
+        &resources,
+        resolved.files.first().map(|path| path.as_path()),
+    )
+    .unwrap();
+
+    let root_name = dir.file_name().and_then(|name| name.to_str()).unwrap();
+    assert!(output.html.contains("data-nav-root"), "{}", output.html);
+    assert!(
+        output.html.contains(&format!(
+            "class=\"doc-nav-folder-label\">{root_name}</span>"
+        )),
+        "{}",
+        output.html
+    );
+    assert!(output.html.contains("data-nav-folder=\"guide\""));
+    assert!(output.html.contains("class=\"doc-nav-tree\""));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn preview_html_omits_embedded_workspace_script() {
+    let html = build_html_with_nav(
+        "Title",
+        &[RenderedSection {
+            title: "Doc".to_string(),
+            html: "<h1 id=\"intro\">Intro</h1>".to_string(),
+            outline: vec![HeadingOutline {
+                level: 1,
+                id: "intro".to_string(),
+                text: "Intro".to_string(),
+            }],
+            footnotes: Vec::new(),
+        }],
+        "PG",
+        None,
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: false,
+            ..Default::default()
+        },
+    );
+    assert!(html.contains("data-doc-workspace"));
+    assert!(!html.contains("data-pagemd-workspace"));
+    let preview = pagemd_cli::preview::wrap_for_preview(html);
+    assert!(preview.contains("data-pagemd-workspace"));
+    assert!(preview.contains("data-pagemd-live-preview"));
+}
+
+#[test]
+fn export_html_restores_workspace_script_for_preview_render() {
+    let html = build_html_with_nav(
+        "Title",
+        &[RenderedSection {
+            title: "Doc".to_string(),
+            html: "<h1 id=\"intro\">Intro</h1>".to_string(),
+            outline: vec![HeadingOutline {
+                level: 1,
+                id: "intro".to_string(),
+                text: "Intro".to_string(),
+            }],
+            footnotes: Vec::new(),
+        }],
+        "PG",
+        None,
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: false,
+            ..Default::default()
+        },
+    );
+    let exported = pagemd_cli::preview::ensure_export_html(html);
+    assert!(exported.contains("data-pagemd-workspace"));
+    assert!(!exported.contains("data-pagemd-live-preview"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hosted_preview_starts_inside_tokio_runtime() {
+    use pagemd_cli::preview::{
+        error::{build_preview_error_html, preview_html_opts},
+        HostedPreview, HostedPreviewOptions, RenderRequest, RenderResult,
+        WatchPlan,
+    };
+    use pagemd_core::{
+        export_with_resources, prepare_resources, ConvertOptions, OutputFormat,
+    };
+
+    let dir = temp_test_dir("hosted-preview");
+    let session_path = dir.join("session.md");
+    std::fs::write(&session_path, "# Hello\n\nPreview inside runtime.\n")
+        .unwrap();
+
+    let convert_opts = ConvertOptions {
+        inputs: vec![session_path.clone()],
+        directories: Vec::new(),
+        excludes: Vec::new(),
+        title: Some("Hosted preview".to_string()),
+        icon: None,
+        math_font_size: 1.0,
+        katex_fonts: None,
+        output_format: OutputFormat::Html,
+        client_mermaid: true,
+    };
+    let resources = prepare_resources(&convert_opts).unwrap();
+    let html_opts = preview_html_opts();
+
+    let hosted = HostedPreview::start(
+        HostedPreviewOptions {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            inputs: vec![session_path.clone()],
+            watch_plan: WatchPlan {
+                recursive: Vec::new(),
+                paths: vec![session_path.clone()],
+            },
+            export_path: None,
+            library: None,
+        },
+        move |_request: RenderRequest| match export_with_resources(
+            &convert_opts,
+            &html_opts,
+            &resources,
+            Some(session_path.as_path()),
+        ) {
+            Ok(document) => RenderResult::Ok {
+                html: document.html,
+                watch_plan: WatchPlan::default(),
+            },
+            Err(err) => RenderResult::Err {
+                html: build_preview_error_html(&err),
+            },
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(hosted.url().starts_with("http://127.0.0.1:"));
+    hosted.shutdown().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn single_file_html_includes_outline_workspace() {
+    let html = build_html(
+        "Title",
+        &[RenderedSection {
+            title: "Doc".to_string(),
+            html: "<h1 id=\"intro\">Intro</h1><h2 id=\"details\">Details</h2>"
+                .to_string(),
+            outline: vec![
+                HeadingOutline {
+                    level: 1,
+                    id: "intro".to_string(),
+                    text: "Intro".to_string(),
+                },
+                HeadingOutline {
+                    level: 2,
+                    id: "details".to_string(),
+                    text: "Details".to_string(),
+                },
+            ],
+            footnotes: Vec::new(),
+        }],
+        "PG",
+    );
+
+    assert!(html.contains("doc-workspace-single"));
+    assert!(html.contains("data-doc-workspace"));
+    assert!(html.contains("class=\"pagemd-shell\""));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("data-doc-title"));
+    assert!(html.contains("data-theme-toggle"));
+    assert!(html.contains("data-settings-toggle"));
+    // Export controls are injected by the live-preview script, not baked into HTML.
+    // workspace.js may mention the selector so clicks do not fall through.
+    assert!(!html.contains("data-settings-export-slot"));
+    assert!(!html.contains("data-export-toggle=\"\""));
+    assert!(!html.contains("data-export-ready"));
+    assert!(
+        !html.contains("<button type=\"button\" class=\"doc-settings-action\" data-export-html>")
+    );
+    assert!(!html.contains(">Download HTML<"));
+    assert!(html.contains("data-pagemd-diagram-lightbox"));
+    assert!(html.contains("doc-theme-icon-moon"));
+    assert!(html.contains("data-pagemd-workspace"));
+    assert!(html.contains("id=\"doc-1\" data-doc-panel"));
+    assert!(html.contains("data-outline-toggle"));
+    assert!(html.contains("aria-label=\"Outline\""));
+    assert!(html.contains("data-heading-target=\"intro\""));
+    assert!(html.contains("data-heading-target=\"details\""));
+    assert!(!html.contains("class=\"doc-sidebar doc-pane\""));
+    assert!(!html.contains("aria-label=\"Files\""));
+}
+
+#[test]
+fn single_file_without_headings_uses_plain_container() {
+    let html = build_html(
+        "Title",
+        &[RenderedSection {
+            title: String::new(),
+            html: "<p>No headings here.</p>".to_string(),
+            outline: Vec::new(),
+            footnotes: Vec::new(),
+        }],
+        "PG",
+    );
+
+    assert!(!html.contains("data-doc-workspace"));
+    assert!(!html.contains("data-pagemd-workspace"));
+    assert!(html.contains("<p>No headings here.</p>"));
+}
+
+#[test]
+fn multi_file_html_includes_standalone_sidebar() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "A".to_string(),
+                html: "<h1>A</h1>".to_string(),
+                outline: vec![HeadingOutline {
+                    level: 1,
+                    id: "a".to_string(),
+                    text: "A".to_string(),
+                }],
+                footnotes: Vec::new(),
+            },
+            RenderedSection {
+                title: "B".to_string(),
+                html: "<h1>B</h1>".to_string(),
+                outline: vec![HeadingOutline {
+                    level: 1,
+                    id: "b".to_string(),
+                    text: "B".to_string(),
+                }],
+                footnotes: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["a.md".to_string(), "b.md".to_string()]),
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(html.contains("data-doc-workspace"));
+    assert!(html.contains("data-pagemd-workspace"));
+    assert!(html.contains("class=\"doc-sidebar doc-pane\""));
+    assert!(html.contains("data-nav-toggle"));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("data-doc-title"));
+    assert!(html.contains("data-theme-toggle"));
+    assert!(html.contains("doc-theme-icon-moon"));
+    assert!(html.contains("data-nav-root"));
+    assert!(html.contains("data-nav-folder=\".\""));
+    assert!(html.contains("class=\"doc-nav-folder-label\">Title</span>"));
+    assert!(html.contains("data-nav-node"));
+    assert!(html.contains("data-doc-target=\"doc-1\""));
+    assert!(html.contains("class=\"doc-nav-label\""));
+    assert!(html.contains("class=\"doc-nav-copy\""));
+    assert!(html.contains("data-copy-label=\"a.md\""));
+    assert!(html.contains("navigator.clipboard"));
+    assert!(html.contains("fallbackCopyText"));
+    assert!(html.contains("activeDoc"));
+    assert!(html.contains("data-doc-panel"));
+    assert!(html.contains("class=\"doc-outline"));
+    assert!(html.contains("data-heading-target=\"a\""));
+    assert!(html.contains("PageMDActivateDocumentFromHash"));
+}
+
+#[test]
+fn multi_file_tree_sidebar_renders_folders() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "Root".to_string(),
+                html: "<h1>Root</h1>".to_string(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+            RenderedSection {
+                title: "Guide".to_string(),
+                html: "<h1>Guide</h1>".to_string(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["readme.md".to_string(), "guide/start.md".to_string()]),
+        Some(&[
+            PathBuf::from("/project/docs/readme.md"),
+            PathBuf::from("/project/docs/guide/start.md"),
+        ]),
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(html.contains("class=\"doc-nav-tree\""));
+    assert!(html.contains("data-nav-root"));
+    assert!(html.contains("data-nav-folder=\".\""));
+    assert!(html.contains("class=\"doc-nav-folder-label\">docs</span>"));
+    assert!(html.contains("data-nav-folder=\"guide\""));
+    assert!(html.contains(
+        "id=\"doc-1\" data-doc-panel data-panel-title=\"readme.md\" data-doc-path=\"readme.md\""
+    ));
+    assert!(html.contains("id=\"doc-2\" data-doc-panel data-panel-title=\"guide/start.md\" data-doc-path=\"guide/start.md\""));
+    assert!(html.contains("class=\"doc-nav-folder-toggle\""));
+    assert!(html.contains("data-nav-toggle"));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("folder:"));
+    assert!(html.contains("restoreFolderStates"));
+    assert!(html.contains("setNavVisible"));
+    assert!(html.contains("navVisible"));
+    assert!(html.contains("updateDocTitle"));
+    assert!(html.contains("setTheme"));
+    assert!(html.contains("data-theme-toggle"));
+}
+
+#[test]
+fn workspace_script_routes_relative_markdown_links_between_panels() {
+    let script = pagemd_core::scripts::WORKSPACE_SCRIPT;
+
+    assert!(script.contains("function documentForMarkdownLink(link)"));
+    assert!(script
+        .contains("new URL(href, \"https://pagemd.invalid/\" + basePath)"));
+    assert!(script.contains("relativeDocumentPath(panel) === targetPath"));
+    assert!(script.contains("followMarkdownLink(markdownTarget)"));
+    assert!(script.contains("markdownLink.hasAttribute(\"target\")"));
+    assert!(script.contains("window.PageMDActivatePanelById = function (id)"));
+}
+
+#[test]
+fn live_preview_restores_active_lazy_panel_after_reload() {
+    let script = include_str!("../assets/preview.js");
+
+    assert!(
+        script.contains("var activeId = activePanel ? activePanel.id : \"\"")
+    );
+    assert!(script.contains("window.PageMDActivatePanelById(activeId)"));
+}
+
+#[test]
+fn version_string_starts_with_the_package_version() {
+    let version = pagemd_cli::PAGEMD_VERSION;
+    let pkg = env!("CARGO_PKG_VERSION");
+    assert!(
+        version == pkg || version.starts_with(&format!("{pkg}-")),
+        "{version}"
+    );
+}
+
+#[test]
+fn live_preview_export_selects_nav_trees_from_the_topbar() {
+    let script = include_str!("../assets/preview.js");
+
+    assert!(script.contains("data-export-toggle"));
+    assert!(script.contains(".doc-topbar-start"));
+    assert!(script.contains("insertAdjacentElement(\"afterend\", button)"));
+    assert!(script.contains("data-nav-check"));
+    assert!(script.contains("function applyTreeCheck"));
+    assert!(script.contains("function toggleNode"));
+    assert!(!script.contains("data-settings-export-slot"));
+}
+
+#[test]
+fn theme_switch_does_not_animate_inherited_text_color() {
+    let css = pagemd_core::export::html::styles::CSS;
+    assert!(
+        !css.contains("transition: background-color 180ms ease, color 180ms ease"),
+        "body color transitions force style recalc across the whole tree on theme switch"
+    );
+}
+
+#[test]
+fn workspace_shell_locks_page_scroll() {
+    let css = pagemd_core::export::html::styles::CSS;
+    assert!(css.contains("html.pagemd-shell"));
+    assert!(css.contains("html.pagemd-shell body"));
+    assert!(css.contains("overflow: hidden"));
+}
+
+#[test]
+fn workspace_document_separators_are_print_only() {
+    let css = pagemd_core::export::html::styles::CSS;
+    let print_start = css.find("@media print").unwrap();
+    let separator = ".doc-section + .doc-section";
+
+    assert_eq!(css.matches(separator).count(), 1);
+    assert!(css.find(separator).unwrap() > print_start);
+}
+
+#[test]
+fn dark_theme_only_swaps_the_theme_toggle_label() {
+    let css = pagemd_core::export::html::styles::CSS;
+
+    assert!(
+        !css.contains("html[data-theme=\"dark\"] .doc-settings-action-text {")
+    );
+    assert!(
+        css.contains("html[data-theme=\"dark\"] [data-theme-toggle] .doc-settings-action-text {")
+    );
+    assert!(css.contains(
+        "html[data-theme=\"dark\"] [data-theme-toggle] .doc-settings-action-text-light {"
+    ));
+}
+
+#[test]
+fn headings_do_not_render_as_section_dividers() {
+    let css = pagemd_core::export::html::styles::CSS;
+
+    assert!(css.contains("h1 { font-size: 2.25rem; margin-top: 0; }"));
+    assert!(css.contains("h2 { font-size: 1.5rem; }"));
+    assert!(
+        !css.contains("h1 { font-size: 2.25rem; margin-top: 0; border-bottom:")
+    );
+    assert!(!css.contains("h2 { font-size: 1.5rem; border-bottom:"));
+}
+
+#[test]
+fn outline_uses_markdown_plain_text_not_html_roundtrip() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let section = render_markdown(
+        "## 3.4 send -> RunHandle & `Async`\n",
+        Path::new("."),
+        16.0,
+        "",
+        &ss,
+        &ts,
+        false,
+        FootnoteDisplay::EndList,
+    )
+    .unwrap();
+
+    assert_eq!(section.outline.len(), 1);
+    assert_eq!(section.outline[0].text, "3.4 send -> RunHandle & Async");
+    assert!(!section.outline[0].id.contains("gt"));
+
+    let html = build_html("doc", &[section], "PG");
+    // Escaped exactly once when embedded into outline HTML.
+    assert!(html.contains(">3.4 send -&gt; RunHandle &amp; Async</a>"));
+    assert!(!html.contains("-&amp;gt;"));
+    assert!(!html.contains("&amp;amp;"));
+}
+
+#[test]
+fn duplicate_heading_ids_are_unique_for_outline_links() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let section = render_markdown(
+        "# Repeat\n\n## Repeat\n\n# Repeat\n",
+        Path::new("."),
+        16.0,
+        "",
+        &ss,
+        &ts,
+        false,
+        FootnoteDisplay::EndList,
+    )
+    .unwrap();
+
+    assert!(section.html.contains("id=\"repeat\""));
+    assert!(section.html.contains("id=\"repeat-2\""));
+    assert!(section.html.contains("id=\"repeat-3\""));
+    assert_eq!(
+        section
+            .outline
+            .iter()
+            .map(|heading| heading.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["repeat", "repeat-2", "repeat-3"]
+    );
+}
+
+#[test]
+fn icon_colors_are_deterministic_and_readable() {
+    let bg1 = icon_background_rgb("BX");
+    let bg2 = icon_background_rgb("BX");
+    assert_eq!(bg1, bg2);
+    assert_ne!(icon_background_rgb("AB"), icon_background_rgb("BX"));
+
+    for label in ["AB", "BX", "PG", "Z9", "00", "XY"] {
+        let (bg, fg) = icon_colors(label);
+        let bg_l = relative_luminance(bg);
+        let fg_l = relative_luminance(fg);
+        let (hi, lo) = if bg_l > fg_l {
+            (bg_l, fg_l)
+        } else {
+            (fg_l, bg_l)
+        };
+        let ratio = contrast_ratio(hi, lo);
+        assert!(
+            ratio >= 4.5,
+            "label {label} contrast {ratio:.2} bg={bg:?} fg={fg:?}"
+        );
+    }
+}
+
+#[test]
+fn currency_sentence_with_cjk_text_stays_plain() {
+    let html = render_html("（$21 发行价，融资 $2.08 亿）");
+    assert!(html.contains("<p>（$21 发行价，融资 $2.08 亿）</p>"));
+    assert_eq!(math_inline_count(&html), 0);
+}
+
+#[test]
+fn blockquote_soft_breaks_become_line_breaks() {
+    let html = render_html("> **alpha**: one\n> **beta**: two\n");
+    assert!(html.contains("<blockquote>"));
+    assert!(
+        html.contains(
+            "<strong>alpha</strong>: one<br>\n<strong>beta</strong>: two"
+        ),
+        "blockquote consecutive lines should keep a visible break: {html}"
+    );
+
+    let paragraph = render_html("hello\nworld");
+    assert!(
+        !paragraph.contains("<br>"),
+        "normal paragraph soft breaks should not become <br>: {paragraph}"
+    );
+}
+
+#[test]
+fn currency_and_bold_currency_do_not_merge_into_math() {
+    let html =
+        render_html("但合并营业利润因 $738M 减值几乎归零；OCF **$710M**");
+    assert!(html.contains("$738M"));
+    assert!(html.contains("<strong>$710M</strong>"));
+    assert_eq!(math_inline_count(&html), 0);
+}
+
+#[test]
+fn currency_range_stays_plain() {
+    let html = render_html("品牌溢价（售价 $40–$60）");
+    assert!(html.contains("<p>品牌溢价（售价 $40–$60）</p>"));
+    assert_eq!(math_inline_count(&html), 0);
+}
+
+#[test]
+fn eps_sequence_with_arrows_stays_plain() {
+    let html = render_html("（EPS：$8.71→$12.79→$15.88）");
+    assert!(html.contains("<p>（EPS：$8.71→$12.79→$15.88）</p>"));
+    assert_eq!(math_inline_count(&html), 0);
+}
+
+#[test]
+fn actual_inline_and_display_math_still_render() {
+    let html = render_html("真公式 $x+y$\n\n**$x+y$**\n\n$$x+y$$");
+    assert_eq!(math_inline_count(&html), 2);
+    assert_eq!(html.matches("class=\"math-display\"").count(), 1);
+    assert!(html.contains("<strong><span class=\"math-inline\">"));
+}
+
+#[test]
+fn display_math_with_text_commands_renders() {
+    let html = render_html("$$\n\\text{score}(w_1 \\cdots w_n) = \\sum_i \\bigl[\\log P(w_i) + \\lambda \\cdot \\log P(w_i \\mid w_{i-1}) + \\text{WORD\\_PENALTY}\\bigr]\n$$");
+    assert_eq!(html.matches("class=\"math-display\"").count(), 1);
+}
+
+#[test]
+fn display_math_renders_inside_chinese_section() {
+    let html = render_html(
+        r#"#### 示例小节
+
+这是一段包含中文上下文的说明：
+
+$$
+\text{label}(x_1 \cdots x_n) = \sum_i \bigl[x_i + \text{TOKEN\_VALUE}\bigr]
+$$
+
+**说明**：这里包含后续加粗文本和 `inline-code`。
+
+**下一步**：继续普通 Markdown 内容。
+"#,
+    );
+    assert_eq!(html.matches("class=\"math-display\"").count(), 1);
+    assert!(html.contains("<h4"));
+    assert!(html.contains("<strong>说明</strong>"));
+    assert!(html.contains("<code>inline-code</code>"));
+}
+
+#[test]
+fn mermaid_fence_caption_overrides_the_source_title_without_drawing_it() {
+    let html = render_html("```mermaid title=\"图 1 · 外部 <标题> & 说明\"\n---\ntitle: 图内请求流程\n---\nflowchart LR\nA[接收] --> B[返回]\n```\n");
+    assert_eq!(mermaid_count(&html), 1);
+    assert!(!html.contains("图内请求流程"));
+    assert!(html.contains("<figure class=\"pagemd-figure\">"));
+    assert!(html.contains(
+        "<figcaption>图 1 · 外部 &lt;标题&gt; &amp; 说明</figcaption>"
+    ));
+    assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
+    assert!(!html.contains("Mermaid render failed"));
+}
+
+#[test]
+fn mermaid_titles_are_captions_and_never_part_of_the_svg() {
+    for source in [
+        "---\ntitle: 请求处理流程\n---\nflowchart LR\nsubgraph Group[分组标题]\nA[开始]-->B[完成]\nend",
+        "sequenceDiagram\ntitle 请求处理流程\nA->>B: 请求",
+        "pie title 请求处理流程\n\"成功\": 10\n\"失败\": 2",
+        "---\ntitle: 请求处理流程\n---\nclassDiagram\nA --> B",
+    ] {
+        let figure = pagemd_core::mermaid_figure::render(source, &pagemd_core::mermaid::Options::default(), &pagemd_core::mermaid::Metrics).unwrap();
+        assert_eq!(figure.caption.as_deref(), Some("请求处理流程"));
+        assert!(!figure.drawing.svg.contains("请求处理流程"));
+        if source.contains("分组标题") {
+            assert!(figure.drawing.svg.contains("分组标题"));
+        }
+        let html = render_html(&format!("```mermaid\n{source}\n```"));
+        assert!(html.contains("<figcaption>请求处理流程</figcaption>"));
+        assert_eq!(html.matches("请求处理流程").count(), 1);
+        assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
+    }
+}
+
+#[test]
+fn client_preview_also_keeps_mermaid_titles_outside_the_image() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let html = render_markdown(
+        "```mermaid\n---\ntitle: 图外标题\n---\nflowchart LR\nA-->B\n```",
+        Path::new("."),
+        16.,
+        "",
+        &ss,
+        &ts,
+        true,
+        FootnoteDisplay::EndList,
+    )
+    .unwrap()
+    .html;
+    assert_eq!(html.matches("图外标题").count(), 1);
+    assert!(html.contains("<figcaption>图外标题</figcaption>"));
+    assert!(html.find("</svg>").unwrap() < html.find("<figcaption>").unwrap());
+}
+
+#[test]
+fn mermaid_code_block_renders_svg() {
+    let html =
+        render_html("```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n");
+    assert_eq!(mermaid_count(&html), 1);
+    assert!(html.contains("<svg"));
+    assert!(!html.contains("language-mermaid"));
+    assert!(!html.contains("data-mermaid-client"));
+}
+
+#[test]
+fn native_mermaid_uses_bezel_and_keeps_diagram_ids_unique() {
+    let html = render_html("```mermaid\nflowchart LR\naccTitle: Accessible diagram\nA[开始] --> B[完成]\n```\n\n```mermaid\nflowchart LR\naccTitle: Accessible diagram\nA[开始] --> B[完成]\n```\n");
+    assert_eq!(mermaid_count(&html), 2);
+    let ids: Vec<_> = regex::Regex::new(r#"id="(pagemd-mermaid-[^"]+)""#)
+        .unwrap()
+        .captures_iter(&html)
+        .map(|c| c[1].to_owned())
+        .collect();
+    assert!(!ids.is_empty());
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(ids.len(), unique.len(), "duplicate SVG ids across diagrams");
+    assert!(html.contains("bezel-"));
+    assert!(html.contains("开始"));
+    assert!(!html.contains("foreignObject"));
+}
+
+#[test]
+fn invalid_native_mermaid_keeps_its_source_in_the_error_block() {
+    let html =
+        render_html("```mermaid\nsequenceDiagram\nA sends B hello\n```\n");
+    assert!(html.contains("Mermaid render failed"));
+    assert!(html.contains("A sends B hello"));
+}
+
+#[test]
+fn client_mermaid_uses_native_light_and_dark_themes() {
+    let script =
+        include_str!("../../../crates/pagemd-core/assets/mermaid-init.js");
+
+    assert!(script.contains("theme: themeName()"));
+    assert!(script.contains(
+        "document.documentElement.getAttribute(\"data-theme\") === \"dark\" ? \"dark\" : \"default\""
+    ));
+    assert!(script.contains("fontSize: \"18px\""));
+}
+
+#[test]
+fn mermaid_wrapper_preserves_renderer_native_shapes() {
+    let css = pagemd_core::export::html::styles::CSS;
+
+    assert!(css.contains(".mermaid-display {\n  margin: 1.75rem 0;"));
+    assert!(css.contains(
+        "  padding: 0.75rem 0;\n  overflow-x: hidden;\n  border: none;\n  border-radius: 0;\n  background: transparent;\n  box-shadow: none;"
+    ));
+    assert!(css.contains(".mermaid-canvas {\n  display: block;"));
+    assert!(css.contains(
+        "  margin: 0 auto;\n  padding: 0.35rem 0;\n  border-radius: 0;"
+    ));
+    assert!(!css.contains(".mermaid-display svg .cluster rect"));
+    assert!(!css.contains("border: 1.5px solid var(--mermaid-line)"));
+}
+
+#[test]
+fn mermaid_quadrant_chart_with_chinese_axes_renders() {
+    let html = render_html(
+        "```mermaid\n\
+quadrantChart\n\
+  title 文档承诺 vs 实现成熟度（定性）\n\
+  x-axis 文档笔墨少 --> 文档笔墨多\n\
+  y-axis 实现薄弱 --> 实现充分\n\
+  quadrant-1 文档过时风险区\n\
+  quadrant-2 健康对齐区\n\
+  quadrant-3 远期缺口区\n\
+  quadrant-4 文档超前区\n\
+  Session子系统: [0.82, 0.78]\n\
+  RAL驱动: [0.55, 0.72]\n\
+  LoopEngine: [0.70, 0.62]\n\
+  Tool流水线: [0.60, 0.58]\n\
+  LocalEngine入口: [0.35, 0.70]\n\
+  Cloud多租户: [0.75, 0.18]\n\
+  LMCache: [0.80, 0.12]\n\
+  十四类扩展点全表: [0.85, 0.35]\n\
+```\n",
+    );
+    assert_eq!(mermaid_count(&html), 1);
+    assert!(html.contains("<svg"), "quadrantChart should render to SVG");
+    assert!(html.contains("Session子系统"));
+    assert!(!html.contains("Mermaid render failed"));
+}
+
+#[test]
+fn mermaid_client_mode_emits_source_placeholder() {
+    let ss = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    let section = render_markdown(
+        "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n",
+        Path::new("."),
+        16.0,
+        "",
+        &ss,
+        &ts,
+        true,
+        FootnoteDisplay::EndList,
+    )
+    .unwrap();
+    assert!(section.html.contains("data-mermaid-client"));
+    assert!(section.html.contains("class=\"mermaid\""));
+    assert!(
+        section.html.contains("A[Start] --&gt; B[End]")
+            || section.html.contains("A[Start] --> B[End]")
+    );
+    assert!(!section.html.contains("<svg"));
+
+    let html = build_html_with_nav(
+        "Title",
+        &[section],
+        "PG",
+        None,
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !html.contains("/__assets/mermaid.min.js"),
+        "standalone HTML must inline mermaid.js"
+    );
+    assert!(html.contains("<script data-pagemd-mermaid>"));
+    assert!(html.contains("__esbuild_esm_mermaid_nm"));
+    assert!(html.contains("data-pagemd-mermaid-init"));
+}
+
+#[test]
+fn lazy_workspace_html_ships_mermaid_runtime_without_inlined_diagrams() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "A".to_string(),
+                html: "<p>no diagram</p>".to_string(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+            RenderedSection {
+                title: "B".to_string(),
+                html: String::new(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["a.md".to_string(), "b.md".to_string()]),
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: true,
+            preview_runtime_assets: true,
+            lazy_sections: true,
+            ..Default::default()
+        },
+    );
+    assert!(html.contains("data-lazy-section=\"2\""));
+    assert!(html.contains("/__assets/mermaid.min.js?v="));
+    assert!(html.contains("data-pagemd-mermaid-init"));
+}
+
+#[test]
+fn eager_html_without_mermaid_does_not_ship_runtime() {
+    let html = build_html_with_nav(
+        "Title",
+        &[RenderedSection {
+            title: "A".to_string(),
+            html: "<p>no diagram</p>".to_string(),
+            outline: Vec::new(),
+            footnotes: Vec::new(),
+        }],
+        "PG",
+        None,
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: true,
+            lazy_sections: false,
+            ..Default::default()
+        },
+    );
+    assert!(!html.contains("/__assets/mermaid.min.js"));
+}
+
+#[test]
+fn plantuml_code_block_renders_self_contained_output() {
+    let html =
+        render_html("```plantuml\n@startuml\nAlice -> Bob: Hi\n@enduml\n```\n");
+    assert_eq!(plantuml_count(&html), 1);
+    assert!(!html.contains("https://www.plantuml.com/plantuml/svg/"));
+    assert!(html.contains("<svg") || html.contains("PlantUML render failed"));
+    assert!(!html.contains("language-plantuml"));
+}
+
+#[test]
+fn plantuml_uses_a_stable_light_canvas_in_all_page_themes() {
+    let css = pagemd_core::export::html::styles::CSS;
+
+    assert!(css.contains(
+        ".plantuml-canvas {\n  min-width: max-content;\n  display: flex;\n  justify-content: center;\n  width: max-content;"
+    ));
+    assert!(css.contains(
+        "  padding: 0.75rem;\n  border: 1px solid #d0d7de;\n  border-radius: 0.5rem;\n  background: #ffffff;"
+    ));
+    assert!(!css.contains(".plantuml-canvas svg rect[fill='#E2E2F0']"));
+}
+
+#[test]
+fn diagram_html_code_block_renders_raw_html() {
+    let html = render_html(
+        "```diagram html\n<div class=\"rounded-xl bg-sky-50 p-4\">Graph node</div>\n```\n",
+    );
+    assert_eq!(diagram_html_count(&html), 1);
+    assert!(html.contains("rounded-xl bg-sky-50 p-4"));
+    assert!(html.contains("Graph node"));
+    assert!(!html.contains("language-diagram"));
+}
+
+#[test]
+fn diagram_html_svg_marker_end_fragment_urls_are_preserved() {
+    let html = render_html(
+        "```diagram html\n<svg viewBox=\"0 0 200 50\"><defs><marker id=\"arr\"><path d=\"M0,0 L10,5 L0,10 Z\"/></marker></defs><path d=\"M 10 25 L 180 25\" fill=\"none\" stroke=\"#d97706\" marker-end=\"url(#arr)\"/></svg>\n```\n",
+    );
+    assert_eq!(diagram_html_count(&html), 1);
+    assert!(html.contains("marker-end=\"url(#arr)\""));
+    assert!(!html.contains("marker-end=\"url(\"#arr\")\""));
+}
+
+#[test]
+fn diagram_html_tailwind_browser_runtime_is_embedded_when_needed() {
+    let section = RenderedSection {
+        title: String::new(),
+        html: render_html(
+            "```diagram html\n<div class=\"rounded-xl\">Node</div>\n```\n",
+        ),
+        outline: Vec::new(),
+        footnotes: Vec::new(),
+    };
+    let html = build_html("Title", &[section], "PG");
+    assert!(html.contains("data-pagemd-diagram-html"));
+    assert!(html.contains("type=\"text/tailwindcss\""));
+    assert!(html
+        .contains("@import \"tailwindcss/theme.css\" layer(theme) important"));
+    assert!(html.contains("@tailwind utilities"));
+    assert!(html.contains(".diagram-html-display"));
+    assert!(
+        !html.contains("/__assets/diagram-html-tailwind-browser.js"),
+        "portable HTML must inline the Tailwind runtime"
+    );
+}
+
+#[test]
+fn diagram_lightbox_keeps_html_clone_inside_tailwind_scope() {
+    let section = RenderedSection {
+        title: String::new(),
+        html: render_html(
+            "```diagram html\n<div class=\"rounded-xl\">Node</div>\n```\n",
+        ),
+        outline: Vec::new(),
+        footnotes: Vec::new(),
+    };
+    let html = build_html("Title", &[section], "PG");
+    assert!(html.contains("data-pagemd-diagram-lightbox"));
+    // Overlay is mounted on document.body; utilities are nested under this class.
+    assert!(html.contains("wrapper.className = \"diagram-html-display\""));
+}
+
+#[test]
+fn content_images_and_svgs_use_the_diagram_lightbox() {
+    let section = RenderedSection {
+        title: String::new(),
+        html: "<p><img src=\"photo.png\" alt=\"photo\"></p>\n<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"></svg>\n".to_string(),
+        outline: Vec::new(),
+        footnotes: Vec::new(),
+    };
+    let html = build_html("Title", &[section], "PG");
+    assert!(html.contains("data-pagemd-diagram-lightbox"));
+    assert!(html.contains("function contentMediaRoot"));
+    assert!(html.contains("target.closest(\"img\")"));
+    assert!(html.contains("function outermostSvg"));
+    assert!(html.contains("function createContentSvgPreview"));
+    assert!(html.contains("state.pageWidth"));
+    assert!(html.contains(".math-inline"));
+    assert!(html.contains(".doc-topbar"));
+}
+
+#[test]
+fn lazy_workspace_html_ships_diagram_html_runtime_without_inlined_diagrams() {
+    let html = build_html_with_nav(
+        "Title",
+        &[
+            RenderedSection {
+                title: "A".to_string(),
+                html: "<p>no diagram</p>".to_string(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+            RenderedSection {
+                title: "B".to_string(),
+                html: String::new(),
+                outline: Vec::new(),
+                footnotes: Vec::new(),
+            },
+        ],
+        "PG",
+        Some(&["a.md".to_string(), "b.md".to_string()]),
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: true,
+            client_mermaid_runtime: true,
+            lazy_sections: true,
+            ..Default::default()
+        },
+    );
+    assert!(html.contains("data-lazy-section=\"2\""));
+    assert!(html.contains("/__assets/diagram-html-tailwind-browser.js?v="));
+    assert!(html.contains("type=\"text/tailwindcss\""));
+    assert!(html.contains("data-pagemd-diagram-html"));
+}
+
+#[test]
+fn eager_html_without_diagram_html_does_not_ship_tailwind_runtime() {
+    let html = build_html_with_nav(
+        "Title",
+        &[RenderedSection {
+            title: "A".to_string(),
+            html: "<p>no diagram</p>".to_string(),
+            outline: Vec::new(),
+            footnotes: Vec::new(),
+        }],
+        "PG",
+        None,
+        None,
+        &pagemd_core::HtmlExportOptions {
+            embed_workspace_script: false,
+            client_mermaid_runtime: true,
+            lazy_sections: false,
+            ..Default::default()
+        },
+    );
+    assert!(!html.contains("data-pagemd-diagram-html"));
+    assert!(!html.contains("type=\"text/tailwindcss\""));
+}
+
+#[test]
+fn library_render_to_html_matches_full_document() {
+    let html = render_to_html(
+        "# Library API\n\nHello **world**.\n",
+        &RenderOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        html.contains("<!DOCTYPE html>")
+            || html.contains("<!doctype html>")
+            || html.contains("<html")
+    );
+    assert!(html.contains("Library API"));
+    assert!(html.contains("<strong>world</strong>"));
+    assert!(html.contains("<style"));
+}
+
+#[test]
+fn github_callout_renders_admonition() {
+    let html =
+        render_html("> [!NOTE] Custom title\n> This is **important**.\n");
+    assert_eq!(callout_count(&html), 1);
+    assert!(html.contains("<div class=\"callout callout-note\">"));
+    assert!(!html.contains("<details class=\"callout"));
+    assert!(html.contains("Custom title"));
+    assert!(html.contains("<strong>important</strong>"));
+    assert!(!html.contains("<blockquote>"));
+}
+
+#[test]
+fn fenced_admonition_renders_nested_markdown() {
+    let html =
+        render_html(":::warning Pay attention\nUse `pagemd` safely.\n:::\n");
+    assert_eq!(callout_count(&html), 1);
+    assert!(html.contains("class=\"callout callout-warning\""));
+    assert!(html.contains("Pay attention"));
+    assert!(html.contains("<code>pagemd</code>"));
+}
+
+#[test]
+fn details_fence_renders_collapsed_section() {
+    let html = render_html(":::details Secrets\nHidden **body**.\n:::\n");
+    assert!(html.contains("<details class=\"md-details\">"));
+    assert!(!html.contains("<details class=\"md-details\" open"));
+    assert!(html.contains("Secrets"));
+    assert!(html.contains("<strong>body</strong>"));
+    assert!(html.contains("class=\"md-details-body\""));
+}
+
+#[test]
+fn details_plus_renders_open_section() {
+    let html = render_html(":::details+ Shown\nVisible.\n:::\n");
+    assert!(html.contains("<details class=\"md-details\" open>"));
+    assert!(html.contains("Shown"));
+    assert!(html.contains("Visible."));
+}
+
+#[test]
+fn github_callout_fold_marker_renders_details() {
+    let html = render_html("> [!NOTE]- Folded note\n> Inner **text**.\n");
+    assert!(
+        html.contains("<details class=\"callout callout-note callout-fold\">")
+    );
+    assert!(!html
+        .contains("<details class=\"callout callout-note callout-fold\" open"));
+    assert!(html.contains("Folded note"));
+    assert!(html.contains("<strong>text</strong>"));
+    assert!(!html.contains("<blockquote>"));
+}
+
+#[test]
+fn github_callout_fold_open_marker_starts_expanded() {
+    let html = render_html("> [!TIP]+ Open fold\n> Still a tip.\n");
+    assert!(html
+        .contains("<details class=\"callout callout-tip callout-fold\" open>"));
+    assert!(html.contains("Open fold"));
+}
+
+#[test]
+fn details_alias_and_indented_fence_render() {
+    let fold = render_html(":::fold Alias\nHidden.\n:::\n");
+    assert!(fold.contains("<details class=\"md-details\">"));
+    assert!(fold.contains("Alias"));
+    let indented =
+        render_html("!!! details \"Indented\"\n    Body **here**.\n");
+    assert!(indented.contains("<details class=\"md-details\">"));
+    assert!(indented.contains("Indented"));
+    assert!(indented.contains("<strong>here</strong>"));
+}
+
+#[test]
+fn nested_details_fences_render_inner_section() {
+    let html = render_html(
+        ":::details Outer\n:::details Inner\nsecret\n:::\nstill outer\n:::\n",
+    );
+    assert_eq!(html.matches("<details class=\"md-details\">").count(), 2);
+    assert!(html.contains("Outer"));
+    assert!(html.contains("Inner"));
+    assert!(html.contains("secret"));
+    assert!(html.contains("still outer"));
+}
+
+#[test]
+fn fenced_callout_fold_suffix_renders_details() {
+    let html = render_html(":::tip- Collapsed tip\nHidden **md**.\n:::\n");
+    assert!(
+        html.contains("<details class=\"callout callout-tip callout-fold\">")
+    );
+    assert!(html.contains("<strong>md</strong>"));
+}
+
+#[test]
+fn local_markdown_images_are_embedded_as_data_uris() {
+    let dir = temp_test_dir("local-image");
+    std::fs::write(
+        dir.join("tiny.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>",
+    )
+    .unwrap();
+    let html = render_html_at("![tiny](tiny.svg)\n", &dir);
+    assert!(html.contains("data:image/svg+xml;base64,"));
+    assert!(!html.contains("src=\"tiny.svg\""));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn raw_html_resources_are_embedded() {
+    let dir = temp_test_dir("raw-html");
+    std::fs::write(
+        dir.join("tiny.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"></svg>",
+    )
+    .unwrap();
+    std::fs::write(dir.join("style.css"), "body { color: #111; }").unwrap();
+    let html = render_html_at(
+        "<img src=\"tiny.svg\"><link rel=\"stylesheet\" href=\"style.css\"><style>.x{background:url('tiny.svg')}</style>",
+        &dir,
+    );
+    assert!(html.contains("data:image/svg+xml;base64,"));
+    assert!(html.contains("data:text/css;base64,"));
+    assert!(!html.contains("src=\"tiny.svg\""));
+    assert!(!html.contains("href=\"style.css\""));
+    assert!(!html.contains("url('tiny.svg')"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn embedded_export_is_content_only_without_scripts() {
+    let html = render_to_html(
+        "# Intro\n\nHello **pack**.\n\n## Details\n\nMore text.\n",
+        &RenderOptions {
+            html: HtmlExportOptions::embedded(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(html.contains("Intro"));
+    assert!(html.contains("<strong>pack</strong>"));
+    assert!(!html.contains("class=\"doc-topbar\""));
+    assert!(!html.contains("data-doc-workspace"));
+    assert!(!html.contains("data-pagemd-workspace"));
+    assert!(!html.to_ascii_lowercase().contains("<script"));
+}
+
+#[test]
+fn embedded_footnotes_use_tooltip_titles_without_visible_end_list() {
+    let html = render_to_html(
+        "Claim from README[^1].\n\n[^1]: `README.md:1-10` — <source media=\"(prefers-color-scheme: dark)\" srcset=\"x\">\n",
+        &RenderOptions {
+            html: HtmlExportOptions::embedded(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(html.contains("class=\"footnote-ref\""));
+    assert!(html.contains("title=\""));
+    assert!(html.contains("README.md:1-10"));
+    assert!(html.contains("footnote--tooltip-source"));
+    // Raw HTML from the citation quote must not leak into the document body.
+    assert!(!html.contains("<source media="));
+}
+
+#[test]
+fn host_footnotes_extract_defs_and_keep_inline_refs() {
+    let mut html_opts = HtmlExportOptions::embedded();
+    html_opts.footnotes = FootnoteDisplay::Host;
+    let out = render(
+        "Claim A[^1] and claim B[^2].\n\n[^2]: second note\n[^1]: `README.md:1` — first\n",
+        &RenderOptions {
+            html: html_opts,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(out.html.contains("class=\"footnote-ref\""));
+    assert!(out.html.contains("title=\""));
+    assert!(!out.html.contains("class=\"footnote\""));
+    assert!(!out.html.contains("data-pagemd-fn-slot"));
+    // Definitions must not appear as end-note blocks (title attrs may still quote them).
+    assert!(!out.html.contains("id=\"fn-1\""));
+    assert!(!out.html.contains("id=\"fn-2\""));
+    assert_eq!(out.footnotes.len(), 2);
+    assert_eq!(out.footnotes[0].label, "1");
+    assert!(out.footnotes[0].plain.contains("README.md:1"));
+    assert_eq!(out.footnotes[1].label, "2");
+    assert!(out.footnotes[1].plain.contains("second note"));
+}
+
+#[test]
+fn default_export_keeps_workspace_chrome_for_headings() {
+    let html = render_to_html("# Intro\n\nHello.\n", &RenderOptions::default())
+        .unwrap();
+    assert!(html.contains("data-doc-workspace"));
+    assert!(html.contains("doc-topbar"));
+    assert!(html.contains("data-pagemd-workspace"));
+}
+
+#[test]
+fn typst_fence_is_preserved_as_code() {
+    let html = render_html("```typst\n#circle(radius: 30pt)\n```\n");
+    assert!(html.contains("language-typst"));
+    assert!(html.contains("#circle"));
+    assert!(!html.contains("class=\"typst-display\""));
+    assert!(!pagemd_core::diagram_help().contains("```typst"));
+}
+
+#[test]
+fn openapi_fences_render_display_only_lists_in_the_accepted_order() {
+    let source = "```openapi\nopenapi: 3.1.0\ninfo: {title: Hidden API title, version: '1'}\npaths:\n  /pets:\n    get:\n      summary: List pets\n      responses:\n        '200': {description: '<script>bad()</script>'}\n```";
+    let html = render_html(source);
+    assert!(html.contains("pagemd-openapi-operation"), "{html}");
+    assert!(html.contains("pagemd-openapi-items"));
+    assert!(html.contains("&lt;script&gt;bad()&lt;/script&gt;"));
+    assert!(!html.contains("Hidden API title"));
+    // Method and path, the description right below the route, then
+    // Request and Response.
+    let method = html.find("pagemd-openapi-method\">GET").unwrap();
+    let comment = html.find("<div class=\"pagemd-openapi-comment\">").unwrap();
+    let request = html.find("Request</h4>").unwrap();
+    let response = html.find("Response</h4>").unwrap();
+    assert!(method < comment && comment < request && request < response);
+    assert!(!html.contains("Comment</h4>"));
+    assert!(!html.contains("<button"));
+}
+
+#[test]
+fn openapi_source_fence_loads_relative_to_the_markdown_document() {
+    let folder = temp_test_dir("openapi-src");
+    std::fs::write(folder.join("api.yaml"), "openapi: 3.0.4\ninfo: {title: Hidden, version: '1'}\npaths:\n  /external:\n    post:\n      responses: {'204': {description: Created}}\n").unwrap();
+    let html = render_html_at("```openapi src=\"./api.yaml\"\n```", &folder);
+    assert!(html.contains("/external"), "{html}");
+    assert!(!html.contains("api.yaml"));
+    let invalid =
+        render_html_at("```openapi src=\"./api.yaml\"\ninline\n```", &folder);
+    assert!(invalid.contains("role=\"alert\""));
+    std::fs::remove_dir_all(folder).unwrap();
+}

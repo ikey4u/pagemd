@@ -6,4 +6,4 @@ description = "What pagemd's mobile bindings share: embeddable HTML and a writab
 publish = false
 
 [dependencies]
-pagemd = { path = "../.." }
+pagemd-core = { path = "../../crates/pagemd-core" }

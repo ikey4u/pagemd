@@ -1,0 +1,44 @@
+[package]
+# Keeps the name `pagemd`: `cargo install --git … pagemd` installs this CLI.
+name = "pagemd"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+build = "build.rs"
+description = "The pagemd CLI: Markdown to self-contained HTML, live preview and browser extraction"
+readme = "../../README.md"
+keywords = ["markdown", "html", "singlefile", "cli"]
+categories = ["command-line-utilities", "text-processing"]
+
+[lib]
+name = "pagemd_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pagemd"
+path = "src/main.rs"
+
+[dependencies]
+pagemd-core = { path = "../../crates/pagemd-core" }
+clap = { version = "4.6", features = ["derive"] }
+syntect = "5.3"
+base64 = "0.22"
+regex = "1.12"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+anyhow = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "io-util", "sync"] }
+notify = "8"
+notify-debouncer-mini = "0.6"
+async-stream = "0.3"
+futures = "0.3"
+futures-util = "0.3"
+tokio-tungstenite = "0.26"
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "v5"] }
+rustyline = "15"
+html-to-markdown-rs = "2.26"
+rayon = "1.10"
+which = "7"
+serde = { version = "1", features = ["derive"] }
+dirs = "6"

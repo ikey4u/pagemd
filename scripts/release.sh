@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Cross-compile pagemd release zips for macOS / Linux / Windows.
+# Cross-compile release zips of the pagemd CLI (client/cli) for
+# macOS / Linux / Windows, x64 and arm64.
 #
 # Linker choice:
 #   Linux (any arch) → cargo zigbuild, glibc 2.17
@@ -206,7 +207,7 @@ strip_bin() {
       echo "warn: no rust-objcopy/llvm-strip; relying on -C strip=symbols for $bin" >&2
       ;;
     windows)
-      if command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+      if [[ "${triple}" == x86_64-* ]] && command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
         x86_64-w64-mingw32-strip "$bin" || echo "warn: mingw strip failed for $bin" >&2
         return 0
       fi
@@ -282,9 +283,9 @@ build_linux() {
   local zig_target="${triple}.${GLIBC}"
 
   ensure_target "${triple}" || return 1
-  echo "==> cargo zigbuild --release --target ${zig_target}"
+  echo "==> cargo zigbuild --release -p pagemd --target ${zig_target}"
   export_build_env
-  cargo zigbuild --release --target "${zig_target}" || return 1
+  cargo zigbuild --release -p pagemd --target "${zig_target}" || return 1
   package_built_bin "${triple}" "linux" "${arch_name}"
 }
 
@@ -303,7 +304,7 @@ build_one() {
   if use_native "${triple}"; then
     echo "==> native cargo --release --target ${triple}"
     export_build_env
-    cargo build --release --target "${triple}" || return 1
+    cargo build --release -p pagemd --target "${triple}" || return 1
   else
     local zig_target="${triple}"
     local extra=""
@@ -317,9 +318,9 @@ build_one() {
       export "CC_x86_64_pc_windows_gnu=${MINGW_CC:-x86_64-w64-mingw32-gcc}"
       export "AR_x86_64_pc_windows_gnu=${MINGW_AR:-x86_64-w64-mingw32-ar}"
     fi
-    echo "==> cargo zigbuild --release --target ${zig_target}"
+    echo "==> cargo zigbuild --release -p pagemd --target ${zig_target}"
     export_build_env "${extra}"
-    cargo zigbuild --release --target "${zig_target}" || return 1
+    cargo zigbuild --release -p pagemd --target "${zig_target}" || return 1
   fi
 
   package_built_bin "${triple}" "${os_name}" "${arch_name}"
@@ -333,58 +334,95 @@ try_build() {
 }
 
 usage() {
-  echo "usage: $0 [macos:arm64|macos:x64|linux:x64|linux:arm64|windows:x64]" >&2
+  echo "usage: $0 [linux|macos|windows|<os>:<arch>]" >&2
   echo "  no args        build every pagemd zip" >&2
-  echo "  macos:arm64    build that zip only" >&2
+  echo "  linux          linux x64 + arm64 (glibc ${GLIBC})" >&2
+  echo "  macos          macos x64 + arm64 (+ universal on a Mac)" >&2
+  echo "  windows        windows x64 + arm64" >&2
+  echo "  <os>:<arch>    one zip: linux:x64 linux:arm64 macos:x64 macos:arm64" >&2
+  echo "                 windows:x64 windows:arm64" >&2
   exit 1
 }
 
-build_all() {
+windows_triple() {
+  local arch_name="$1"
+  if [[ "${HOST_KIND}" == "windows" && "${HOST_ARCH_NAME}" == "${arch_name}" ]]; then
+    echo "${HOST_TRIPLE}"
+  elif [[ "${arch_name}" == "arm64" ]]; then
+    # zig ships the llvm-mingw runtime for arm64 Windows.
+    echo "aarch64-pc-windows-gnullvm"
+  else
+    echo "x86_64-pc-windows-gnu"
+  fi
+}
+
+# One OS, both architectures. With strict=1 every arch must build.
+build_linux_all() {
+  local strict="${1:-1}"
   # glibc pin is the portability promise; fail the release if linux x64 cannot build.
   build_one "x86_64-unknown-linux-gnu" "linux" "x64" || return 1
-  try_build "aarch64-unknown-linux-gnu" "linux" "arm64"
-
-  if [[ "${HOST_KIND}" == "windows" ]]; then
-    build_one "${HOST_TRIPLE}" "windows" "${HOST_ARCH_NAME}"
+  if [[ "${strict}" == "1" ]]; then
+    build_one "aarch64-unknown-linux-gnu" "linux" "arm64" || return 1
   else
-    build_one "x86_64-pc-windows-gnu" "windows" "x64"
+    try_build "aarch64-unknown-linux-gnu" "linux" "arm64"
   fi
+}
 
-  if [[ "${HOST_KIND}" == "macos" ]]; then
-    try_build "x86_64-apple-darwin" "macos" "x64"
-    try_build "aarch64-apple-darwin" "macos" "arm64"
-    if command -v lipo >/dev/null 2>&1 \
-      && [[ -f "$(bin_path x86_64-apple-darwin)" ]] \
-      && [[ -f "$(bin_path aarch64-apple-darwin)" ]]; then
-      echo "==> lipo macos-universal"
-      local univ_bin="${DIST_DIR}/.pagemd-universal"
-      lipo -create \
-        -output "${univ_bin}" \
-        "$(bin_path x86_64-apple-darwin)" \
-        "$(bin_path aarch64-apple-darwin)"
-      strip_bin "aarch64-apple-darwin" "${univ_bin}"
-      if [[ "${SKIP_PACKAGE:-0}" != "1" ]]; then
-        package_zip "macos" "universal" "${univ_bin}"
-      fi
-      rm -f "${univ_bin}"
-    fi
+build_windows_all() {
+  local strict="${1:-1}"
+  build_one "$(windows_triple x64)" "windows" "x64" || return 1
+  if [[ "${strict}" == "1" ]]; then
+    build_one "$(windows_triple arm64)" "windows" "arm64" || return 1
   else
+    try_build "$(windows_triple arm64)" "windows" "arm64"
+  fi
+}
+
+build_macos_all() {
+  local strict="${1:-1}"
+  if [[ "${HOST_KIND}" != "macos" ]]; then
     echo "note: host is not macOS; Apple targets need a macOS SDK (SDKROOT)"
+  fi
+  if [[ "${strict}" == "1" ]]; then
+    build_one "x86_64-apple-darwin" "macos" "x64" || return 1
+    build_one "aarch64-apple-darwin" "macos" "arm64" || return 1
+  else
     try_build "x86_64-apple-darwin" "macos" "x64"
     try_build "aarch64-apple-darwin" "macos" "arm64"
   fi
+  if [[ "${HOST_KIND}" == "macos" ]] && command -v lipo >/dev/null 2>&1 \
+    && [[ -f "$(bin_path x86_64-apple-darwin)" ]] \
+    && [[ -f "$(bin_path aarch64-apple-darwin)" ]]; then
+    echo "==> lipo macos-universal"
+    local univ_bin="${DIST_DIR}/.pagemd-universal"
+    lipo -create \
+      -output "${univ_bin}" \
+      "$(bin_path x86_64-apple-darwin)" \
+      "$(bin_path aarch64-apple-darwin)"
+    strip_bin "aarch64-apple-darwin" "${univ_bin}"
+    if [[ "${SKIP_PACKAGE:-0}" != "1" ]]; then
+      package_zip "macos" "universal" "${univ_bin}"
+    fi
+    rm -f "${univ_bin}"
+  fi
+}
+
+build_all() {
+  build_linux_all 0 || return 1
+  build_windows_all 0 || return 1
+  build_macos_all 0
 }
 
 needs_zig() {
   local only="${1:-}"
-  if [[ -z "${only}" || "${only}" == linux:* || "${only}" == windows:* ]]; then
-    if [[ "${only}" == windows:* && "${HOST_KIND}" == "windows" ]]; then
+  if [[ -z "${only}" || "${only}" == linux* || "${only}" == windows* ]]; then
+    if [[ "${only}" == windows* && "${HOST_KIND}" == "windows" ]]; then
       return 1
     fi
     return 0
   fi
   # macOS-only on a Mac uses the native SDK.
-  if [[ "${only}" == macos:* && "${HOST_KIND}" == "macos" ]]; then
+  if [[ "${only}" == macos* && "${HOST_KIND}" == "macos" ]]; then
     return 1
   fi
   return 0
@@ -392,7 +430,7 @@ needs_zig() {
 
 ONLY="${1:-}"
 case "${ONLY}" in
-  ""|macos:arm64|macos:x64|linux:x64|linux:arm64|windows:x64) ;;
+  ""|linux|macos|windows|macos:arm64|macos:x64|linux:x64|linux:arm64|windows:x64|windows:arm64) ;;
   *) usage ;;
 esac
 
@@ -429,13 +467,11 @@ case "${ONLY}" in
   macos:x64) build_one "x86_64-apple-darwin" "macos" "x64" ;;
   linux:x64) build_one "x86_64-unknown-linux-gnu" "linux" "x64" ;;
   linux:arm64) build_one "aarch64-unknown-linux-gnu" "linux" "arm64" ;;
-  windows:x64)
-    if [[ "${HOST_KIND}" == "windows" ]]; then
-      build_one "${HOST_TRIPLE}" "windows" "${HOST_ARCH_NAME}"
-    else
-      build_one "x86_64-pc-windows-gnu" "windows" "x64"
-    fi
-    ;;
+  windows:x64) build_one "$(windows_triple x64)" "windows" "x64" ;;
+  windows:arm64) build_one "$(windows_triple arm64)" "windows" "arm64" ;;
+  linux) build_linux_all ;;
+  windows) build_windows_all ;;
+  macos) build_macos_all ;;
   "") build_all ;;
 esac
 

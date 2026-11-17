@@ -1,0 +1,70 @@
+// Fetch the browser runtimes (Mermaid, Tailwind) that self-contained HTML exports embed.
+
+use std::{env, fs, path::Path, process};
+
+const TAILWINDCSS_BROWSER_VERSION: &str = "4.3.0";
+const DIAGRAM_TAILWIND_BROWSER_URL: &str =
+    "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.0/dist/index.global.min.js";
+const DIAGRAM_TAILWIND_BROWSER_OUT: &str = "diagram-html-tailwind-browser.js";
+
+const MERMAID_VERSION: &str = "11.16.0";
+const MERMAID_BROWSER_URL: &str =
+    "https://cdn.jsdelivr.net/npm/mermaid@11.16.0/dist/mermaid.min.js";
+const MERMAID_BROWSER_OUT: &str = "mermaid.min.js";
+
+fn main() {
+    println!("cargo:rustc-env=PAGEMD_MERMAID_VERSION={MERMAID_VERSION}");
+    println!("cargo:rustc-env=PAGEMD_TAILWIND_BROWSER_VERSION={TAILWINDCSS_BROWSER_VERSION}");
+    prepare_diagram_tailwind_browser();
+    prepare_mermaid_browser();
+}
+
+fn prepare_diagram_tailwind_browser() {
+    println!("cargo:rerun-if-env-changed=PAGEMD_TAILWIND_BROWSER_URL");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
+    let out_path = Path::new(&out_dir).join(DIAGRAM_TAILWIND_BROWSER_OUT);
+    let url = env::var("PAGEMD_TAILWIND_BROWSER_URL")
+        .unwrap_or_else(|_| DIAGRAM_TAILWIND_BROWSER_URL.to_string());
+
+    let bytes = reqwest::blocking::get(&url)
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.bytes())
+        .unwrap_or_else(|err| {
+            eprintln!(
+                "error: failed to fetch @tailwindcss/browser@{TAILWINDCSS_BROWSER_VERSION} from {url}: {err}"
+            );
+            process::exit(1);
+        });
+
+    fs::write(&out_path, bytes.as_ref()).unwrap_or_else(|err| {
+        eprintln!(
+            "error: failed to write Tailwind browser runtime to {}: {err}",
+            out_path.display()
+        );
+        process::exit(1);
+    });
+}
+
+fn prepare_mermaid_browser() {
+    println!("cargo:rerun-if-env-changed=PAGEMD_MERMAID_URL");
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
+    let out_path = Path::new(&out_dir).join(MERMAID_BROWSER_OUT);
+    let url = env::var("PAGEMD_MERMAID_URL")
+        .unwrap_or_else(|_| MERMAID_BROWSER_URL.to_string());
+
+    let bytes = reqwest::blocking::get(&url)
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.bytes())
+        .unwrap_or_else(|err| {
+            eprintln!("error: failed to fetch mermaid@{MERMAID_VERSION} from {url}: {err}");
+            process::exit(1);
+        });
+
+    fs::write(&out_path, bytes.as_ref()).unwrap_or_else(|err| {
+        eprintln!(
+            "error: failed to write Mermaid browser runtime to {}: {err}",
+            out_path.display()
+        );
+        process::exit(1);
+    });
+}
