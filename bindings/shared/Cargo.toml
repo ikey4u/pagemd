@@ -1,0 +1,9 @@
+[package]
+name = "pagemd-bindings"
+version = "0.1.0"
+edition = "2021"
+description = "What pagemd's mobile bindings share: embeddable HTML and a writable cache in an app sandbox"
+publish = false
+
+[dependencies]
+pagemd = { path = "../.." }

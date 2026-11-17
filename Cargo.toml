@@ -7,6 +7,8 @@ description = "Convert Markdown into a self-contained, styled HTML document"
 readme = "README.md"
 keywords = ["markdown", "html", "singlefile", "renderer"]
 categories = ["command-line-utilities", "text-processing"]
+# The mobile bindings are their own crates, built separately.
+exclude = ["bindings/"]
 
 [lib]
 name = "pagemd"

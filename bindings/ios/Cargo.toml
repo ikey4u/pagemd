@@ -1,0 +1,13 @@
+[package]
+name = "pagemd-ios"
+version = "0.1.0"
+edition = "2021"
+description = "pagemd for iOS: a C library, a header and a Swift module (PageMD.xcframework)"
+publish = false
+
+[lib]
+name = "pagemd_ios"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+pagemd-bindings = { path = "../shared" }

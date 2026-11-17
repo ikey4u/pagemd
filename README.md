@@ -120,6 +120,12 @@ PageMD converts one or more Markdown files into a single HTML document, embeds t
 - Live-preview Markdown in the browser with hot reload (`pagemd view`).
 - Provides a full conversion fixture at `examples/BASIC.md`.
 
+## Mobile bindings
+
+`bindings/` builds pagemd for apps: `PageMD.xcframework` for iOS (C and
+Swift) and `libpagemd.so` with a Kotlin `PageMD` class for Android. See
+[bindings/README.md](bindings/README.md).
+
 ## Development
 
 Build and run the CLI:

@@ -1,0 +1,14 @@
+[package]
+name = "pagemd-android"
+version = "0.1.0"
+edition = "2021"
+description = "pagemd for Android: a JNI library (libpagemd.so) and the Kotlin class io.github.ikey4u.pagemd.PageMD"
+publish = false
+
+[lib]
+name = "pagemd"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = { version = "0.21", default-features = false }
+pagemd-bindings = { path = "../shared" }
