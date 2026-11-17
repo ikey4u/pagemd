@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
