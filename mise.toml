@@ -45,22 +45,22 @@ run = "rm -rf {{vars.extension_dir}}/dist"
 
 [tasks.release]
 description = "Release-zip the pagemd CLI for every OS (Linux glibc 2.17, Windows, macOS when an SDK is available)"
-tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.20.1" }
+tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.23.4" }
 run = "bash scripts/release.sh"
 
 [tasks."release:client:linux"]
 description = "Release-zip the pagemd CLI for Linux x64 and arm64 (glibc 2.17 via zigbuild)"
-tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.20.1" }
+tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.23.4" }
 run = "bash scripts/release.sh linux"
 
 [tasks."release:client:windows"]
 description = "Release-zip the pagemd CLI for Windows x64 and arm64 (zigbuild)"
-tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.20.1" }
+tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.23.4" }
 run = "bash scripts/release.sh windows"
 
 [tasks."release:client:macos"]
 description = "Release-zip the pagemd CLI for macOS x64, arm64 and universal (on a Mac; elsewhere set SDKROOT)"
-tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.20.1" }
+tools = { zig = "0.14.0", "cargo:cargo-zigbuild" = "0.23.4" }
 run = "bash scripts/release.sh macos"
 
 [tasks."release:clean"]

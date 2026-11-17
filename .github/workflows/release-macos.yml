@@ -1,0 +1,40 @@
+# Builds the macOS CLI zips (x64, arm64, universal) with
+# `mise run release:client:macos` and uploads them to the GitHub release.
+# Linux and Windows zips are built with `mise run release:client:linux` /
+# `release:client:windows` (zigbuild) and attached when the release is made;
+# macOS needs Apple's SDK, so it builds here on a Mac.
+name: release-macos
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload to (for example v0.10.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+      - name: Rust targets
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - name: Build
+        run: mise run release:client:macos
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/pagemd-macos-*.zip --clobber
