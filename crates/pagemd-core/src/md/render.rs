@@ -348,8 +348,35 @@ pub fn render_markdown(
     client_mermaid: bool,
     footnote_display: FootnoteDisplay,
 ) -> Result<RenderedSection> {
+    render_markdown_with_typography(
+        source,
+        base_dir,
+        math_font_size,
+        font_dir,
+        ss,
+        ts,
+        client_mermaid,
+        footnote_display,
+        false,
+    )
+}
+
+/// [`render_markdown`], with typographic quotes, dashes and ellipses in
+/// prose when `smart_punctuation` is set.
+#[allow(clippy::too_many_arguments)]
+pub fn render_markdown_with_typography(
+    source: &str,
+    base_dir: &Path,
+    math_font_size: f64,
+    font_dir: &str,
+    ss: &SyntaxSet,
+    ts: &ThemeSet,
+    client_mermaid: bool,
+    footnote_display: FootnoteDisplay,
+    smart_punctuation: bool,
+) -> Result<RenderedSection> {
     let mut extracted = Vec::new();
-    let mut section = render_markdown_with_depth(
+    let mut section = render_markdown_at_depth(
         source,
         base_dir,
         math_font_size,
@@ -360,6 +387,7 @@ pub fn render_markdown(
         0,
         client_mermaid,
         footnote_display,
+        smart_punctuation,
         &mut extracted,
     )?;
     if footnote_display == FootnoteDisplay::Host {
@@ -370,7 +398,7 @@ pub fn render_markdown(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn render_markdown_with_depth(
+pub(crate) fn render_markdown_at_depth(
     source: &str,
     base_dir: &Path,
     math_font_size: f64,
@@ -381,6 +409,7 @@ pub fn render_markdown_with_depth(
     depth: usize,
     client_mermaid: bool,
     footnote_display: FootnoteDisplay,
+    smart_punctuation: bool,
     extracted_footnotes: &mut Vec<ExtractedFootnote>,
 ) -> Result<RenderedSection> {
     let preprocessed = preprocess_markdown_extensions(source);
@@ -395,7 +424,9 @@ pub fn render_markdown_with_depth(
     let mut parse_source = preprocessed;
     footnotes.prepare_parse_unit(&mut parse_source);
 
-    let document = pagemd_parser::parse(&parse_source, &ParseOptions::gfm())?;
+    let mut parse_options = ParseOptions::gfm();
+    parse_options.constructs.smart_punctuation = smart_punctuation;
+    let document = pagemd_parser::parse(&parse_source, &parse_options)?;
     HtmlRenderer.render(
         &document,
         HtmlRenderContext {
@@ -408,6 +439,7 @@ pub fn render_markdown_with_depth(
             depth,
             client_mermaid,
             footnote_display,
+            smart_punctuation,
             extracted_footnotes,
         },
     )
@@ -429,6 +461,9 @@ pub struct HtmlRenderContext<'a> {
     pub depth: usize,
     pub client_mermaid: bool,
     pub footnote_display: FootnoteDisplay,
+    /// Typographic punctuation for Markdown rendered inside this document
+    /// (callouts, details), as the document itself was parsed.
+    pub smart_punctuation: bool,
     pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
@@ -460,6 +495,7 @@ fn render_parsed_document(
         depth,
         client_mermaid,
         footnote_display,
+        smart_punctuation,
         extracted_footnotes,
     } = context;
     let events: Vec<Event<'static>> = document.events().cloned().collect();
@@ -674,6 +710,7 @@ fn render_parsed_document(
                                             depth,
                                             client_mermaid,
                                             footnote_display,
+                                            smart_punctuation,
                                             extracted_footnotes,
                                         },
                                     ) {
@@ -705,6 +742,7 @@ fn render_parsed_document(
                                             depth,
                                             client_mermaid,
                                             footnote_display,
+                                            smart_punctuation,
                                             extracted_footnotes,
                                         },
                                     ) {

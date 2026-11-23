@@ -7,7 +7,7 @@ use crate::{
     md::{
         footnotes::{ExtractedFootnote, FootnoteDisplay, FootnoteRegistry},
         preprocess::{callout_label, FoldState},
-        render::render_markdown_with_depth,
+        render::render_markdown_at_depth,
     },
     util::html_escape,
 };
@@ -22,6 +22,7 @@ pub struct CalloutRenderContext<'a> {
     pub depth: usize,
     pub client_mermaid: bool,
     pub footnote_display: FootnoteDisplay,
+    pub smart_punctuation: bool,
     pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
@@ -32,7 +33,7 @@ fn render_nested_markdown(
     if ctx.depth >= 8 {
         Ok(format!("<p>{}</p>\n", html_escape(content.trim())))
     } else {
-        Ok(render_markdown_with_depth(
+        Ok(render_markdown_at_depth(
             content,
             ctx.base_dir,
             ctx.math_font_size,
@@ -43,6 +44,7 @@ fn render_nested_markdown(
             ctx.depth + 1,
             ctx.client_mermaid,
             ctx.footnote_display,
+            ctx.smart_punctuation,
             ctx.extracted_footnotes,
         )?
         .html)

@@ -7,4 +7,7 @@ pub use footnotes::{
     normalize_footnote_definition_lines, sort_extracted_footnotes,
     ExtractedFootnote, FootnoteDisplay, FootnoteRegistry,
 };
-pub use render::{render_markdown, HtmlRenderContext, HtmlRenderer};
+pub use render::{
+    render_markdown, render_markdown_with_typography, HtmlRenderContext,
+    HtmlRenderer,
+};

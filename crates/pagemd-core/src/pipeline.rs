@@ -318,7 +318,7 @@ pub fn export_source(
     };
     let resources = prepare_resources(&convert_opts)?;
 
-    let section = render_markdown(
+    let section = crate::md::render_markdown_with_typography(
         source,
         &opts.base_dir,
         opts.math_font_size,
@@ -327,6 +327,7 @@ pub fn export_source(
         &resources.ts,
         opts.client_mermaid,
         opts.html.footnotes,
+        opts.smart_punctuation,
     )
     .context("Failed to render Markdown source")?;
 

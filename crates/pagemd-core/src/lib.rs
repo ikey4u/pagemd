@@ -112,6 +112,9 @@ pub struct RenderOptions {
     pub base_dir: PathBuf,
     /// When true, emit Mermaid source for browser-side mermaid.js.
     pub client_mermaid: bool,
+    /// Typographic quotes, dashes and ellipses in prose (`"a"` → “a”,
+    /// `--` → –, `...` → …). Off by default; code keeps its text.
+    pub smart_punctuation: bool,
     pub html: HtmlExportOptions,
 }
 
@@ -124,6 +127,7 @@ impl Default for RenderOptions {
             katex_fonts: None,
             base_dir: PathBuf::from("."),
             client_mermaid: false,
+            smart_punctuation: false,
             html: HtmlExportOptions::default(),
         }
     }

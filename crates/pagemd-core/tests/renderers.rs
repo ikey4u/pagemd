@@ -25,6 +25,7 @@ fn complete_html_renderer_consumes_shared_parser_results() {
                 depth: 0,
                 client_mermaid: false,
                 footnote_display: FootnoteDisplay::default(),
+                smart_punctuation: false,
                 extracted_footnotes: &mut extracted,
             },
         )
@@ -72,6 +73,7 @@ fn complete_html_renderer_displays_frontmatter_without_consuming_body() {
                     depth: 0,
                     client_mermaid: false,
                     footnote_display: FootnoteDisplay::default(),
+                    smart_punctuation: false,
                     extracted_footnotes: &mut extracted,
                 },
             )
@@ -82,4 +84,36 @@ fn complete_html_renderer_displays_frontmatter_without_consuming_body() {
         assert!(!section.html.contains("<pre"));
         assert!(section.html.contains("Visible."));
     }
+}
+
+#[test]
+fn smart_punctuation_is_an_opt_in_render_option() {
+    let source =
+        "> [!NOTE]\n> A \"note\" -- here...\n\n\"Quoted\" text, `\"code\"`.\n";
+    let plain = pagemd_core::render_to_html(
+        source,
+        &pagemd_core::RenderOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        plain.contains("&quot;Quoted&quot;") || plain.contains("\"Quoted\""),
+        "unchanged by default"
+    );
+    let smart = pagemd_core::render_to_html(
+        source,
+        &pagemd_core::RenderOptions {
+            smart_punctuation: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(smart.contains("\u{201c}Quoted\u{201d}"), "prose");
+    assert!(
+        smart.contains("\u{201c}note\u{201d} \u{2013} here\u{2026}"),
+        "callouts too"
+    );
+    assert!(
+        smart.contains("&quot;code&quot;") || smart.contains("\"code\""),
+        "code keeps its text"
+    );
 }
