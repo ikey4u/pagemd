@@ -51,3 +51,26 @@ fn custom_and_html_renderers_consume_one_immutable_document() {
     }
     assert!(tags.is_empty());
 }
+
+#[test]
+fn smart_punctuation_is_opt_in() {
+    use pagemd_parser::{events::Event, parse, ParseOptions};
+    let source = "\"Quoted\" -- it's here... and `\"code\"` stays.";
+    let text = |options: &ParseOptions| {
+        parse(source, options)
+            .unwrap()
+            .events()
+            .filter_map(|event| match event {
+                Event::Text(text) | Event::Code(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect::<String>()
+    };
+    assert_eq!(
+        text(&ParseOptions::gfm()),
+        "\"Quoted\" -- it's here... and \"code\" stays."
+    );
+    let mut smart = ParseOptions::gfm();
+    smart.constructs.smart_punctuation = true;
+    assert_eq!(text(&smart), "\u{201c}Quoted\u{201d} \u{2013} it\u{2019}s here\u{2026} and \"code\" stays.");
+}

@@ -12,6 +12,9 @@ pub struct Constructs {
     pub gfm_task_list_item: bool,
     pub gfm_footnote_definition: bool,
     pub gfm_autolink_literal: bool,
+    /// Typographic quotes, dashes and ellipses (`"a"` → “a”, `--` → –,
+    /// `...` → …) in prose. Off by default and in GFM.
+    pub smart_punctuation: bool,
     pub mdx_expression_flow: bool,
     pub mdx_expression_text: bool,
     pub mdx_jsx_flow: bool,
@@ -31,6 +34,7 @@ impl Default for Constructs {
             gfm_task_list_item: false,
             gfm_footnote_definition: false,
             gfm_autolink_literal: false,
+            smart_punctuation: false,
             mdx_expression_flow: false,
             mdx_expression_text: false,
             mdx_jsx_flow: false,
@@ -70,6 +74,7 @@ impl ParseOptions {
         flags.set(P::ENABLE_TASKLISTS, c.gfm_task_list_item);
         flags.set(P::ENABLE_FOOTNOTES, c.gfm_footnote_definition);
         flags.set(P::ENABLE_MATH, c.math_text || c.math_flow);
+        flags.set(P::ENABLE_SMART_PUNCTUATION, c.smart_punctuation);
         // Validated front matter is emitted as lossless language code blocks
         // by analysis; pulldown metadata would swallow incomplete input.
         flags
