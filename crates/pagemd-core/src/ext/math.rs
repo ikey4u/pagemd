@@ -118,12 +118,73 @@ pub fn latex_to_svg(
     } else {
         font_size
     };
+    let padding = if display { 1.0 } else { 0.5 };
     let svg_opts = SvgOptions {
         font_size: effective_font_size,
-        padding: if display { 1.0 } else { 0.5 },
+        padding,
         stroke_width: 1.25,
         embed_glyphs: embed,
         font_dir: font_dir.to_owned(),
     };
-    Ok(render_to_svg(&dl, &svg_opts))
+    let svg = render_to_svg(&dl, &svg_opts);
+    if display {
+        return Ok(svg);
+    }
+    // Inline math is sized from its own metrics, in em of the surrounding
+    // text, and sits on the text's baseline: a lone `x` stays letter-sized and
+    // a fraction may rise above the line, instead of every formula being
+    // squeezed to one height.
+    let pad_em = padding / effective_font_size;
+    let height_em = dl.height + dl.depth + 2.0 * pad_em;
+    let drop_em = dl.depth + pad_em;
+    Ok(svg.replacen(
+        "<svg ",
+        &format!(
+            "<svg style=\"height:{height_em:.4}em;width:auto;vertical-align:-{drop_em:.4}em\" "
+        ),
+        1,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inline_metrics(expr: &str) -> (f64, f64) {
+        let svg = latex_to_svg(expr, false, 16.0, "").unwrap();
+        let style = svg
+            .split("style=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let num = |key: &str| -> f64 {
+            style
+                .split(key)
+                .nth(1)
+                .unwrap()
+                .trim_start_matches('-')
+                .split("em")
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        (num("height:"), num("vertical-align:"))
+    }
+
+    #[test]
+    fn inline_math_is_sized_by_its_own_metrics() {
+        let (letter, letter_drop) = inline_metrics("L");
+        let (root, root_drop) = inline_metrics(r"T = 2\pi\sqrt{L/g}");
+        // A lone letter is about a letter tall; a root over a fraction is taller.
+        assert!(letter > 0.6 && letter < 1.0, "{letter}");
+        assert!(root > letter * 1.4, "{root} vs {letter}");
+        // Both drop below the baseline by their depth (and padding) only.
+        assert!(letter_drop < 0.1, "{letter_drop}");
+        assert!(root_drop > letter_drop, "{root_drop} vs {letter_drop}");
+        // Display math keeps its pixel size.
+        assert!(!latex_to_svg("x", true, 16.0, "").unwrap().contains("em;"));
+    }
 }

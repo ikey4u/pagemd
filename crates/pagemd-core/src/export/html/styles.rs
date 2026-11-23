@@ -1322,18 +1322,17 @@ img {
 }
 
 .math-inline {
-  display: inline-flex;
-  align-items: center;
-  vertical-align: -0.18em;
+  display: inline;
   margin: 0 0.08em;
-  line-height: 1;
 }
 
+/* Each formula's SVG carries its own em height and baseline drop; this is
+   the size of SVGs made before that. */
 .math-inline svg {
   height: 1.1em;
   width: auto;
   max-width: none;
-  vertical-align: middle;
+  vertical-align: -0.25em;
 }
 
 .math-display {
