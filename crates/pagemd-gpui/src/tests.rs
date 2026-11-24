@@ -699,6 +699,7 @@ fn list_markers_use_measured_columns_and_compact_body_gaps(
     cx.update(gpui_kit::init);
     for source in [
         "- Alpha\n- Beta",
+        "1. Alpha\n2. Beta\n3. Gamma",
         "9. Alpha\n10. Beta",
         "- [x] Alpha\n- [ ] Beta",
     ] {
@@ -725,6 +726,18 @@ fn list_markers_use_measured_columns_and_compact_body_gaps(
             assert!((4.0..=8.0).contains(&gap), "{source:?}: gap={gap}");
             assert_eq!(first.right(), second.right());
             assert_eq!(body.left(), next.left());
+            for i in 0..source.lines().count() {
+                let marker = window
+                    .find(SharedString::from(format!(
+                        "pagemd-list-marker-0-{i}"
+                    )))
+                    .bounds();
+                assert_eq!(
+                    marker.size.height,
+                    px(24.),
+                    "{source:?}: marker {i} should fit on one line"
+                );
+            }
             if source.starts_with("- Alpha") {
                 assert!(first.size.width < px(24.), "excessive bullet column");
             }

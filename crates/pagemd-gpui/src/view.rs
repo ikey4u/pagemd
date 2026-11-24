@@ -758,7 +758,8 @@ impl Blocks {
                             )
                             .width
                     })
-                    .fold(px(0.), |width, next| width.max(next));
+                    .fold(px(0.), |width, next| width.max(next))
+                    .ceil();
                 div()
                     .w_full()
                     .min_w_0()
@@ -780,6 +781,7 @@ impl Blocks {
                                         .test_support()
                                         .w(marker_width)
                                         .flex_none()
+                                        .whitespace_nowrap()
                                         .text_align(TextAlign::Right)
                                         .child(markers[i].clone()),
                                 )
