@@ -15,6 +15,10 @@ pub struct Constructs {
     /// Typographic quotes, dashes and ellipses (`"a"` → “a”, `--` → –,
     /// `...` → …) in prose. Off by default and in GFM.
     pub smart_punctuation: bool,
+    /// `# Title {#id .class}`: a heading's own id and classes.
+    pub heading_attributes: bool,
+    /// `Term` then `: definition` lines, as a definition list.
+    pub definition_list: bool,
     pub mdx_expression_flow: bool,
     pub mdx_expression_text: bool,
     pub mdx_jsx_flow: bool,
@@ -35,6 +39,8 @@ impl Default for Constructs {
             gfm_footnote_definition: false,
             gfm_autolink_literal: false,
             smart_punctuation: false,
+            heading_attributes: false,
+            definition_list: false,
             mdx_expression_flow: false,
             mdx_expression_text: false,
             mdx_jsx_flow: false,
@@ -55,6 +61,8 @@ impl ParseOptions {
         options.constructs.gfm_task_list_item = true;
         options.constructs.gfm_footnote_definition = true;
         options.constructs.gfm_autolink_literal = true;
+        options.constructs.heading_attributes = true;
+        options.constructs.definition_list = true;
         options
     }
     pub fn mdx() -> Self {
@@ -75,6 +83,8 @@ impl ParseOptions {
         flags.set(P::ENABLE_FOOTNOTES, c.gfm_footnote_definition);
         flags.set(P::ENABLE_MATH, c.math_text || c.math_flow);
         flags.set(P::ENABLE_SMART_PUNCTUATION, c.smart_punctuation);
+        flags.set(P::ENABLE_HEADING_ATTRIBUTES, c.heading_attributes);
+        flags.set(P::ENABLE_DEFINITION_LIST, c.definition_list);
         // Validated front matter is emitted as lossless language code blocks
         // by analysis; pulldown metadata would swallow incomplete input.
         flags

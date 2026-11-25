@@ -1228,6 +1228,70 @@ li > ul, li > ol {
   margin-bottom: 0;
 }
 
+/* Written conventions: [TOC], definition lists, table captions, and the
+   inline HTML a document may hold (kbd, mark, sized images). */
+nav.toc {
+  margin: 1.25rem 0 1.75rem;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--color-table-border);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+  font-size: 0.925rem;
+}
+nav.toc ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  list-style: none;
+}
+nav.toc > ul {
+  padding-left: 0;
+}
+nav.toc li {
+  margin: 0.2rem 0;
+}
+nav.toc a {
+  text-decoration: none;
+}
+nav.toc a:hover {
+  text-decoration: underline;
+}
+dl {
+  margin: 1rem 0;
+}
+dt {
+  font-weight: 600;
+  margin-top: 0.75rem;
+}
+dd {
+  margin: 0.25rem 0 0 1.5rem;
+}
+caption {
+  caption-side: top;
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  font-size: 0.875rem;
+  opacity: 0.8;
+}
+kbd {
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--color-table-border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+mark {
+  padding: 0 0.15em;
+  border-radius: 3px;
+  background: rgba(250, 204, 21, 0.4);
+  color: inherit;
+}
+img[width],
+img[style*="width"] {
+  height: auto;
+  max-width: 100%;
+}
+
 .table-wrap {
   overflow-x: auto;
   margin: 1.5rem 0;

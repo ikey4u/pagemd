@@ -62,7 +62,10 @@ pub use export::{
     ExportOutput, OutputFormat,
 };
 pub use ext::math::install_katex_fonts;
-pub use md::{normalize_footnote_definition_lines, ExtractedFootnote};
+pub use md::{
+    normalize_footnote_definition_lines, ExtractedFootnote, RawHtml, Resources,
+    Writing,
+};
 pub use pipeline::{render_file_section, RenderResources, ResolvedInputs};
 pub use util::html_escape;
 
@@ -115,6 +118,12 @@ pub struct RenderOptions {
     /// Typographic quotes, dashes and ellipses in prose (`"a"` → “a”,
     /// `--` → –, `...` → …). Off by default; code keeps its text.
     pub smart_punctuation: bool,
+    /// HTML written in the Markdown: as written, or only the set every
+    /// renderer shows ([`RawHtml::Safe`]: no scripts or event handlers).
+    pub raw_html: RawHtml,
+    /// Images and media embedded as data, or linked as written
+    /// ([`Resources::Link`]: nothing read or fetched, as a web server needs).
+    pub resources: Resources,
     pub html: HtmlExportOptions,
 }
 
@@ -128,6 +137,8 @@ impl Default for RenderOptions {
             base_dir: PathBuf::from("."),
             client_mermaid: false,
             smart_punctuation: false,
+            raw_html: RawHtml::default(),
+            resources: Resources::default(),
             html: HtmlExportOptions::default(),
         }
     }

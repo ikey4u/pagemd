@@ -26,6 +26,7 @@ fn complete_html_renderer_consumes_shared_parser_results() {
                 client_mermaid: false,
                 footnote_display: FootnoteDisplay::default(),
                 smart_punctuation: false,
+                writing: Default::default(),
                 extracted_footnotes: &mut extracted,
             },
         )
@@ -74,6 +75,7 @@ fn complete_html_renderer_displays_frontmatter_without_consuming_body() {
                     client_mermaid: false,
                     footnote_display: FootnoteDisplay::default(),
                     smart_punctuation: false,
+                    writing: Default::default(),
                     extracted_footnotes: &mut extracted,
                 },
             )

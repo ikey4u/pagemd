@@ -23,6 +23,7 @@ pub struct CalloutRenderContext<'a> {
     pub client_mermaid: bool,
     pub footnote_display: FootnoteDisplay,
     pub smart_punctuation: bool,
+    pub writing: super::writing::Writing,
     pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
@@ -45,6 +46,7 @@ fn render_nested_markdown(
             ctx.client_mermaid,
             ctx.footnote_display,
             ctx.smart_punctuation,
+            ctx.writing,
             ctx.extracted_footnotes,
         )?
         .html)

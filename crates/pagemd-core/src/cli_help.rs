@@ -21,6 +21,20 @@ Core Markdown:
   ordered/unordered/task lists, tables, blockquotes, footnotes ([^id] with [^id]: body),
   and fenced code blocks with syntax highlighting (syntect).
 
+Writing:
+  [TOC] on its own line: a table of contents of the headings.
+  ## Title {#id .class}: a heading's own anchor and classes.
+  ![alt](x.png){width=320 height=200 .wide style=\"border-radius:8px\"}: image size and style.
+  Table: caption, right after a table: its caption.
+  Term, then \": definition\" on the next line: a definition list.
+
+HTML (one limited set for the HTML and native renderers):
+  Inline: a abbr b strong i em u ins s del mark sub sup kbd code small span br img
+  Blocks: p div center figure figcaption details summary blockquote pre hr, lists,
+  tables, headings, video audio source picture. style may set size, alignment,
+  spacing and colours. With safe rendering, scripts, event handlers and
+  javascript: links are dropped and other elements unwrapped.
+
 OpenAPI API reference cards (display only):
   Inline YAML/JSON: an openapi fenced code block.
   External source: ```openapi src=\"./api.yaml\" followed by a newline and ```.

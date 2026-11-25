@@ -23,6 +23,12 @@ PageMD dialect (answers render with this engine — use rich Markdown when helpf
 Core: headings, **bold**, *italic*, ~~strike~~, `code`, links, images, lists, \
 task lists, tables, blockquotes, footnotes (`[^id]` + `[^id]: note`).
 
+Writing: `[TOC]`; `## Title {#id}`; `![a](x.png){width=320}`; `Table: caption` after a table; \
+definition lists (`Term` / `: definition`).
+
+HTML (limited set): `<img width height style>`, `<p align=center>`, `<details>`, `<figure>`, \
+`<kbd>`, `<sub>`, `<sup>`, `<mark>`, `<u>`, `<video controls>`. No scripts.
+
 Math: inline `$E=mc^2$`; display `$$...$$` or fenced ```math / ```latex.
 
 Diagrams (fenced):

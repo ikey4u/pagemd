@@ -328,6 +328,10 @@ pub fn export_source(
         opts.client_mermaid,
         opts.html.footnotes,
         opts.smart_punctuation,
+        crate::md::Writing {
+            raw_html: opts.raw_html,
+            resources: opts.resources,
+        },
     )
     .context("Failed to render Markdown source")?;
 

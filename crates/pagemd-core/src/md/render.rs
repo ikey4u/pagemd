@@ -1,6 +1,8 @@
 use std::path::Path;
 
+use super::writing::{RawHtml, Resources, Writing};
 use anyhow::{Context, Result};
+use pagemd_parser::html::HtmlCleaner;
 use pagemd_parser::{
     events::{Event, Tag, TagEnd},
     ParseOptions, ParsedDocument, Renderer,
@@ -358,6 +360,7 @@ pub fn render_markdown(
         client_mermaid,
         footnote_display,
         false,
+        Writing::default(),
     )
 }
 
@@ -374,6 +377,7 @@ pub fn render_markdown_with_typography(
     client_mermaid: bool,
     footnote_display: FootnoteDisplay,
     smart_punctuation: bool,
+    writing: Writing,
 ) -> Result<RenderedSection> {
     let mut extracted = Vec::new();
     let mut section = render_markdown_at_depth(
@@ -388,6 +392,7 @@ pub fn render_markdown_with_typography(
         client_mermaid,
         footnote_display,
         smart_punctuation,
+        writing,
         &mut extracted,
     )?;
     if footnote_display == FootnoteDisplay::Host {
@@ -410,6 +415,7 @@ pub(crate) fn render_markdown_at_depth(
     client_mermaid: bool,
     footnote_display: FootnoteDisplay,
     smart_punctuation: bool,
+    writing: Writing,
     extracted_footnotes: &mut Vec<ExtractedFootnote>,
 ) -> Result<RenderedSection> {
     let preprocessed = preprocess_markdown_extensions(source);
@@ -440,6 +446,7 @@ pub(crate) fn render_markdown_at_depth(
             client_mermaid,
             footnote_display,
             smart_punctuation,
+            writing,
             extracted_footnotes,
         },
     )
@@ -464,6 +471,8 @@ pub struct HtmlRenderContext<'a> {
     /// Typographic punctuation for Markdown rendered inside this document
     /// (callouts, details), as the document itself was parsed.
     pub smart_punctuation: bool,
+    /// How the document's own HTML and its resources are treated.
+    pub writing: Writing,
     pub extracted_footnotes: &'a mut Vec<ExtractedFootnote>,
 }
 
@@ -496,8 +505,34 @@ fn render_parsed_document(
         client_mermaid,
         footnote_display,
         smart_punctuation,
+        writing,
         extracted_footnotes,
     } = context;
+    // The document's own HTML, limited to the shared set when safe; its
+    // pieces come in order, so one cleaner sees an element open and close.
+    let mut cleaner = HtmlCleaner::new();
+    let mut own_html = |raw: &str| -> String {
+        let raw = match writing.raw_html {
+            RawHtml::Keep => raw.to_string(),
+            RawHtml::Safe => cleaner.clean(raw),
+        };
+        match writing.resources {
+            Resources::Embed => inline_raw_html_resources(&raw, base_dir),
+            Resources::Link => raw,
+        }
+    };
+    let image_source = |src: &str| -> String {
+        match writing.resources {
+            Resources::Embed => image_to_data_uri(src, base_dir),
+            Resources::Link => {
+                if pagemd_parser::html::safe_url(src, true) {
+                    src.to_string()
+                } else {
+                    String::new()
+                }
+            }
+        }
+    };
     let events: Vec<Event<'static>> = document.events().cloned().collect();
     let mut html = String::new();
     let mut title = String::new();
@@ -519,6 +554,9 @@ fn render_parsed_document(
         },
         Heading {
             level: u32,
+            /// `{#id .class}` written on the heading.
+            own_id: Option<String>,
+            classes: Vec<String>,
             /// Escaped HTML content for the `<hN>` body.
             html: String,
             /// Unescaped visible text for outline / title / heading ids.
@@ -711,6 +749,7 @@ fn render_parsed_document(
                                             client_mermaid,
                                             footnote_display,
                                             smart_punctuation,
+                                            writing,
                                             extracted_footnotes,
                                         },
                                     ) {
@@ -743,6 +782,7 @@ fn render_parsed_document(
                                             client_mermaid,
                                             footnote_display,
                                             smart_punctuation,
+                                            writing,
                                             extracted_footnotes,
                                         },
                                     ) {
@@ -787,6 +827,8 @@ fn render_parsed_document(
 
             Context::Heading {
                 level,
+                own_id,
+                classes,
                 html: heading_html,
                 plain: heading_plain,
                 image,
@@ -869,7 +911,7 @@ fn render_parsed_document(
                             title: img_title,
                             ..
                         }) => {
-                            let src = image_to_data_uri(dest_url, base_dir);
+                            let src = image_source(dest_url);
                             let title_attr = if img_title.is_empty() {
                                 String::new()
                             } else {
@@ -907,12 +949,9 @@ fn render_parsed_document(
                                 title.as_deref(),
                             ));
                         }
-                        Event::Html(raw) => heading_html.push_str(
-                            &inline_raw_html_resources(raw, base_dir),
-                        ),
-                        Event::InlineHtml(raw) => heading_html.push_str(
-                            &inline_raw_html_resources(raw, base_dir),
-                        ),
+                        Event::Html(raw) | Event::InlineHtml(raw) => {
+                            heading_html.push_str(&own_html(raw))
+                        }
                         Event::SoftBreak | Event::HardBreak => {
                             heading_plain.push(' ');
                             heading_html.push(' ');
@@ -921,8 +960,24 @@ fn render_parsed_document(
                             let lvl = *level;
                             let plain = std::mem::take(heading_plain);
                             let body = std::mem::take(heading_html);
-                            let id =
-                                unique_heading_id(&plain, &mut heading_ids);
+                            // The heading's own id when written
+                            // (`{#id}`), kept as it is; else from its text.
+                            let id = match own_id.take() {
+                                Some(own)
+                                    if !heading_ids.contains_key(&own) =>
+                                {
+                                    heading_ids.insert(own.clone(), 1);
+                                    own
+                                }
+                                _ => {
+                                    unique_heading_id(&plain, &mut heading_ids)
+                                }
+                            };
+                            let class_attr = if classes.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" class=\"{}\"", classes.join(" "))
+                            };
                             if first_heading && lvl == 1 {
                                 title = plain.clone();
                                 first_heading = false;
@@ -933,7 +988,7 @@ fn render_parsed_document(
                                 text: plain,
                             });
                             html.push_str(&format!(
-                                "<h{lvl} id=\"{id}\">{body}</h{lvl}>\n"
+                                "<h{lvl} id=\"{id}\"{class_attr}>{body}</h{lvl}>\n"
                             ));
                             ctx = Context::Normal;
                         }
@@ -974,9 +1029,33 @@ fn render_parsed_document(
                     };
                 }
 
-                Event::Start(Tag::Heading { level, .. }) => {
+                Event::Start(Tag::Heading {
+                    level, id, classes, ..
+                }) => {
                     ctx = Context::Heading {
                         level: *level as u32,
+                        own_id: id.as_ref().map(|id| id.to_string()).filter(
+                            |id| {
+                                !id.is_empty()
+                                    && id.chars().all(|c| {
+                                        c.is_alphanumeric()
+                                            || matches!(
+                                                c,
+                                                '-' | '_' | '.' | ':'
+                                            )
+                                    })
+                            },
+                        ),
+                        classes: classes
+                            .iter()
+                            .map(|c| c.to_string())
+                            .filter(|c| {
+                                c.chars().all(|c| {
+                                    c.is_alphanumeric()
+                                        || matches!(c, '-' | '_')
+                                })
+                            })
+                            .collect(),
                         html: String::new(),
                         plain: String::new(),
                         image: None,
@@ -991,7 +1070,7 @@ fn render_parsed_document(
                     if paragraph_html.is_some() {
                         paragraph_is_plain = false;
                     }
-                    let src = image_to_data_uri(dest_url, base_dir);
+                    let src = image_source(dest_url);
                     let title_attr = if img_title.is_empty() {
                         String::new()
                     } else {
@@ -1083,9 +1162,7 @@ fn render_parsed_document(
                             .push_str(&rendered);
                     } else {
                         current_target(&mut html, &mut paragraph_html)
-                            .push_str(&inline_raw_html_resources(
-                                raw, base_dir,
-                            ));
+                            .push_str(&own_html(raw));
                     }
                 }
                 Event::InlineHtml(raw) => {
@@ -1102,9 +1179,7 @@ fn render_parsed_document(
                             .push_str(&rendered);
                     } else {
                         current_target(&mut html, &mut paragraph_html)
-                            .push_str(&inline_raw_html_resources(
-                                raw, base_dir,
-                            ));
+                            .push_str(&own_html(raw));
                     }
                 }
 
@@ -1161,6 +1236,19 @@ fn render_parsed_document(
 
                 Event::Start(Tag::Item) => html.push_str("<li>"),
                 Event::End(TagEnd::Item) => html.push_str("</li>\n"),
+
+                Event::Start(Tag::DefinitionList) => html.push_str("<dl>\n"),
+                Event::End(TagEnd::DefinitionList) => html.push_str("</dl>\n"),
+                Event::Start(Tag::DefinitionListTitle) => html.push_str("<dt>"),
+                Event::End(TagEnd::DefinitionListTitle) => {
+                    html.push_str("</dt>\n")
+                }
+                Event::Start(Tag::DefinitionListDefinition) => {
+                    html.push_str("<dd>")
+                }
+                Event::End(TagEnd::DefinitionListDefinition) => {
+                    html.push_str("</dd>\n")
+                }
 
                 Event::Start(Tag::Table(aligns)) => {
                     table_alignments = aligns.to_vec();
@@ -1348,6 +1436,12 @@ fn render_parsed_document(
             },
         }
     }
+
+    // Written conventions resolved on the whole section: the table of
+    // contents (it needs every heading), image attributes, table captions.
+    let html = super::writing::insert_table_of_contents(&html, &outline);
+    let html = super::writing::apply_image_attributes(&html);
+    let html = super::writing::apply_table_captions(&html);
 
     Ok(RenderedSection {
         title,
