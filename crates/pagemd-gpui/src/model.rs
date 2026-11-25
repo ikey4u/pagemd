@@ -13,6 +13,10 @@ pub(crate) struct Mark {
     pub italic: bool,
     pub strike: bool,
     pub code: bool,
+    /// `<u>`, `<ins>`.
+    pub underline: bool,
+    /// `<mark>`.
+    pub highlight: bool,
     pub link: Option<SharedString>,
 }
 #[derive(Clone)]
@@ -448,7 +452,8 @@ impl Builder<'_> {
         let start = self.text.len();
         let mut spans = vec![];
         let mut objects = vec![];
-        for node in nodes {
+        let nodes = with_image_attributes(nodes);
+        for node in &nodes {
             self.inline(node, Mark::default(), start, &mut spans, &mut objects);
         }
         Paragraph {
@@ -470,6 +475,11 @@ impl Builder<'_> {
             Node::Strong(_) => mark.bold = true,
             Node::Emphasis(_) => mark.italic = true,
             Node::Delete(_) => mark.strike = true,
+            Node::MdxJsxTextElement(n) => match n.name.as_deref() {
+                Some("underline") => mark.underline = true,
+                Some("highlight") => mark.highlight = true,
+                _ => {}
+            },
             Node::Link(n) => mark.link = Some(n.url.clone().into()),
             Node::LinkReference(n) => {
                 mark.link = self
@@ -669,4 +679,42 @@ impl Builder<'_> {
             }
         }
     }
+}
+
+/// `{width=320 …}` written right after an image (as the HTML renderer reads
+/// it, `pagemd_parser::html`): the image's size, and the braces left out of
+/// the text.
+fn with_image_attributes(nodes: &[Node]) -> Vec<Node> {
+    let mut out: Vec<Node> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        if let (Some(Node::Image(image)), Node::Text(text)) =
+            (out.last_mut(), node)
+        {
+            if let Some((attributes, rest)) =
+                pagemd_parser::html::leading_image_attributes(&text.value)
+            {
+                if attributes.width.is_some() {
+                    image.width = attributes.width.clone();
+                }
+                if attributes.height.is_some() {
+                    image.height = attributes.height.clone();
+                }
+                if let Some(px) = attributes.width_px() {
+                    image.width = Some(px.to_string());
+                }
+                if let Some(px) = attributes.height_px() {
+                    image.height = Some(px.to_string());
+                }
+                if !rest.is_empty() {
+                    out.push(Node::Text(pagemd_parser::mdast::Text {
+                        value: rest.to_owned(),
+                        position: text.position.clone(),
+                    }));
+                }
+                continue;
+            }
+        }
+        out.push(node.clone());
+    }
+    out
 }

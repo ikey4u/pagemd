@@ -85,6 +85,15 @@ impl NativeParagraph {
                 if span.mark.strike {
                     style.strikethrough = Some(StrikethroughStyle::default());
                 }
+                if span.mark.underline {
+                    style.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
+                        ..Default::default()
+                    });
+                }
+                if span.mark.highlight {
+                    style.background_color = Some(rgba(0xfacc1566).into());
+                }
                 if span.mark.link.is_some() {
                     style.color = self.style.link();
                 }
@@ -226,20 +235,35 @@ impl Element for NativeParagraph {
                 .inline(&object.node, &self.source, &context, window, cx)
                 .or_else(|| match &object.node {
                     pagemd_parser::mdast::Node::Image(image) => {
-                        Some(InlineElement::new(
-                            img(self.image.as_ref().map_or_else(
-                                || {
-                                    ImageSource::from(SharedUri::from(
-                                        image.url.clone(),
-                                    ))
-                                },
-                                |resolve| {
-                                    resolve(&SharedUri::from(image.url.clone()))
-                                },
-                            ))
-                            .max_w(px(320.))
-                            .max_h(px(240.)),
-                        ))
+                        let element = img(self.image.as_ref().map_or_else(
+                            || {
+                                ImageSource::from(SharedUri::from(
+                                    image.url.clone(),
+                                ))
+                            },
+                            |resolve| {
+                                resolve(&SharedUri::from(image.url.clone()))
+                            },
+                        ));
+                        // The size written on the image (pixels), else at
+                        // most 320×240 as before.
+                        let width = image
+                            .width
+                            .as_deref()
+                            .and_then(pagemd_parser::html::length_px);
+                        let height = image
+                            .height
+                            .as_deref()
+                            .and_then(pagemd_parser::html::length_px);
+                        let element = match (width, height) {
+                            (Some(w), Some(h)) => element.w(px(w)).h(px(h)),
+                            (Some(w), None) => element.w(px(w)),
+                            (None, Some(h)) => element.h(px(h)),
+                            (None, None) => {
+                                element.max_w(px(320.)).max_h(px(240.))
+                            }
+                        };
+                        Some(InlineElement::new(element))
                     }
                     _ => None,
                 });

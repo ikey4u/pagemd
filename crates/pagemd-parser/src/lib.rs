@@ -7,6 +7,7 @@ mod configuration;
 pub mod extensions;
 pub mod figure;
 pub mod frontmatter;
+pub mod html;
 pub mod mdast;
 pub mod message;
 pub mod unist;

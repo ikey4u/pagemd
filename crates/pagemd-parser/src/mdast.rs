@@ -50,7 +50,7 @@ structures! {
     FootnoteDefinition { children: Vec<Node>, identifier: String, label: Option<String> }
     Link { children: Vec<Node>, url: String, title: Option<String> }
     LinkReference { children: Vec<Node>, identifier: String, label: Option<String>, reference_kind: ReferenceKind }
-    Image { alt: String, url: String, title: Option<String> }
+    Image { alt: String, url: String, title: Option<String>, width: Option<String>, height: Option<String> }
     ImageReference { alt: String, identifier: String, label: Option<String>, reference_kind: ReferenceKind }
     Definition { identifier: String, label: Option<String>, url: String, title: Option<String> }
     FootnoteReference { identifier: String, label: Option<String> }

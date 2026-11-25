@@ -214,6 +214,10 @@ impl Frame {
                         position,
                         url: dest_url.to_string(),
                         title: optional(&title),
+                        // Sizes come from the HTML (`<img width>`) or the
+                        // attributes after the image, read by renderers.
+                        width: None,
+                        height: None,
                     }),
                 }
             }
