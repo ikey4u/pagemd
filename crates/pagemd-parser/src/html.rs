@@ -367,6 +367,108 @@ pub fn style_property<'a>(style: &'a str, property: &str) -> Option<&'a str> {
     })
 }
 
+/// A CSS colour as `0xRRGGBBAA`: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`,
+/// `rgb()`/`rgba()` and the common names; none for anything else
+/// (`currentColor`, `var(…)`), which a native renderer leaves as it is.
+pub fn parse_color(value: &str) -> Option<u32> {
+    let v = value.trim().to_ascii_lowercase();
+    if let Some(hex) = v.strip_prefix('#') {
+        let digits: Vec<u32> =
+            hex.chars().map(|c| c.to_digit(16)).collect::<Option<_>>()?;
+        let pair = |i: usize| digits[i] * 16 + digits[i + 1];
+        return match digits.len() {
+            3 => Some(
+                (digits[0] * 17) << 24
+                    | (digits[1] * 17) << 16
+                    | (digits[2] * 17) << 8
+                    | 0xff,
+            ),
+            4 => Some(
+                (digits[0] * 17) << 24
+                    | (digits[1] * 17) << 16
+                    | (digits[2] * 17) << 8
+                    | digits[3] * 17,
+            ),
+            6 => Some(pair(0) << 24 | pair(2) << 16 | pair(4) << 8 | 0xff),
+            8 => Some(pair(0) << 24 | pair(2) << 16 | pair(4) << 8 | pair(6)),
+            _ => None,
+        };
+    }
+    if let Some(inner) = v
+        .strip_prefix("rgba(")
+        .or_else(|| v.strip_prefix("rgb("))
+        .and_then(|r| r.strip_suffix(')'))
+    {
+        let parts: Vec<&str> = inner
+            .split([',', ' ', '/'])
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.len() < 3 {
+            return None;
+        }
+        let channel = |p: &str| -> Option<u32> {
+            Some(match p.strip_suffix('%') {
+                Some(pct) => (pct.parse::<f32>().ok()?.clamp(0., 100.) * 2.55)
+                    .round() as u32,
+                None => p.parse::<f32>().ok()?.clamp(0., 255.).round() as u32,
+            })
+        };
+        let alpha = match parts.get(3) {
+            Some(a) => match a.strip_suffix('%') {
+                Some(pct) => (pct.parse::<f32>().ok()?.clamp(0., 100.) * 2.55)
+                    .round() as u32,
+                None => {
+                    (a.parse::<f32>().ok()?.clamp(0., 1.) * 255.).round() as u32
+                }
+            },
+            None => 255,
+        };
+        return Some(
+            channel(parts[0])? << 24
+                | channel(parts[1])? << 16
+                | channel(parts[2])? << 8
+                | alpha,
+        );
+    }
+    let named = match v.as_str() {
+        "black" => 0x000000,
+        "white" => 0xffffff,
+        "red" => 0xff0000,
+        "green" => 0x008000,
+        "blue" => 0x0000ff,
+        "yellow" => 0xffff00,
+        "orange" => 0xffa500,
+        "purple" => 0x800080,
+        "pink" => 0xffc0cb,
+        "gray" | "grey" => 0x808080,
+        "silver" => 0xc0c0c0,
+        "navy" => 0x000080,
+        "teal" => 0x008080,
+        "maroon" => 0x800000,
+        "olive" => 0x808000,
+        "lime" => 0x00ff00,
+        "aqua" | "cyan" => 0x00ffff,
+        "fuchsia" | "magenta" => 0xff00ff,
+        "brown" => 0xa52a2a,
+        "gold" => 0xffd700,
+        "transparent" => return Some(0),
+        _ => return None,
+    };
+    Some(named << 8 | 0xff)
+}
+
+/// The declarations of an (already filtered) `style`, as `(property, value)`.
+pub fn style_declarations(style: &str) -> Vec<(String, String)> {
+    style
+        .split(';')
+        .filter_map(|d| {
+            let (p, v) = d.split_once(':')?;
+            let (p, v) = (p.trim().to_ascii_lowercase(), v.trim().to_string());
+            (!p.is_empty() && !v.is_empty()).then_some((p, v))
+        })
+        .collect()
+}
+
 /// A tag as written.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tag {
@@ -784,6 +886,21 @@ mod tests {
         );
         assert_eq!(clean("<!-- note -->kept"), "kept");
         assert_eq!(clean("1 < 2"), "1 &lt; 2");
+    }
+
+    #[test]
+    fn colours() {
+        assert_eq!(parse_color("#f00"), Some(0xff0000ff));
+        assert_eq!(parse_color("#1E90FF"), Some(0x1e90ffff));
+        assert_eq!(parse_color("#00000080"), Some(0x00000080));
+        assert_eq!(parse_color("rgb(255, 128, 0)"), Some(0xff8000ff));
+        assert_eq!(parse_color("rgba(0,0,0,0.5)"), Some(0x00000080));
+        assert_eq!(parse_color("Gray"), Some(0x808080ff));
+        assert_eq!(parse_color("var(--x)"), None);
+        assert_eq!(
+            style_declarations("color:red; gap: 8px;"),
+            vec![("color".into(), "red".into()), ("gap".into(), "8px".into())]
+        );
     }
 
     #[test]

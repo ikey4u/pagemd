@@ -17,6 +17,10 @@ pub(crate) struct Mark {
     pub underline: bool,
     /// `<mark>`.
     pub highlight: bool,
+    /// A colour of the text, from a `style` (`0xRRGGBBAA`).
+    pub color: Option<u32>,
+    /// Its background, from a `style`.
+    pub background: Option<u32>,
     pub link: Option<SharedString>,
 }
 #[derive(Clone)]
@@ -55,6 +59,52 @@ pub(crate) enum Kind {
         align: Vec<mdast::AlignKind>,
     },
     Rule,
+    /// An HTML container (`div`, `center`, `figure`, `p align`, `dd`…) with
+    /// the look its tag and allowed `style` give it.
+    Boxed {
+        style: BoxStyle,
+        children: Vec<Block>,
+    },
+    /// `<details>`: its summary line, open or folded (the reader toggles it).
+    Details {
+        open: bool,
+        summary: Paragraph,
+        children: Vec<Block>,
+    },
+}
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Align {
+    Start,
+    Center,
+    End,
+    Between,
+}
+/// What an HTML container looks like, from its tag and allowed `style`.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub(crate) struct BoxStyle {
+    pub align: Option<Align>,
+    pub background: Option<u32>,
+    pub border: Option<(f32, Option<u32>)>,
+    pub radius: Option<f32>,
+    /// Top, right, bottom, left.
+    pub padding: Option<[f32; 4]>,
+    pub margin: Option<(f32, f32)>,
+    /// Left indent (`dd`).
+    pub indent: f32,
+    /// `display: flex`: children side by side.
+    pub row: bool,
+    pub gap: Option<f32>,
+    pub justify: Option<Align>,
+    pub wrap: bool,
+    /// Captions: smaller and muted.
+    pub caption: bool,
+    pub width: Option<Size>,
+    pub max_width: Option<Size>,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Size {
+    Px(f32),
+    Fraction(f32),
 }
 #[derive(Clone)]
 pub(crate) struct Block {
@@ -183,8 +233,16 @@ pub(crate) fn selection_has_one_style(
         Kind::Paragraph(p) | Kind::Heading(_, p) | Kind::Code(_, p) => {
             paragraph_has_one_style(p, range)
         }
-        Kind::Group(children) | Kind::Quote(children) => {
+        Kind::Group(children)
+        | Kind::Quote(children)
+        | Kind::Boxed { children, .. } => {
             selection_has_one_style(children, range)
+        }
+        Kind::Details {
+            summary, children, ..
+        } => {
+            paragraph_has_one_style(summary, range)
+                || selection_has_one_style(children, range)
         }
         Kind::List { items, .. } => items
             .iter()
@@ -233,6 +291,7 @@ pub(crate) fn build(document: &ParsedDocument) -> (Vec<Block>, Arc<Index>) {
         mapping: vec![],
         definitions: HashMap::new(),
         blockquote_depth: 0,
+        base: Mark::default(),
     };
     fn definitions(node: &Node, out: &mut HashMap<String, String>) {
         if let Node::Definition(n) = node {
@@ -245,13 +304,9 @@ pub(crate) fn build(document: &ParsedDocument) -> (Vec<Block>, Arc<Index>) {
         }
     }
     definitions(document.ast(), &mut builder.definitions);
-    let blocks = document
-        .ast()
-        .children()
-        .into_iter()
-        .flatten()
-        .filter_map(|n| builder.block(n))
-        .collect();
+    let root: Vec<Node> =
+        document.ast().children().cloned().unwrap_or_default();
+    let blocks = builder.blocks(&root);
     (
         blocks,
         Arc::new(Index {
@@ -267,8 +322,18 @@ struct Builder<'a> {
     mapping: Vec<SourceSpan>,
     definitions: HashMap<String, String>,
     blockquote_depth: usize,
+    /// The text style containers give what they hold (`color`, weight…).
+    base: Mark,
 }
 impl Builder<'_> {
+    /// The blocks of a list of siblings, HTML containers written around
+    /// Markdown (`<details>` … `</details>`) joined into one element first.
+    fn blocks(&mut self, nodes: &[Node]) -> Vec<Block> {
+        crate::html::pair_containers(nodes)
+            .iter()
+            .filter_map(|n| self.block(n))
+            .collect()
+    }
     fn block(&mut self, node: &Node) -> Option<Block> {
         let start = self.text.len();
         let kind = match node {
@@ -312,11 +377,9 @@ impl Builder<'_> {
             Node::Math(n) => Kind::Math(self.literal(&n.value, node, false)),
             Node::Html(n) => {
                 let from = self.text.len();
-                let children =
-                    crate::html::ensure_blocks(crate::html::nodes(&n.value))
-                        .iter()
-                        .filter_map(|n| self.block(n))
-                        .collect();
+                let children = self.blocks(&crate::html::ensure_blocks(
+                    crate::html::nodes(&n.value),
+                ));
                 if let Some(p) = node.position() {
                     self.mapping.push(SourceSpan {
                         rendered: from..self.text.len(),
@@ -327,8 +390,7 @@ impl Builder<'_> {
             }
             Node::Blockquote(n) => {
                 self.blockquote_depth += 1;
-                let children =
-                    n.children.iter().filter_map(|c| self.block(c)).collect();
+                let children = self.blocks(&n.children);
                 self.blockquote_depth -= 1;
                 Kind::Quote(children)
             }
@@ -340,13 +402,7 @@ impl Builder<'_> {
                     .iter()
                     .filter_map(|item| {
                         if let Node::ListItem(item) = item {
-                            Some((
-                                item.checked,
-                                item.children
-                                    .iter()
-                                    .filter_map(|n| self.block(n))
-                                    .collect(),
-                            ))
+                            Some((item.checked, self.blocks(&item.children)))
                         } else {
                             None
                         }
@@ -376,13 +432,20 @@ impl Builder<'_> {
                 }
             }
             Node::ThematicBreak(_) => Kind::Rule,
-            Node::FootnoteDefinition(n) => Kind::Quote(
-                n.children.iter().filter_map(|n| self.block(n)).collect(),
-            ),
+            Node::FootnoteDefinition(n) => {
+                Kind::Quote(self.blocks(&n.children))
+            }
+            Node::MdxJsxFlowElement(n) => self.container(n),
             _ => return None,
         };
-        if !matches!(kind, Kind::Group(_) | Kind::Quote(_) | Kind::List { .. })
-            && !self.text.ends_with('\n')
+        if !matches!(
+            kind,
+            Kind::Group(_)
+                | Kind::Quote(_)
+                | Kind::List { .. }
+                | Kind::Boxed { .. }
+                | Kind::Details { .. }
+        ) && !self.text.ends_with('\n')
         {
             self.text.push('\n');
         }
@@ -391,6 +454,45 @@ impl Builder<'_> {
             range: start..self.text.len(),
             kind,
         })
+    }
+    /// An HTML container: `<details>` foldable, others boxed with their look;
+    /// what they hold takes their text style.
+    fn container(&mut self, n: &mdast::MdxJsxFlowElement) -> Kind {
+        let name = n.name.as_deref().unwrap_or("div");
+        if name == "details" {
+            let open = crate::html::attribute(&n.attributes, "open").is_some();
+            let mut rest = n.children.clone();
+            let summary_at = rest.iter().position(|c| {
+                matches!(c, Node::MdxJsxFlowElement(e) if e.name.as_deref() == Some("summary"))
+            });
+            let summary_nodes = match summary_at.map(|i| rest.remove(i)) {
+                Some(Node::MdxJsxFlowElement(e)) => e
+                    .children
+                    .into_iter()
+                    .flat_map(|c| match c {
+                        Node::Paragraph(p) => p.children,
+                        other => vec![other],
+                    })
+                    .collect(),
+                _ => vec![Node::Text(mdast::Text {
+                    value: "Details".into(),
+                    position: None,
+                })],
+            };
+            let summary = self.paragraph(&summary_nodes);
+            self.text.push('\n');
+            let children = self.blocks(&rest);
+            return Kind::Details {
+                open,
+                summary,
+                children,
+            };
+        }
+        let (style, text) = box_style(name, &n.attributes, &self.base);
+        let saved = std::mem::replace(&mut self.base, text);
+        let children = self.blocks(&n.children);
+        self.base = saved;
+        Kind::Boxed { style, children }
     }
     fn metadata(
         &mut self,
@@ -452,9 +554,15 @@ impl Builder<'_> {
         let start = self.text.len();
         let mut spans = vec![];
         let mut objects = vec![];
-        let nodes = with_image_attributes(nodes);
+        let nodes = with_image_attributes(&crate::html::pair_inline(nodes));
         for node in &nodes {
-            self.inline(node, Mark::default(), start, &mut spans, &mut objects);
+            self.inline(
+                node,
+                self.base.clone(),
+                start,
+                &mut spans,
+                &mut objects,
+            );
         }
         Paragraph {
             text: self.text[start..].to_owned().into(),
@@ -475,11 +583,31 @@ impl Builder<'_> {
             Node::Strong(_) => mark.bold = true,
             Node::Emphasis(_) => mark.italic = true,
             Node::Delete(_) => mark.strike = true,
-            Node::MdxJsxTextElement(n) => match n.name.as_deref() {
-                Some("underline") => mark.underline = true,
-                Some("highlight") => mark.highlight = true,
-                _ => {}
-            },
+            Node::MdxJsxTextElement(n) => {
+                match n.name.as_deref() {
+                    Some("underline") => mark.underline = true,
+                    Some("highlight") => mark.highlight = true,
+                    // An abbreviation: underlined, its meaning in the source.
+                    Some("abbr") => mark.underline = true,
+                    _ => {}
+                }
+                if let Some(style) =
+                    crate::html::attribute(&n.attributes, "style")
+                {
+                    mark = text_mark(&style, mark);
+                }
+                // Raised, lowered or smaller text: its own small run beside
+                // the line (one shaped line has one size).
+                if matches!(n.name.as_deref(), Some("sup" | "sub" | "small")) {
+                    let offset = self.text.len();
+                    self.append_atomic(&node.to_string(), node);
+                    objects.push(Object {
+                        range: offset - start..self.text.len() - start,
+                        node: node.clone(),
+                    });
+                    return;
+                }
+            }
             Node::Link(n) => mark.link = Some(n.url.clone().into()),
             Node::LinkReference(n) => {
                 mark.link = self
@@ -717,4 +845,160 @@ fn with_image_attributes(nodes: &[Node]) -> Vec<Node> {
         out.push(node.clone());
     }
     out
+}
+
+/// The text style a `style` gives (colour, background, weight, slant,
+/// decoration), over `base`.
+pub(crate) fn text_mark(style: &str, mut base: Mark) -> Mark {
+    use pagemd_parser::html::{parse_color, style_declarations};
+    for (property, value) in style_declarations(style) {
+        let v = value.to_ascii_lowercase();
+        match property.as_str() {
+            "color" => base.color = parse_color(&v).or(base.color),
+            "background-color" => {
+                base.background = parse_color(&v).or(base.background)
+            }
+            "font-weight" => {
+                base.bold = v == "bold"
+                    || v == "bolder"
+                    || v.parse::<u32>().is_ok_and(|w| w >= 600)
+            }
+            "font-style" => base.italic = v == "italic" || v == "oblique",
+            "text-decoration" => {
+                base.underline |= v.contains("underline");
+                base.strike |= v.contains("line-through");
+            }
+            _ => {}
+        }
+    }
+    base
+}
+
+/// A CSS length in pixels (`8`, `8px`, `1.5em`, `2rem` as 16px ems).
+pub(crate) fn css_px(value: &str) -> Option<f32> {
+    let v = value.trim().to_ascii_lowercase();
+    if let Some(n) = v.strip_suffix("rem").or_else(|| v.strip_suffix("em")) {
+        return n.trim().parse::<f32>().ok().map(|n| n * 16.);
+    }
+    pagemd_parser::html::length_px(&v).or_else(|| (v == "0").then_some(0.))
+}
+
+fn css_size(value: &str) -> Option<Size> {
+    let v = value.trim();
+    match v.strip_suffix('%') {
+        Some(pct) => pct
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|p| Size::Fraction((p / 100.).clamp(0., 1.))),
+        None => css_px(v).map(Size::Px),
+    }
+}
+
+fn css_box(value: &str) -> Option<[f32; 4]> {
+    let parts: Vec<f32> = value
+        .split_whitespace()
+        .map(css_px)
+        .collect::<Option<_>>()?;
+    Some(match parts.as_slice() {
+        [a] => [*a; 4],
+        [v, h] => [*v, *h, *v, *h],
+        [t, h, b] => [*t, *h, *b, *h],
+        [t, r, b, l] => [*t, *r, *b, *l],
+        _ => return None,
+    })
+}
+
+fn align_of(value: &str) -> Option<Align> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "center" => Some(Align::Center),
+        "right" | "end" | "flex-end" => Some(Align::End),
+        "left" | "start" | "flex-start" => Some(Align::Start),
+        "space-between" | "space-around" | "space-evenly" => {
+            Some(Align::Between)
+        }
+        _ => None,
+    }
+}
+
+/// An HTML container's look and the text style it gives what it holds,
+/// from its tag, `align` and allowed `style` (as the HTML renderer shows them).
+pub(crate) fn box_style(
+    name: &str,
+    attributes: &[mdast::AttributeContent],
+    base: &Mark,
+) -> (BoxStyle, Mark) {
+    use pagemd_parser::html::{parse_color, style_declarations};
+    let mut style = BoxStyle::default();
+    let mut text = base.clone();
+    match name {
+        "center" => style.align = Some(Align::Center),
+        "dd" => style.indent = 24.,
+        "dt" => text.bold = true,
+        "figure" => style.margin = Some((8., 8.)),
+        "figcaption" | "caption" => style.caption = true,
+        _ => {}
+    }
+    if let Some(align) =
+        crate::html::attribute(attributes, "align").and_then(|a| align_of(&a))
+    {
+        style.align = Some(align);
+    }
+    if let Some(css) = crate::html::attribute(attributes, "style") {
+        text = text_mark(&css, text);
+        for (property, value) in style_declarations(&css) {
+            match property.as_str() {
+                "text-align" => style.align = align_of(&value).or(style.align),
+                "background-color" => style.background = parse_color(&value),
+                "border" => {
+                    let width =
+                        value.split_whitespace().find_map(css_px).unwrap_or(1.);
+                    let color = value.split_whitespace().find_map(parse_color);
+                    if !value.trim().eq_ignore_ascii_case("none") {
+                        style.border = Some((width, color));
+                    }
+                }
+                "border-radius" => style.radius = css_px(&value),
+                "padding" => style.padding = css_box(&value),
+                "margin" => {
+                    style.margin = css_box(&value).map(|m| (m[0], m[2]))
+                }
+                "margin-top" => {
+                    style.margin = Some((
+                        css_px(&value).unwrap_or(0.),
+                        style.margin.map_or(0., |m| m.1),
+                    ))
+                }
+                "margin-bottom" => {
+                    style.margin = Some((
+                        style.margin.map_or(0., |m| m.0),
+                        css_px(&value).unwrap_or(0.),
+                    ))
+                }
+                "margin-left" => {
+                    style.indent = css_px(&value).unwrap_or(style.indent)
+                }
+                "display" => {
+                    style.row =
+                        value.trim() == "flex" || value.trim() == "inline-flex"
+                }
+                "gap" => {
+                    style.gap =
+                        css_px(value.split_whitespace().next().unwrap_or(""))
+                }
+                "justify-content" => style.justify = align_of(&value),
+                "flex-wrap" => style.wrap = value.trim() == "wrap",
+                "width" => style.width = css_size(&value),
+                "max-width" => style.max_width = css_size(&value),
+                // A centred block by `margin: 0 auto` reads as centred too.
+                _ => {}
+            }
+        }
+        if css.replace(' ', "").contains("margin:0auto")
+            || css.contains("margin: auto")
+        {
+            style.align = Some(Align::Center);
+        }
+    }
+    (style, text)
 }

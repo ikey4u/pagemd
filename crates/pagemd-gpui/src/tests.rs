@@ -369,8 +369,16 @@ fn inline_html_spans_cover_each_utf8_byte_once() {
             | Kind::Heading(_, p)
             | Kind::Code(_, p)
             | Kind::Math(p) => check_paragraph(p),
-            Kind::Group(blocks) | Kind::Quote(blocks) => {
-                blocks.iter().for_each(check_block)
+            Kind::Group(blocks)
+            | Kind::Quote(blocks)
+            | Kind::Boxed {
+                children: blocks, ..
+            } => blocks.iter().for_each(check_block),
+            Kind::Details {
+                summary, children, ..
+            } => {
+                check_paragraph(summary);
+                children.iter().for_each(check_block);
             }
             Kind::List { items, .. } => {
                 for (_, blocks) in items {
@@ -741,6 +749,208 @@ fn list_markers_use_measured_columns_and_compact_body_gaps(
             if source.starts_with("- Alpha") {
                 assert!(first.size.width < px(24.), "excessive bullet column");
             }
+        });
+    }
+}
+
+/// The HTML set as the HTML renderer shows it, natively: containers around
+/// Markdown, boxes with their look, inline styles, captions and media.
+mod html_parity {
+    use super::*;
+    use crate::model::{Align, Block, Kind, Size};
+
+    /// The blocks, HTML's group wrappers looked through.
+    fn blocks(source: &str) -> Vec<Block> {
+        let document =
+            pagemd_parser::parse(source, &GpuiRenderer::parse_options())
+                .unwrap();
+        fn flat(blocks: Vec<Block>) -> Vec<Block> {
+            blocks
+                .into_iter()
+                .flat_map(|b| match b.kind {
+                    Kind::Group(children) => flat(children),
+                    _ => vec![b],
+                })
+                .collect()
+        }
+        flat(crate::model::build(&document).0)
+    }
+
+    #[test]
+    fn details_around_markdown_fold_with_their_summary() {
+        let b = blocks("<details><summary>More <b>here</b></summary>\n\nHidden **markdown**.\n\n</details>\n\nAfter.");
+        match &b[0].kind {
+            Kind::Details {
+                open,
+                summary,
+                children,
+            } => {
+                assert!(!open);
+                assert_eq!(summary.text.as_ref(), "More here");
+                assert!(summary.spans.iter().any(|s| s.mark.bold));
+                assert!(
+                    matches!(&children[0].kind, Kind::Paragraph(p) if p.text.contains("Hidden markdown"))
+                );
+            }
+            _ => panic!("not details"),
+        }
+        assert!(
+            matches!(&b[1].kind, Kind::Paragraph(p) if p.text.contains("After"))
+        );
+        assert!(matches!(
+            &blocks("<details open><summary>S</summary>\n\nx\n\n</details>")[0]
+                .kind,
+            Kind::Details { open: true, .. }
+        ));
+    }
+
+    #[test]
+    fn boxes_take_their_tag_align_and_style() {
+        let b = blocks(
+            r#"<div style="display:flex;gap:8px;justify-content:center;background-color:#eef;border:1px solid #ccc;border-radius:8px;padding:4px 8px;position:fixed"><img src="a.png" width="60"><img src="b.png" style="width:50%"></div>"#,
+        );
+        let Kind::Boxed { style, .. } = &b[0].kind else {
+            panic!("not a box")
+        };
+        assert!(style.row);
+        assert_eq!(style.gap, Some(8.));
+        assert_eq!(style.justify, Some(Align::Center));
+        assert_eq!(style.background, Some(0xeeeeffff));
+        assert_eq!(style.border, Some((1., Some(0xccccccff))));
+        assert_eq!(style.radius, Some(8.));
+        assert_eq!(style.padding, Some([4., 8., 4., 8.]));
+        let Kind::Boxed { style, .. } =
+            &blocks(r#"<p align="center">Centred <b>text</b></p>"#)[0].kind
+        else {
+            panic!()
+        };
+        assert_eq!(style.align, Some(Align::Center));
+        let Kind::Boxed { style, children } =
+            &blocks("<center>\n\nMiddle **markdown**\n\n</center>")[0].kind
+        else {
+            panic!()
+        };
+        assert_eq!(style.align, Some(Align::Center));
+        assert!(
+            matches!(&children[0].kind, Kind::Paragraph(p) if p.text.contains("Middle markdown"))
+        );
+        let Kind::Boxed { style, .. } =
+            &blocks(r#"<div style="max-width:50%">x</div>"#)[0].kind
+        else {
+            panic!()
+        };
+        assert_eq!(style.max_width, Some(Size::Fraction(0.5)));
+        let Kind::Boxed { style, .. } =
+            &blocks("<dl><dt>Term</dt><dd>Definition</dd></dl>")[0].kind
+        else {
+            panic!()
+        };
+        assert_eq!(style, &crate::model::BoxStyle::default());
+    }
+
+    #[test]
+    fn inline_styles_and_raised_text() {
+        let b = blocks(
+            r#"<span style="color:#c00;background-color:yellow;font-weight:700;font-style:italic;text-decoration:underline">s</span> H<sub>2</sub>O x<sup>2</sup> <small>fine</small> <strike>old</strike> <abbr title="HyperText">HTML</abbr>"#,
+        );
+        let Kind::Paragraph(p) = &b[0].kind else {
+            panic!("not a paragraph")
+        };
+        let span = p
+            .spans
+            .iter()
+            .find(|s| &p.text[s.range.clone()] == "s")
+            .unwrap();
+        assert_eq!(span.mark.color, Some(0xcc0000ff));
+        assert_eq!(span.mark.background, Some(0xffff00ff));
+        assert!(span.mark.bold && span.mark.italic && span.mark.underline);
+        let objects: Vec<_> = p
+            .objects
+            .iter()
+            .map(|o| p.text[o.range.clone()].to_string())
+            .collect();
+        assert_eq!(
+            objects,
+            vec!["2", "2", "fine"],
+            "sub, sup and small are their own runs"
+        );
+        assert!(p
+            .spans
+            .iter()
+            .any(|s| s.mark.strike && &p.text[s.range.clone()] == "old"));
+        assert!(p
+            .spans
+            .iter()
+            .any(|s| s.mark.underline && &p.text[s.range.clone()] == "HTML"));
+    }
+
+    #[test]
+    fn tables_keep_their_caption_and_alignment_media_their_poster() {
+        let b = blocks(
+            r#"<table><caption>Sizes</caption><thead><tr><th align="left">A</th><th style="text-align:center">B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>"#,
+        );
+        assert!(
+            matches!(&b[0].kind, Kind::Boxed { style, .. } if style.caption)
+        );
+        let Kind::Table { rows, align } = &b[1].kind else {
+            panic!()
+        };
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            align,
+            &vec![
+                pagemd_parser::mdast::AlignKind::Left,
+                pagemd_parser::mdast::AlignKind::Center
+            ]
+        );
+        let b = blocks(
+            r#"<video src="/p/a/media/v.mp4" poster="/p/a/media/v.jpg" controls></video>"#,
+        );
+        let Kind::Paragraph(p) = &b[0].kind else {
+            panic!()
+        };
+        assert!(p.objects.iter().any(|o| matches!(&o.node, pagemd_parser::mdast::Node::Image(i) if i.url == "/p/a/media/v.jpg")));
+        assert!(p
+            .spans
+            .iter()
+            .any(|s| s.mark.link.as_deref() == Some("/p/a/media/v.mp4")));
+    }
+
+    #[gpui_kit::test]
+    fn details_open_and_fold_on_a_click(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestWindowExt as _;
+        cx.update(gpui_kit::init);
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let document = render(
+                "<details><summary>More</summary>\n\nHidden.\n\n</details>",
+                cx,
+            );
+            Root::new(
+                cx.new(|_| TableHost {
+                    document,
+                    width: 360.,
+                }),
+                window,
+                cx,
+            )
+        });
+        cx.simulate_resize(size(px(400.), px(240.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("pagemd-details-body-0").is_none(),
+                "folded at first"
+            );
+            window.click("pagemd-details-summary-0", cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("pagemd-details-body-0").is_some(),
+                "open after a click"
+            );
         });
     }
 }

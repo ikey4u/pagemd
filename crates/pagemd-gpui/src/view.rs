@@ -859,6 +859,148 @@ impl Blocks {
                 .h(px(1.))
                 .bg(self.style.border())
                 .into_any_element(),
+            Kind::Boxed { style, children } => {
+                use crate::model::{Align, Size};
+                let mut d = div().min_w_0().flex();
+                d = if style.row {
+                    d.flex_row().items_start()
+                } else {
+                    d.flex_col().gap(self.style.paragraph_gap())
+                };
+                if style.row && style.wrap {
+                    d = d.flex_wrap();
+                }
+                d = match style.width {
+                    Some(Size::Px(w)) => d.w(px(w)),
+                    Some(Size::Fraction(f)) => d.w(relative(f)),
+                    None => d.w_full(),
+                };
+                if let Some(max) = style.max_width {
+                    d = match max {
+                        Size::Px(w) => d.max_w(px(w)),
+                        Size::Fraction(f) => d.max_w(relative(f)),
+                    };
+                }
+                if let Some(gap) = style.gap {
+                    d = d.gap(px(gap));
+                }
+                // Text alignment, and where children sit in a row.
+                d = match style.align {
+                    Some(Align::Center) => {
+                        d.text_center().when(!style.row, |d| d.items_center())
+                    }
+                    Some(Align::End) => {
+                        d.text_right().when(!style.row, |d| d.items_end())
+                    }
+                    _ => d,
+                };
+                d = match style.justify {
+                    Some(Align::Center) => d.justify_center(),
+                    Some(Align::End) => d.justify_end(),
+                    Some(Align::Between) => d.justify_between(),
+                    _ => d,
+                };
+                if let Some(bg) = style.background {
+                    d = d.bg(rgba(bg));
+                }
+                if let Some((width, color)) = style.border {
+                    d = d.border(px(width)).border_color(
+                        color
+                            .map(|c| Hsla::from(rgba(c)))
+                            .unwrap_or(self.style.border()),
+                    );
+                }
+                if let Some(r) = style.radius {
+                    d = d.rounded(px(r));
+                }
+                if let Some([t, r, b, l]) = style.padding {
+                    d = d.pt(px(t)).pr(px(r)).pb(px(b)).pl(px(l));
+                }
+                if let Some((top, bottom)) = style.margin {
+                    d = d.mt(px(top)).mb(px(bottom));
+                }
+                if style.indent > 0. {
+                    d = d.ml(px(style.indent));
+                }
+                if style.caption {
+                    d = d.text_sm().text_color(self.style.muted_foreground());
+                }
+                d.children(children.iter().map(|b| self.block(b, window, cx)))
+                    .into_any_element()
+            }
+            Kind::Details {
+                open,
+                summary,
+                children,
+            } => {
+                // Folded unless written open; a click on its line toggles it.
+                let state = window.use_keyed_state(
+                    SharedString::from(format!(
+                        "pagemd-details-{}",
+                        block.range.start
+                    )),
+                    cx,
+                    |_, _| *open,
+                );
+                let is_open = *state.read(cx);
+                let toggle = state.clone();
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(self.style.paragraph_gap())
+                    .child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "pagemd-details-summary-{}",
+                                block.range.start
+                            )))
+                            .test_support()
+                            .flex()
+                            .items_start()
+                            .gap_1()
+                            .cursor_pointer()
+                            .font_weight(FontWeight::MEDIUM)
+                            .on_click(move |_, _, cx| {
+                                toggle.update(cx, |open, cx| {
+                                    *open = !*open;
+                                    cx.notify();
+                                })
+                            })
+                            .child(div().flex_none().child(if is_open {
+                                "▾"
+                            } else {
+                                "▸"
+                            }))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(self.paragraph(summary)),
+                            ),
+                    )
+                    .when(is_open, |d| {
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "pagemd-details-body-{}",
+                                    block.range.start
+                                )))
+                                .test_support()
+                                .pl_4()
+                                .flex()
+                                .flex_col()
+                                .gap(self.style.paragraph_gap())
+                                .children(
+                                    children
+                                        .iter()
+                                        .map(|b| self.block(b, window, cx)),
+                                ),
+                        )
+                    })
+                    .into_any_element()
+            }
         }
     }
 }

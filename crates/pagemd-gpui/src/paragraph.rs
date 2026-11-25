@@ -97,6 +97,13 @@ impl NativeParagraph {
                 if span.mark.link.is_some() {
                     style.color = self.style.link();
                 }
+                // Colours a `style` gives (the HTML renderer's set).
+                if let Some(color) = span.mark.color {
+                    style.color = rgba(color).into();
+                }
+                if let Some(background) = span.mark.background {
+                    style.background_color = Some(rgba(background).into());
+                }
                 if span.mark.code {
                     style.font_family = self.mono_font.clone();
                     style = style.highlight(self.style.inline_code());
@@ -234,6 +241,52 @@ impl Element for NativeParagraph {
                 .extensions
                 .inline(&object.node, &self.source, &context, window, cx)
                 .or_else(|| match &object.node {
+                    // Raised, lowered or smaller text: a smaller run set
+                    // above, below or on the line's baseline.
+                    pagemd_parser::mdast::Node::MdxJsxTextElement(e)
+                        if matches!(
+                            e.name.as_deref(),
+                            Some("sup" | "sub" | "small")
+                        ) =>
+                    {
+                        let size =
+                            typography.font_size.to_pixels(window.rem_size());
+                        let small = size
+                            * if e.name.as_deref() == Some("small") {
+                                0.85
+                            } else {
+                                0.72
+                            };
+                        let line = small * 1.25;
+                        let baseline = match e.name.as_deref() {
+                            Some("sup") => line + size * 0.38,
+                            Some("sub") => line - size * 0.22,
+                            _ => line * 0.8,
+                        };
+                        let mut text = div()
+                            .text_size(small)
+                            .line_height(line)
+                            .whitespace_nowrap()
+                            .child(SharedString::from(
+                                e.children
+                                    .iter()
+                                    .map(|c| c.to_string())
+                                    .collect::<String>(),
+                            ));
+                        if let Some(style) =
+                            crate::html::attribute(&e.attributes, "style")
+                        {
+                            if let Some(c) = crate::model::text_mark(
+                                &style,
+                                Default::default(),
+                            )
+                            .color
+                            {
+                                text = text.text_color(rgba(c));
+                            }
+                        }
+                        Some(InlineElement::new(text).with_baseline(baseline))
+                    }
                     pagemd_parser::mdast::Node::Image(image) => {
                         let element = img(self.image.as_ref().map_or_else(
                             || {
@@ -247,14 +300,23 @@ impl Element for NativeParagraph {
                         ));
                         // The size written on the image (pixels), else at
                         // most 320×240 as before.
-                        let width = image
-                            .width
-                            .as_deref()
-                            .and_then(pagemd_parser::html::length_px);
-                        let height = image
-                            .height
-                            .as_deref()
-                            .and_then(pagemd_parser::html::length_px);
+                        // Pixels as written; a percentage of the window's
+                        // width (an inline object is measured before its
+                        // paragraph's width is known).
+                        let viewport = f32::from(window.viewport_size().width);
+                        let length = |v: Option<&str>| {
+                            let v = v?.trim();
+                            match v.strip_suffix('%') {
+                                Some(p) => {
+                                    p.trim().parse::<f32>().ok().map(|p| {
+                                        viewport * (p / 100.).clamp(0., 1.)
+                                    })
+                                }
+                                None => pagemd_parser::html::length_px(v),
+                            }
+                        };
+                        let width = length(image.width.as_deref());
+                        let height = length(image.height.as_deref());
                         let element = match (width, height) {
                             (Some(w), Some(h)) => element.w(px(w)).h(px(h)),
                             (Some(w), None) => element.w(px(w)),
